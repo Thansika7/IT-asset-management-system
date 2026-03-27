@@ -5,8 +5,8 @@ from app.server.database.database import Base
 
 class Request(Base):
     __tablename__="requests"
-    request_id=Column(Integer, primary_key=True, index=True)
-    emp_id=Column(Integer, ForeignKey("employees.employee_id"), nullable=False)
+    request_id=Column(String(50), primary_key=True, index=True)
+    emp_id=Column(String(50), ForeignKey("employees.employee_id"), nullable=False)
     asset_name=Column(String(150), nullable=False)
     asset_category=Column(String(100), nullable=True)
     reason=Column(Text, nullable=True)

@@ -1,27 +1,27 @@
 import os
-
 from dotenv import load_dotenv
+from supabase import create_client, Client
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv()
 
-DATABASE_URL=os.getenv("SUPABASE_POSTGRES_URL") or os.getenv("DATABASE_URL", "sqlite:///./asset_management.db")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-engine_options={"future": True, "pool_pre_ping": True}
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-if DATABASE_URL.startswith("sqlite"):
-    engine_options["connect_args"]={"check_same_thread": False}
+DATABASE_URL = os.getenv("SUPABASE_POSTGRES_URL")
 
-engine=create_engine(DATABASE_URL, **engine_options)
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-SessionLocal=sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
-
-Base=declarative_base()
-
+engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
+Base = declarative_base()
 
 def get_db():
-    db=SessionLocal()
+    db = SessionLocal()
     try:
         yield db
     finally:

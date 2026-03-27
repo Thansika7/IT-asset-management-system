@@ -30,7 +30,7 @@ class OAuthEmployeeCreate(EmployeeBase):
 
 class EmployeeRead(EmployeeBase):
     model_config=ConfigDict(from_attributes=True)
-    employee_id: int
+    employee_id: str
     is_active: bool
     created_at: datetime
     last_login_at: Optional[datetime]=None
