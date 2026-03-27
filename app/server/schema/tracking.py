@@ -1,3 +1,4 @@
+import uuid
 from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -5,7 +6,7 @@ from app.server.database.database import Base
 
 class Tracking(Base):
     __tablename__="tracking"
-    tracking_id=Column(String(50), primary_key=True, index=True)
+    tracking_id=Column(String(50), primary_key=True, index=True, default=lambda: f"TRK-{uuid.uuid4().hex[:8].upper()}")
     asset_id=Column(String(50), ForeignKey("assets.asset_id"), nullable=False)
     asset_name=Column(String(150), nullable=True)
     emp_id=Column(String(50), ForeignKey("employees.employee_id"), nullable=False)

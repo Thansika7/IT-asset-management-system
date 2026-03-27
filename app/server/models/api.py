@@ -22,7 +22,7 @@ class EmployeeBase(BaseModel):
     role: EmployeeRole=EmployeeRole.EMPLOYEE
 
 class EmployeeCreate(EmployeeBase):
-    password: str
+    pass
 
 class OAuthEmployeeCreate(EmployeeBase):
     oauth_provider: str
