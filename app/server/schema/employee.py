@@ -14,7 +14,7 @@ class EmployeeRole(str, enum.Enum):
 
 class Employee(Base):
     __tablename__="employees"
-    employee_id=Column(Integer, primary_key=True, index=True)
+    employee_id=Column(String(50), primary_key=True, index=True)
     name=Column(String(150), nullable=False)
     role=Column(Enum(EmployeeRole, name="employee_role"), nullable=False, default=EmployeeRole.EMPLOYEE)
     phone=Column(String(20), nullable=True)
