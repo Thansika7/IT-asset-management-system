@@ -73,7 +73,7 @@ def get_password_hash(password: str) -> str:
 
 
 def authenticate_user(db: Session, email: str, password: str) -> Employee | None:
-    user=db.query(Employee).filter(Employee.email == email).first()
+    user=db.query(Employee).filter(Employee.email==email).first()
     if not user or not user.password_hash or not user.is_active:
         return None
     if not verify_password(password, user.password_hash):
@@ -98,7 +98,7 @@ def update_last_login(db: Session, user: Employee) -> None:
     db.refresh(user)
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Employee:
+def get_current_user(token: str=Depends(oauth2_scheme), db: Session=Depends(get_db)) -> Employee:
     credentials_exception=HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -111,7 +111,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except (JWTError, ValueError):
         raise credentials_exception
 
-    user=db.query(Employee).filter(Employee.email == token_data.sub).first()
+    user=db.query(Employee).filter(Employee.email==token_data.sub).first()
     if not user or not user.is_active:
         raise credentials_exception
     return user
@@ -120,7 +120,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 def require_roles(*allowed_roles: EmployeeRole):
     allowed={role.value for role in allowed_roles}
 
-    def role_checker(current_user: Employee = Depends(get_current_user)) -> Employee:
+    def role_checker(current_user: Employee=Depends(get_current_user)) -> Employee:
         if current_user.role.value not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -138,7 +138,7 @@ def get_role_permissions(role: EmployeeRole) -> set[str]:
 def require_permissions(*permissions: str):
     required=set(permissions)
 
-    def permission_checker(current_user: Employee = Depends(get_current_user)) -> Employee:
+    def permission_checker(current_user: Employee=Depends(get_current_user)) -> Employee:
         user_permissions=get_role_permissions(current_user.role)
         if not required.issubset(user_permissions):
             raise HTTPException(
@@ -157,11 +157,11 @@ def create_oauth_user(
     email: str,
     oauth_provider: str,
     oauth_subject: str,
-    branch: str | None = None,
-    phone: str | None = None,
-    role: EmployeeRole = EmployeeRole.EMPLOYEE,
+    branch: str | None=None,
+    phone: str | None=None,
+    role: EmployeeRole=EmployeeRole.EMPLOYEE,
 ) -> Employee:
-    existing=db.query(Employee).filter(Employee.email == email).first()
+    existing=db.query(Employee).filter(Employee.email==email).first()
     if existing:
         return existing
 

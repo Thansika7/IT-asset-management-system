@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict, EmailStr
 
@@ -22,7 +22,7 @@ class EmployeeBase(BaseModel):
     role: EmployeeRole=EmployeeRole.EMPLOYEE
 
 class EmployeeCreate(EmployeeBase):
-    password: str
+    onboarding_asset_ids: Optional[List[str]]=[]
 
 class OAuthEmployeeCreate(EmployeeBase):
     oauth_provider: str

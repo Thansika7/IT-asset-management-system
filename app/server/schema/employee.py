@@ -1,4 +1,5 @@
 import enum
+import uuid
 
 from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String
 from sqlalchemy.orm import relationship
@@ -14,7 +15,7 @@ class EmployeeRole(str, enum.Enum):
 
 class Employee(Base):
     __tablename__="employees"
-    employee_id=Column(String(50), primary_key=True, index=True)
+    employee_id=Column(String(50), primary_key=True, index=True, default=lambda: f"EMP-{uuid.uuid4().hex[:8].upper()}")
     name=Column(String(150), nullable=False)
     role=Column(Enum(EmployeeRole, name="employee_role"), nullable=False, default=EmployeeRole.EMPLOYEE)
     phone=Column(String(20), nullable=True)
@@ -28,4 +29,4 @@ class Employee(Base):
     last_login_at=Column(DateTime(timezone=True), nullable=True)
     requests=relationship("Request", back_populates="employee")
     transfers=relationship("Tracking", back_populates="employee")
-    software_assignments=relationship("SoftwareAsset", back_populates="assigned_employee")
+
