@@ -4,6 +4,8 @@ from fastapi import FastAPI
 
 from app.server.database.database import Base, engine, SessionLocal
 from app.server.routes import auth_router
+from app.server.routes.stock import router as stock_router
+from app.server.routes.request import router as req_router
 from app.server.schema import asset, employee, category, attribute, request, tracking
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.auth.service import get_password_hash
@@ -39,7 +41,8 @@ def init_admin():
 init_admin()
 
 app.include_router(auth_router)
-
+app.include_router(stock_router)
+app.include_router(req_router)
 
 @app.get("/health")
 def health_check():
