@@ -1,6 +1,6 @@
 import uuid
 import enum
-from sqlalchemy import Column, Date, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.server.database.database import Base
@@ -33,6 +33,8 @@ class Tracking(Base):
     returned_at=Column(DateTime(timezone=True), nullable=True)
     parent_tracking_id=Column(String(50), nullable=True)
     assigned_date=Column(DateTime(timezone=True), server_default=func.now())
+    is_acknowledged=Column(Boolean, nullable=False, default=False)
+    acknowledged_at=Column(DateTime(timezone=True), nullable=True)
     transfer_status=Column(String(50), nullable=True)
     asset=relationship("Asset", back_populates="tracking_records")
     employee=relationship("Employee", back_populates="transfers")

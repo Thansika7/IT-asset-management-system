@@ -9,7 +9,8 @@ from app.server.schema.request import Request
 from app.server.schema.asset import Asset, AssetStatus
 from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.auth.service import require_roles, get_current_user
+from app.server.auth.service import get_current_user
+from app.server.middlewares.auth import require_roles
 
 router=APIRouter(prefix="/requests", tags=["requests"])
 
