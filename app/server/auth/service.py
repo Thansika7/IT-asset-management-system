@@ -1,5 +1,6 @@
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status
@@ -72,7 +73,7 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def authenticate_user(db: Session, email: str, password: str) -> Employee | None:
+def authenticate_user(db: Session, email: str, password: str) -> Optional[Employee]:
     user=db.query(Employee).filter(Employee.email==email).first()
     if not user or not user.password_hash or not user.is_active:
         return None
@@ -157,8 +158,8 @@ def create_oauth_user(
     email: str,
     oauth_provider: str,
     oauth_subject: str,
-    branch: str | None=None,
-    phone: str | None=None,
+    branch: Optional[str]=None,
+    phone: Optional[str]=None,
     role: EmployeeRole=EmployeeRole.EMPLOYEE,
 ) -> Employee:
     existing=db.query(Employee).filter(Employee.email==email).first()
