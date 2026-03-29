@@ -1,10 +1,20 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from app.server.schema.request import Request
 from app.server.schema.asset import Asset, AssetStatus
 from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee
 from app.server.models.request import RequestCreate, RequestTriage, RequestReview
+
+def get_inventory_across_branches(db: Session, category_name: str):
+    from app.server.schema.category import Category
+    query = db.query(
+        Asset.branch,
+        func.sum(Asset.unused).label("available_quantity")
+    ).join(Category).filter(Category.category_name == category_name)
+    
+    return query.group_by(Asset.branch).all()
 
 def create_asset_request(db: Session, payload: RequestCreate, current_user: Employee):
     req = Request(
@@ -25,39 +35,64 @@ def triage_asset_request(db: Session, request_id: str, payload: RequestTriage):
     if not req:
         raise HTTPException(status_code=404, detail="Request not found or not in Support stage")
     
-    req.action_type = payload.action_type
-    req.status = "WIP"
-    req.stage = "MANAGER"
-    db.commit()
-    db.refresh(req)
-    return req
-
-def review_request_by_manager(db: Session, request_id: str, payload: RequestReview):
-    req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "MANAGER").first()
-    if not req:
-        raise HTTPException(status_code=404, detail="Request not found or not in Manager stage")
+    # Check if asset is available in the current branch
+    from app.server.schema.category import Category
+    local_stock = db.query(func.sum(Asset.unused)).join(Category).filter(
+        Asset.branch == req.employee.branch,
+        Category.category_name == req.asset_category
+    ).scalar() or 0
     
-    if not payload.is_approved:
-        req.status = "REJECTED"
-        req.stage = "REJECTED"
+    if local_stock > 0:
+        req.status = f"Fulfillment: {req.employee.branch}"
     else:
-        req.status = "WIP"
-        req.stage = "HR"
+        # Check other branches
+        other_stocks = get_inventory_across_branches(db, req.asset_category)
+        if not other_stocks:
+            raise HTTPException(status_code=400, detail="Asset not available in any branch")
+        
+        if ":" in payload.action_type:
+            action, target = payload.action_type.split(":", 1)
+            req.action_type = action
+            req.status = f"Transfer from: {target}"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, 
+                detail={
+                    "message": "Local stock unavailable. Please use action_type 'TRANSFER:BranchName' to select a branch.",
+                    "available_branches": [{"branch": s.branch, "quantity": s.available_quantity} for s in other_stocks]
+                }
+            )
     
+    if not req.action_type: req.action_type = payload.action_type
+    req.stage = "HR_VERIFICATION"
     db.commit()
     db.refresh(req)
     return req
 
 def review_request_by_hr(db: Session, request_id: str, payload: RequestReview):
-    req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HR").first()
+    req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HR_VERIFICATION").first()
     if not req:
         raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
     
     if payload.is_approved:
-        req.status = "WIP"
+        req.stage = "MANAGER_APPROVAL"
+    else:
+        req.status = "REJECTED BY HR"
+        req.stage = "REJECTED"
+    
+    db.commit()
+    db.refresh(req)
+    return req
+
+def review_request_by_manager(db: Session, request_id: str, payload: RequestReview):
+    req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "MANAGER_APPROVAL").first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found or not in Manager stage")
+    
+    if payload.is_approved:
         req.stage = "READY"
     else:
-        req.status = "REJECTED"
+        req.status = "REJECTED BY MANAGER"
         req.stage = "REJECTED"
     
     db.commit()
@@ -67,23 +102,38 @@ def review_request_by_hr(db: Session, request_id: str, payload: RequestReview):
 def execute_asset_request(db: Session, request_id: str, provided_asset_id: str, broken_asset_id: str = None):
     req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "READY").first()
     if not req:
-        raise HTTPException(status_code=400, detail="Invalid request state or not approved by HR")
+        raise HTTPException(status_code=400, detail="Invalid request state or not approved by Manager")
     
-    if req.action_type in ["NEW", "REPLACE"]:
-        asset = db.query(Asset).filter(Asset.asset_id == provided_asset_id).with_for_update().first()
-        if not asset or asset.unused <= 0:
-            raise HTTPException(status_code=400, detail="Target asset unavailable")
-        
+    # Parse target branch from status
+    target_branch = req.employee.branch
+    if "Transfer from: " in req.status:
+        target_branch = req.status.replace("Transfer from: ", "")
+    
+    asset = db.query(Asset).filter(
+        Asset.asset_id == provided_asset_id,
+        Asset.branch == target_branch
+    ).with_for_update().first()
+    
+    if not asset or asset.unused <= 0:
+        raise HTTPException(status_code=400, detail=f"Target asset unavailable in branch {target_branch}")
+    
+    if req.action_type in ["NEW", "REPLACE", "TRANSFER"]:
         asset.unused -= 1
         asset.used += 1
         if asset.unused == 0:
             asset.asset_status = AssetStatus.ALLOCATED
         
+        source_branch = req.employee.branch
         trk = Tracking(
-            asset_id=asset.asset_id, emp_id=req.emp_id, branch=asset.branch,
+            asset_id=asset.asset_id, emp_id=req.emp_id, branch=source_branch,
+            from_branch=target_branch if target_branch != source_branch else None,
+            to_branch=source_branch if target_branch != source_branch else None,
             movement_type=MovementType.ALLOCATE if req.action_type == "NEW" else MovementType.REPLACE,
             allocation_type=AllocationType.PERMANENT, movement_reason=req.reason
         )
+        if target_branch != source_branch:
+            asset.branch = source_branch
+            
         db.add(trk)
         
         if req.action_type == "REPLACE" and broken_asset_id:
@@ -91,29 +141,8 @@ def execute_asset_request(db: Session, request_id: str, provided_asset_id: str, 
             if broken:
                 broken.asset_status = AssetStatus.RETIRED
             
-    elif req.action_type == "SERVICE":
-        broken_trk = db.query(Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.returned_at == None).with_for_update().first()
-        if broken_trk:
-            broken = db.query(Asset).filter(Asset.asset_id == broken_asset_id).first()
-            broken.asset_status = AssetStatus.IN_REPAIR
-            temp_asset = db.query(Asset).filter(Asset.asset_id == provided_asset_id).with_for_update().first()
-            if temp_asset and temp_asset.unused > 0:
-                temp_asset.unused -= 1
-                temp_asset.used += 1
-                temp_trk = Tracking(
-                    asset_id=temp_asset.asset_id, emp_id=req.emp_id, branch=temp_asset.branch,
-                    movement_type=MovementType.REPAIR, allocation_type=AllocationType.TEMPORARY,
-                    parent_tracking_id=broken_trk.tracking_id
-                )
-                db.add(temp_trk)
-                
-    elif req.action_type == "WARRANTY":
-        if broken_asset_id:
-            broken = db.query(Asset).filter(Asset.asset_id == broken_asset_id).first()
-            if broken:
-                broken.asset_status = AssetStatus.WARRANTY
-            
     req.status = "Assigned"
     req.stage = "COMPLETED"
     db.commit()
+    db.refresh(req)
     return {"status": "success", "executed_action": req.action_type}
