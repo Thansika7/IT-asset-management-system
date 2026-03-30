@@ -14,7 +14,7 @@ class EmailService:
         smtp_from = os.getenv("SMTP_FROM", "IT Asset System")
 
         if not all([smtp_host, smtp_user, smtp_pass]):
-            print(f"⚠️ Email Not Sent: SMTP credentials missing in .env (Subject: {subject})")
+            print(f" Email Not Sent: SMTP credentials missing in .env (Subject: {subject})")
             return
 
         msg = MIMEMultipart()
@@ -28,9 +28,9 @@ class EmailService:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.send_message(msg)
-                print(f"📧 Email Sent to {to_email}: {subject}")
+                print(f"Email Sent to {to_email}: {subject}")
         except Exception as e:
-            print(f"❌ Failed to send email to {to_email}: {str(e)}")
+            print(f"Failed to send email to {to_email}: {str(e)}")
 
     @classmethod
     def notify_request_created(cls, employee_name: str, asset_name: str, manager_email: str):
