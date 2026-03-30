@@ -32,16 +32,17 @@ def init_admin():
     admin_email=os.getenv("ADMIN_EMAIL")
     admin_password=os.getenv("ADMIN_PASSWORD") or str(uuid.uuid4())
     if admin_email:
-        existing=db.query(Employee).filter(Employee.email==admin_email).first()
-        if not existing:
-            db.add(Employee(
+        admin_emp=db.query(Employee).filter(Employee.email==admin_email).first()
+        if not admin_emp:
+            admin_emp = Employee(
                 employee_id="ADMIN-001",
                 name="System Administrator",
                 email=admin_email,
                 role=EmployeeRole.ADMIN,
                 password_hash=get_password_hash(admin_password),
                 is_active=True
-            ))
+            )
+            db.add(admin_emp)
             db.commit()
     db.close()
 

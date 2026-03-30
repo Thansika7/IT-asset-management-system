@@ -34,6 +34,7 @@ class EmployeeRead(EmployeeBase):
     is_active: bool
     created_at: datetime
     last_login_at: Optional[datetime]=None
+    generated_password: Optional[str]=None
 
 class LoginRequest(BaseModel):
     username: EmailStr

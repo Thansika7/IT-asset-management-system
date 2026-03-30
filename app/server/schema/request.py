@@ -13,5 +13,6 @@ class Request(Base):
     reason=Column(Text, nullable=True)
     status=Column(String(50), nullable=False, default="PENDING_SUPPORT")
     action_type=Column(String(50), nullable=True)
+    serviced_asset_id=Column(String(50), nullable=True)
     req_date=Column(DateTime(timezone=True), server_default=func.now())
     employee=relationship("Employee", back_populates="requests")
