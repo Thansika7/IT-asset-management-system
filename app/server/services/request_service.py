@@ -33,22 +33,39 @@ def create_asset_request(db: Session, payload: RequestCreate, current_user: Empl
         asset_category=payload.asset_category,
         reason=payload.reason,
         status="Pending",
-        stage="SUPPORT"
+        stage="HR_VERIFICATION"
     )
     db.add(req)
     db.commit()
     db.refresh(req)
     
-    # Notify Help Desk and Manager
+    # Notify Help Desk, HR, and Manager
     manager_email = get_manager_email_for_branch(db, current_user.branch)
     EmailService.notify_request_created(current_user.name, payload.asset_name, manager_email)
 
     return req
 
-def triage_asset_request(db: Session, request_id: str, payload: RequestTriage):
-    req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "SUPPORT").first()
+def review_request_by_hr(db: Session, request_id: str, payload: RequestHRVerify):
+    req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HR_VERIFICATION").first()
     if not req:
-        raise HTTPException(status_code=404, detail="Request not found or not in Support stage")
+        raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
+    
+    req.hr_verified = payload.is_needed
+    req.stage = "HELPDESK_TRIAGE"
+    req.status = "HR Verified: " + ("Needed" if payload.is_needed else "Not Needed")
+    
+    db.commit()
+    db.refresh(req)
+    
+    # Notify Help Desk that they can now triage
+    EmailService.notify_hr_verified(req.employee.name, req.asset_name, payload.is_needed)
+    
+    return req
+
+def triage_asset_request(db: Session, request_id: str, payload: RequestTriage):
+    req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HELPDESK_TRIAGE").first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
     
     # Check if asset is available in the current branch
     from app.server.schema.category import Category
@@ -57,46 +74,38 @@ def triage_asset_request(db: Session, request_id: str, payload: RequestTriage):
         Category.category_name == req.asset_category
     ).scalar() or 0
     
+    stock_msg = ""
     if local_stock > 0:
-        req.status = f"Fulfillment: {req.employee.branch}"
+        req.status = f"Available in local branch: {req.employee.branch}"
+        stock_msg = req.status
+        req.action_type = "Fulfilment: Local"
     else:
         # Check other branches
         other_stocks = get_inventory_across_branches(db, req.asset_category)
         if not other_stocks:
-            raise HTTPException(status_code=400, detail="Asset not available in any branch")
-        
-        if ":" in payload.action_type:
-            action, target = payload.action_type.split(":", 1)
-            req.action_type = action
-            req.status = f"Transfer from: {target}"
+            req.status = "Unavailable in all branches"
+            stock_msg = req.status
         else:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, 
-                detail={
-                    "message": "Local stock unavailable. Please use action_type 'TRANSFER:BranchName' to select a branch.",
-                    "available_branches": [{"branch": s.branch, "quantity": s.available_quantity} for s in other_stocks]
-                }
-            )
+            branches_info = ", ".join([f"{s.branch}({s.available_quantity})" for s in other_stocks])
+            req.status = f"Unavailable locally. Available in: {branches_info}"
+            stock_msg = req.status
+            
+            if ":" in payload.action_type:
+                action, target = payload.action_type.split(":", 1)
+                req.action_type = action
+                req.status += f" (Selected: {target})"
     
-    if not req.action_type: req.action_type = payload.action_type
-    req.stage = "HR_VERIFICATION"
-    db.commit()
-    db.refresh(req)
-    return req
+    if not req.action_type and payload.action_type:
+         req.action_type = payload.action_type
 
-def review_request_by_hr(db: Session, request_id: str, payload: RequestReview):
-    req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HR_VERIFICATION").first()
-    if not req:
-        raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
-    
-    if payload.is_approved:
-        req.stage = "MANAGER_APPROVAL"
-    else:
-        req.status = "REJECTED BY HR"
-        req.stage = "REJECTED"
-    
+    req.stage = "MANAGER_APPROVAL"
     db.commit()
     db.refresh(req)
+    
+    # Notify Manager of stock availability
+    manager_email = get_manager_email_for_branch(db, req.employee.branch)
+    EmailService.notify_stock_info_to_manager(req.employee.name, req.asset_name, manager_email, stock_msg)
+    
     return req
 
 def review_request_by_manager(db: Session, request_id: str, payload: RequestReview):
@@ -104,17 +113,21 @@ def review_request_by_manager(db: Session, request_id: str, payload: RequestRevi
     if not req:
         raise HTTPException(status_code=404, detail="Request not found or not in Manager stage")
     
+    # Enforcement: if HR verified as NOT needed, manager cannot approve (or should stay denied)
+    if not req.hr_verified and payload.is_approved:
+         raise HTTPException(status_code=400, detail="Manager cannot approve a request that HR has verified as NOT NEEDED.")
+
     if payload.is_approved:
         req.stage = "READY"
+        req.status = "Approved"
     else:
-        req.status = "REJECTED BY MANAGER"
+        req.status = "Denied"
         req.stage = "REJECTED"
     
     db.commit()
     db.refresh(req)
     
-    if payload.is_approved:
-        EmailService.notify_manager_approved(req.employee.name, req.asset_name)
+    EmailService.notify_manager_decision(req.employee.name, req.asset_name, payload.is_approved)
         
     return req
 
