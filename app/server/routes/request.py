@@ -9,10 +9,20 @@ from app.server.schema.request import Request
 from app.server.schema.asset import Asset, AssetStatus
 from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.auth.service import require_roles, get_current_user
+from app.server.auth.service import get_current_user
+from app.server.middlewares.auth import require_roles
 from app.server.services import request_service
 
 router=APIRouter(prefix="/requests", tags=["requests"])
+
+@router.get("/", response_model=List[RequestResponse])
+def list_requests(
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(get_current_user)
+):
+    if current_user.role in [EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR, EmployeeRole.MANAGER]:
+        return db.query(Request).all()
+    return db.query(Request).filter(Request.emp_id == current_user.employee_id).all()
 
 @router.post("/", response_model=RequestResponse)
 def create_request(

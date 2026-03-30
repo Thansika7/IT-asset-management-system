@@ -5,3 +5,4 @@ from .request import Request
 from .tracking import Tracking
 from .category import Category, SubCategory
 from .attribute import AssetAttribute, AssetAttributeValue
+from .audit import AuditLog

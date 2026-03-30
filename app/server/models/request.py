@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime
 
 class RequestCreate(BaseModel):
     asset_name: str
@@ -19,9 +20,10 @@ class RequestResponse(BaseModel):
     asset_name: str
     asset_category: str
     reason: str
-    action_type: str
+    action_type: Optional[str] = None
     status: str
     stage: str
+    req_date: datetime
     
     class Config:
         from_attributes = True
