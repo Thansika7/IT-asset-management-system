@@ -1,14 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
 from typing import List, Optional
 
 from app.server.database.database import get_db
 from app.server.models.stock import StockAdd, StockResponse, AllocateRequest, ReturnRequest
-from app.server.schema.asset import Asset, AssetStatus
-from app.server.schema.tracking import Tracking, MovementType, AllocationType
+from app.server.schema.asset import Asset
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.auth.service import require_roles
+from app.server.middlewares.auth import require_roles
+from app.server.services.stock_service import StockService
 
 router=APIRouter(prefix="/stock", tags=["stock"])
 
@@ -29,13 +28,7 @@ def add_stock(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
 ):
-    if payload.quantity <= 0:
-        raise HTTPException(status_code=400, detail="Quantity to add must be greater than 0")
-    asset=db.query(Asset).filter(Asset.asset_id==payload.asset_id).with_for_update().first()
-    if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    asset.total_quantity += payload.quantity
-    asset.unused += payload.quantity
+    asset=StockService.add_stock(db, payload.asset_id, payload.quantity, current_user)
     db.commit()
     db.refresh(asset)
     return asset
@@ -46,21 +39,9 @@ def allocate_asset(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
 ):
-    asset=db.query(Asset).filter(Asset.asset_id==payload.asset_id).with_for_update().first()
-    if not asset: raise HTTPException(status_code=404, detail="Asset not found")
-    if asset.unused <= 0: raise HTTPException(status_code=400, detail="Insufficient localized stock")
-    asset.unused -= 1
-    asset.used += 1
-    if asset.unused == 0: asset.asset_status=AssetStatus.ALLOCATED
-    tracking=Tracking(
-        asset_id=asset.asset_id, emp_id=payload.emp_id, branch=asset.branch,
-        movement_type=MovementType.ALLOCATE, allocation_type=payload.allocation_type,
-        movement_reason=payload.movement_reason, parent_tracking_id=payload.parent_tracking_id
-    )
-    db.add(tracking)
+    trk=StockService.allocate_asset(db, payload.asset_id, payload.emp_id, payload.allocation_type, current_user, payload.movement_reason)
     db.commit()
-    db.refresh(tracking)
-    return tracking
+    return trk
 
 @router.post("/return")
 def return_asset(
@@ -68,18 +49,6 @@ def return_asset(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
 ):
-    tracking=db.query(Tracking).filter(Tracking.tracking_id==payload.tracking_id, Tracking.returned_at==None).with_for_update().first()
-    if not tracking: raise HTTPException(status_code=404, detail="Active unresolved explicit tracking record not found")
-    asset=db.query(Asset).filter(Asset.asset_id==tracking.asset_id).with_for_update().first()
-    tracking.returned_at=func.now()
-    return_record=Tracking(
-        asset_id=asset.asset_id, emp_id=tracking.emp_id, branch=asset.branch,
-        movement_type=MovementType.RETURN, movement_reason=payload.movement_reason,
-        allocation_type=tracking.allocation_type, parent_tracking_id=tracking.parent_tracking_id
-    )
-    db.add(return_record)
-    asset.used -= 1
-    asset.unused += 1
-    asset.asset_status=AssetStatus.ACTIVE
+    trk=StockService.return_asset(db, payload.tracking_id, current_user, payload.movement_reason)
     db.commit()
-    return {"status": "success", "recovered_asset": asset.asset_id}
+    return {"status": "success", "recovered_asset": trk.asset_id}

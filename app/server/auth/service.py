@@ -19,7 +19,7 @@ ALGORITHM=os.getenv("JWT_ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
 
 pwd_context=CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/auth/token")
+oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 ROLE_PERMISSIONS={
     EmployeeRole.ADMIN: {
@@ -117,37 +117,8 @@ def get_current_user(token: str=Depends(oauth2_scheme), db: Session=Depends(get_
     return user
 
 
-def require_roles(*allowed_roles: EmployeeRole):
-    allowed={role.value for role in allowed_roles}
-
-    def role_checker(current_user: Employee=Depends(get_current_user)) -> Employee:
-        if current_user.role.value not in allowed:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to perform this action",
-            )
-        return current_user
-
-    return role_checker
-
-
 def get_role_permissions(role: EmployeeRole) -> set[str]:
     return ROLE_PERMISSIONS.get(role, set())
-
-
-def require_permissions(*permissions: str):
-    required=set(permissions)
-
-    def permission_checker(current_user: Employee=Depends(get_current_user)) -> Employee:
-        user_permissions=get_role_permissions(current_user.role)
-        if not required.issubset(user_permissions):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to perform this action",
-            )
-        return current_user
-
-    return permission_checker
 
 
 def create_oauth_user(

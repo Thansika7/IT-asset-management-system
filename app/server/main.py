@@ -1,48 +1,57 @@
 import os
 import uuid
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app.server.database.database import Base, engine, SessionLocal
-from app.server.routes import auth_router
+from app.server.routes.auth import router as auth_router
+from app.server.routes.employee import router as employee_router
 from app.server.routes.stock import router as stock_router
 from app.server.routes.request import router as req_router
-from app.server.schema import asset, employee, category, attribute, request, tracking
+from app.server.routes.account import router as account_router
+from app.server.schema import asset, employee, category, attribute, request, tracking, audit
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.auth.service import get_password_hash
+from app.server.middlewares.cors import setup_cors
+from app.server.exceptions.base import AppBaseException
 
 app=FastAPI(title="IT Asset Management System")
 
+setup_cors(app)
 Base.metadata.create_all(bind=engine)
+
+@app.exception_handler(AppBaseException)
+async def app_exception_handler(request: Request, exc: AppBaseException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.__class__.__name__, "message": exc.detail}
+    )
 
 def init_admin():
     db=SessionLocal()
     admin_email=os.getenv("ADMIN_EMAIL")
     admin_password=os.getenv("ADMIN_PASSWORD") or str(uuid.uuid4())
-    
     if admin_email:
         existing=db.query(Employee).filter(Employee.email==admin_email).first()
         if not existing:
-            admin_user=Employee(
+            db.add(Employee(
                 employee_id="ADMIN-001",
                 name="System Administrator",
                 email=admin_email,
                 role=EmployeeRole.ADMIN,
                 password_hash=get_password_hash(admin_password),
                 is_active=True
-            )
-            db.add(admin_user)
+            ))
             db.commit()
-            print(f"\n--- DEFAULT ADMIN CREATED ---")
-            print(f"EMAIL: {admin_email}")
-            print(f"PASSWORD: {admin_password}")
-            print(f"-----------------------------\n")
     db.close()
 
 init_admin()
 
 app.include_router(auth_router)
+app.include_router(employee_router)
 app.include_router(stock_router)
 app.include_router(req_router)
+app.include_router(account_router)
 
 @app.get("/health")
 def health_check():
