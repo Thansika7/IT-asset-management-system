@@ -6,6 +6,8 @@ from app.server.schema.asset import Asset, AssetStatus
 from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee
 from app.server.models.request import RequestCreate, RequestTriage, RequestReview
+from app.server.services.email_service import EmailService
+from app.server.schema.employee import EmployeeRole
 
 def get_inventory_across_branches(db: Session, category_name: str):
     from app.server.schema.category import Category
@@ -15,6 +17,14 @@ def get_inventory_across_branches(db: Session, category_name: str):
     ).join(Category).filter(Category.category_name == category_name)
     
     return query.group_by(Asset.branch).all()
+
+def get_manager_email_for_branch(db: Session, branch: str) -> str:
+    manager = db.query(Employee).filter(
+        Employee.branch == branch,
+        Employee.role == EmployeeRole.MANAGER,
+        Employee.is_active == True
+    ).first()
+    return manager.email if manager else None
 
 def create_asset_request(db: Session, payload: RequestCreate, current_user: Employee):
     req = Request(
@@ -28,6 +38,11 @@ def create_asset_request(db: Session, payload: RequestCreate, current_user: Empl
     db.add(req)
     db.commit()
     db.refresh(req)
+    
+    # Notify Help Desk and Manager
+    manager_email = get_manager_email_for_branch(db, current_user.branch)
+    EmailService.notify_request_created(current_user.name, payload.asset_name, manager_email)
+
     return req
 
 def triage_asset_request(db: Session, request_id: str, payload: RequestTriage):
@@ -97,6 +112,10 @@ def review_request_by_manager(db: Session, request_id: str, payload: RequestRevi
     
     db.commit()
     db.refresh(req)
+    
+    if payload.is_approved:
+        EmailService.notify_manager_approved(req.employee.name, req.asset_name)
+        
     return req
 
 def execute_asset_request(db: Session, request_id: str, provided_asset_id: str, broken_asset_id: str = None):
@@ -145,4 +164,9 @@ def execute_asset_request(db: Session, request_id: str, provided_asset_id: str, 
     req.stage = "COMPLETED"
     db.commit()
     db.refresh(req)
+    
+    # Notify Manager of assignment completion
+    manager_email = get_manager_email_for_branch(db, req.employee.branch)
+    EmailService.notify_asset_assigned(req.employee.name, req.asset_name, manager_email)
+    
     return {"status": "success", "executed_action": req.action_type}

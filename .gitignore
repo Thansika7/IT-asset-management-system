@@ -8,6 +8,4 @@ test.db
 .gemini/
 scripts/
 !scripts/setup_db.py
-*.css
-*.html
-*.js
+

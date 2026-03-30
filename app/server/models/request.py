@@ -14,6 +14,9 @@ class RequestTriage(BaseModel):
 class RequestReview(BaseModel):
     is_approved: bool
 
+class RequestHRVerify(BaseModel):
+    is_needed: bool
+
 class RequestResponse(BaseModel):
     request_id: str
     emp_id: str
@@ -21,6 +24,7 @@ class RequestResponse(BaseModel):
     asset_category: str
     reason: str
     action_type: Optional[str] = None
+    hr_verified: Optional[bool] = None
     status: str
     stage: str
     req_date: datetime

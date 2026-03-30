@@ -2,13 +2,14 @@ import os
 import uuid
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
+from fastapi.middleware.cors import CORSMiddleware
 from app.server.database.database import Base, engine, SessionLocal
 from app.server.routes.auth import router as auth_router
 from app.server.routes.employee import router as employee_router
 from app.server.routes.stock import router as stock_router
 from app.server.routes.request import router as req_router
 from app.server.routes.account import router as account_router
+from app.server.routes.tracking import router as tracking_router
 from app.server.schema import asset, employee, category, attribute, request, tracking, audit
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.auth.service import get_password_hash
@@ -17,7 +18,9 @@ from app.server.exceptions.base import AppBaseException
 
 app=FastAPI(title="IT Asset Management System")
 
+# Setup CORS
 setup_cors(app)
+
 Base.metadata.create_all(bind=engine)
 
 @app.exception_handler(AppBaseException)
@@ -27,6 +30,7 @@ async def app_exception_handler(request: Request, exc: AppBaseException):
         content={"error": exc.__class__.__name__, "message": exc.detail}
     )
 
+@app.on_event("startup")
 def init_admin():
     db=SessionLocal()
     admin_email=os.getenv("ADMIN_EMAIL")
@@ -43,16 +47,22 @@ def init_admin():
                 is_active=True
             ))
             db.commit()
+            print(f"\n DEFAULT ADMIN CREATED ")
+            print(f"EMAIL: {admin_email}")
+            print(f"PASSWORD: {admin_password}")
+            
     db.close()
 
-init_admin()
+# init_admin() called via @app.on_event("startup")
 
 app.include_router(auth_router)
 app.include_router(employee_router)
 app.include_router(stock_router)
 app.include_router(req_router)
 app.include_router(account_router)
+app.include_router(tracking_router)
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+

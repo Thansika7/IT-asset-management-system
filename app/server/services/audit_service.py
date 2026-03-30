@@ -1,3 +1,4 @@
+from typing import Optional, Union
 from sqlalchemy.orm import Session
 from app.server.schema.audit import AuditLog
 from app.server.schema.employee import Employee
@@ -33,7 +34,7 @@ class AuditService:
         table_name: str,
         record_id: str,
         user: Employee,
-        reason: str | None=None
+        reason: Optional[str]=None
     ):
         audit=AuditLog(
             table_name=table_name,
