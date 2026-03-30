@@ -2,15 +2,16 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
+from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.server.database.database import get_db
 from app.server.models.api import TokenPayload
-from app.server.schema import Employee, EmployeeRole
+from app.server.schema.employee import Employee, EmployeeRole
 
 load_dotenv()
 
@@ -19,7 +20,7 @@ ALGORITHM=os.getenv("JWT_ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
 
 pwd_context=CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 ROLE_PERMISSIONS={
     EmployeeRole.ADMIN: {
@@ -73,8 +74,8 @@ def get_password_hash(password: str) -> str:
 
 
 def authenticate_user(db: Session, email: str, password: str) -> Employee | None:
-    user=db.query(Employee).filter(Employee.email==email).first()
-    if not user or not user.password_hash or not user.is_active:
+    user=db.query(Employee).filter(Employee.email==email, Employee.is_active==True).first()
+    if not user or not user.password_hash:
         return None
     if not verify_password(password, user.password_hash):
         return None
@@ -98,7 +99,26 @@ def update_last_login(db: Session, user: Employee) -> None:
     db.refresh(user)
 
 
-def get_current_user(token: str=Depends(oauth2_scheme), db: Session=Depends(get_db)) -> Employee:
+def get_token_from_header_or_cookie(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme)
+) -> str:
+    if token:
+        return token
+    
+    cookie_token = request.cookies.get("access_token")
+    if cookie_token:
+        if cookie_token.startswith("Bearer "):
+            return cookie_token[7:]
+        return cookie_token
+        
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+def get_current_user(token: str=Depends(get_token_from_header_or_cookie), db: Session=Depends(get_db)) -> Employee:
     credentials_exception=HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",

@@ -8,7 +8,14 @@ from app.server.services.audit_service import AuditService
 
 class StockService:
     @staticmethod
-    def add_stock(db: Session, asset_id: str, quantity: int, user: Employee, reason: str = "RESTOCK"):
+    def add_stock(
+        db: Session, asset_id: str, quantity: int, user: Employee, 
+        reason: str = "RESTOCK",
+        cost: float | None = None,
+        vendor_name: str | None = None,
+        vendor_contact: str | None = None,
+        invoice_number: str | None = None
+    ):
         if quantity <= 0:
             raise InvalidStateError("Stock addition quantity must be greater than zero.")
 
@@ -31,6 +38,14 @@ class StockService:
         }
         
         AuditService.log_change(db, "assets", asset_id, "UPDATE", user, old_val, new_val, reason)
+
+        # Integration: Record procurement if financial data provided
+        if cost is not None:
+            from app.server.services.account_service import AccountService
+            AccountService.update_procurement(
+                db, asset_id, cost, vendor_name, vendor_contact, invoice_number, user, "PROCUREMENT_VIA_STOCK_ADD"
+            )
+
         return asset
 
     @staticmethod
