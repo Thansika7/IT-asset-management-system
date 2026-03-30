@@ -120,16 +120,20 @@ class RequestService:
             if not active_trk:
                 raise HTTPException(status_code=400, detail="Employee does not currently hold this asset")
 
-            # 2. Mark original asset as IN_REPAIR
+            # 2. Return original asset from user (increments unused)
+            StockService.return_asset(db, active_trk.tracking_id, user, "SENT_FOR_REPAIR")
+
+            # 3. Mark original asset as IN_REPAIR and lock it (decrement unused back)
             asset = db.query(Asset).filter(Asset.asset_id==broken_asset_id).with_for_update().first()
             asset.asset_status = AssetStatus.IN_REPAIR
+            asset.unused -= 1
             
-            # 3. Provided asset is a LOANER
+            # 4. Provided asset is a LOANER
             if provided_asset_id:
                 StockService.allocate_asset(db, provided_asset_id, req.emp_id, AllocationType.TEMPORARY, user, f"LOANER_FOR_REQ_{request_id}")
             
             req.serviced_asset_id = broken_asset_id
-            req.status = "WIP_SERVICE" # Custom status for tracking active repairs
+            req.status = "WIP_SERVICE"
             
         db.commit()
         db.refresh(req)
@@ -168,8 +172,8 @@ class RequestService:
                 # If they held it, mark it returned from repair but immediately retired
             else:
                 repaired_asset.asset_status = AssetStatus.ACTIVE
-                # Return to employee: Create tracking record without touching stock counts
-                # since the asset was already accounted for as 'used' during the repair period.
+                repaired_asset.used += 1 # Restore used count manually
+                # Return to employee: Create tracking record
                 new_trk = Tracking(
                     asset_id=repaired_asset.asset_id,
                     emp_id=req.emp_id,

@@ -20,18 +20,18 @@ def register_employee(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.ADMIN))
 ):
-    existing=db.query(Employee).filter(Employee.email==payload.email).first()
+    email_lower=payload.email.lower()
+    existing=db.query(Employee).filter(Employee.email==email_lower).first()
     if existing:
         raise InvalidStateError("The provided email address is already associated with an existing account.")
 
-    raw_password=str(uuid.uuid4())
     user=Employee(
         name=payload.name,
-        email=payload.email,
+        email=email_lower,
         phone=payload.phone,
         branch=payload.branch,
         role=payload.role,
-        password_hash=get_password_hash(raw_password),
+        password_hash=get_password_hash(payload.password),
         is_active=True,
     )
     db.add(user)
@@ -47,7 +47,6 @@ def register_employee(
 
     db.commit()
     db.refresh(user)
-    user.generated_password=raw_password
     return user
 
 @router.get("/", response_model=List[EmployeeRead])
