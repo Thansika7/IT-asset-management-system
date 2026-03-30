@@ -1,11 +1,12 @@
+from __future__ import annotations
+
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Set
 
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
-from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -138,7 +139,7 @@ def get_current_user(token: str=Depends(get_token_from_header_or_cookie), db: Se
     return user
 
 
-def get_role_permissions(role: EmployeeRole) -> set[str]:
+def get_role_permissions(role: EmployeeRole) -> Set[str]:
     return ROLE_PERMISSIONS.get(role, set())
 
 
