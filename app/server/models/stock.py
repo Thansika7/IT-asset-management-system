@@ -7,6 +7,10 @@ from datetime import datetime
 class StockAdd(BaseModel):
     asset_id: str
     quantity: int
+    cost: Optional[float] = None
+    vendor_name: Optional[str] = None
+    vendor_contact: Optional[str] = None
+    invoice_number: Optional[str] = None
 
 class StockResponse(BaseModel):
     model_config=ConfigDict(from_attributes=True)

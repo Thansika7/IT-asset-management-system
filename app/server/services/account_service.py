@@ -9,8 +9,9 @@ from sqlalchemy.sql import func
 class AccountService:
     @staticmethod
     def update_procurement(
-        db: Session, asset_id: str, cost: float, vendor_name: str, 
-        vendor_contact: str, invoice: str, user: Employee, reason: str = "PROCUREMENT_UPDATE"
+        db: Session, asset_id: str, cost: float, vendor_name: str | None = None, 
+        vendor_contact: str | None = None, invoice: str | None = None, 
+        user: Employee | None = None, reason: str = "PROCUREMENT_UPDATE"
     ):
         asset=db.query(Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
         if not asset: raise ResourceNotFoundError("Asset", asset_id)
@@ -24,18 +25,59 @@ class AccountService:
         if cost < 0:
             raise InvalidStateError("Purchase cost cannot be negative.")
 
-        asset.purchase_cost=cost
-        asset.vendor_name=vendor_name
-        asset.vendor_contact=vendor_contact
-        asset.invoice_number=invoice
+        # Simple total investment: cumulative addition
+        asset.purchase_cost = (asset.purchase_cost or 0.0) + cost
+        if vendor_name: asset.vendor_name=vendor_name
+        if vendor_contact: asset.vendor_contact=vendor_contact
+        if invoice: asset.invoice_number=invoice
         
         AuditService.log_change(db, "assets", asset_id, "UPDATE", user, old_val, {
-            "purchase_cost": cost,
-            "vendor_name": vendor_name,
-            "vendor_contact": vendor_contact,
-            "invoice_number": invoice
+            "purchase_cost": asset.purchase_cost,
+            "vendor_name": asset.vendor_name,
+            "vendor_contact": asset.vendor_contact,
+            "invoice_number": asset.invoice_number
         }, reason)
         return asset
+
+    @staticmethod
+    def add_maintenance_cost(db: Session, asset_id: str, cost: float, user: Employee, reason: str = "MAINTENANCE_LOG"):
+        asset=db.query(Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
+        if not asset: raise ResourceNotFoundError("Asset", asset_id)
+        
+        if cost < 0: raise InvalidStateError("Maintenance cost cannot be negative.")
+
+        old_val = {"maintenance_total_cost": asset.maintenance_total_cost}
+        asset.maintenance_total_cost = (asset.maintenance_total_cost or 0.0) + cost
+        
+        AuditService.log_change(db, "assets", asset_id, "UPDATE", user, old_val, {
+            "maintenance_total_cost": asset.maintenance_total_cost
+        }, reason)
+        return asset
+
+    @staticmethod
+    def get_financial_dashboard(db: Session, branch: str | None = None):
+        query = db.query(Asset)
+        if branch:
+            query = query.filter(Asset.branch == branch)
+        
+        assets = query.all()
+        
+        summary = {
+            "total_asset_value": sum(a.purchase_cost or 0.0 for a in assets),
+            "total_maintenance_overhead": sum(a.maintenance_total_cost or 0.0 for a in assets),
+            "unused_asset_value": 0.0, # Estimated value of idle stock
+            "asset_count": len(assets),
+            "stock_count": sum(a.total_quantity for a in assets)
+        }
+        
+        # Calculate Dead Capital (Value of Unused Stock)
+        # Using a simple ratio: (Unused / Total) * PurchaseCost
+        for a in assets:
+            if a.total_quantity > 0:
+                unit_value = (a.purchase_cost or 0.0) / a.total_quantity
+                summary["unused_asset_value"] += unit_value * a.unused
+                
+        return summary
 
     @staticmethod
     def get_asset_tco(db: Session, asset_id: str):

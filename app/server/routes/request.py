@@ -1,17 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
-from typing import List
+from typing import List, Optional
 
 from app.server.database.database import get_db
-from app.server.models.request import RequestCreate, RequestTriage, RequestReview, RequestResponse
+from app.server.models.request import RequestCreate, RequestTriage, RequestReview, RequestResolve, RequestResponse, RequestHRVerify
 from app.server.schema.request import Request
-from app.server.schema.asset import Asset, AssetStatus
-from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.auth.service import get_current_user
 from app.server.middlewares.auth import require_roles
-from app.server.services import request_service
+from app.server.auth.service import get_current_user
+from app.server.services.request_service import RequestService
 
 router=APIRouter(prefix="/requests", tags=["requests"])
 
@@ -28,9 +25,9 @@ def list_requests(
 def create_request(
     payload: RequestCreate, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(get_current_user)
+    current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
 ):
-    return request_service.create_asset_request(db, payload, current_user)
+    return RequestService.create_asset_request(db, payload, current_user)
 
 @router.post("/{request_id}/triage", response_model=RequestResponse)
 def triage_request(
@@ -39,26 +36,25 @@ def triage_request(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.ADMIN))
 ):
-    return request_service.triage_asset_request(db, request_id, payload)
+    return RequestService.triage_asset_request(db, request_id, payload, current_user)
+
+@router.post("/{request_id}/review/hr", response_model=RequestResponse)
+def hr_review(
+    request_id: str, 
+    payload: RequestHRVerify, 
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.ADMIN))
+):
+    return RequestService.review_request_by_hr(db, request_id, payload, current_user)
 
 @router.post("/{request_id}/review/manager", response_model=RequestResponse)
 def manager_review(
     request_id: str, 
     payload: RequestReview, 
-    branch_context: str, 
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.MANAGER, EmployeeRole.ADMIN))
 ):
-    return request_service.review_request_by_manager(db, request_id, payload)
-
-@router.post("/{request_id}/review/hr", response_model=RequestResponse)
-def hr_review(
-    request_id: str, 
-    payload: RequestReview, 
-    db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.ADMIN))
-):
-    return request_service.review_request_by_hr(db, request_id, payload)
+    return RequestService.review_request_by_manager(db, request_id, payload, current_user)
 
 @router.post("/{request_id}/review/admin", response_model=RequestResponse)
 def admin_review(
@@ -67,25 +63,25 @@ def admin_review(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
 ):
-
-    req=db.query(Request).filter(Request.request_id==request_id).first()
-    if not req: raise HTTPException(status_code=404)
-    if payload.is_approved:
-        req.status="WIP"
-        req.stage="READY" 
-    else:
-        req.status="REJECTED"
-        req.stage="REJECTED"
-    db.commit()
-    db.refresh(req)
-    return req
+    return RequestService.review_request_by_admin(db, request_id, payload, current_user)
 
 @router.post("/{request_id}/execute")
 def execute_request(
     request_id: str, 
-    provided_asset_id: str, 
-    broken_asset_id: str=None, 
+    provided_asset_id: Optional[str] = None, 
+    broken_asset_id: Optional[str] = None, 
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.ADMIN))
 ):
-    return request_service.execute_asset_request(db, request_id, provided_asset_id, broken_asset_id)
+    req=RequestService.execute_asset_request(db, request_id, provided_asset_id, broken_asset_id, current_user)
+    return {"status": "success", "executed_action": req.action_type, "new_status": req.status}
+
+@router.post("/{request_id}/resolve")
+def resolve_request(
+    request_id: str,
+    payload: RequestResolve,
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.ADMIN))
+):
+    req=RequestService.resolve_service_request(db, request_id, payload, current_user)
+    return {"status": "resolved", "final_action": "REPAIRED_AND_RETURNED", "new_status": req.status}

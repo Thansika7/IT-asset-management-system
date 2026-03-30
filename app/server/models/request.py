@@ -17,16 +17,22 @@ class RequestReview(BaseModel):
 class RequestHRVerify(BaseModel):
     is_needed: bool
 
+class RequestResolve(BaseModel):
+    resolution_notes: str
+    repair_cost: Optional[float] = 0.0
+    # True if the original asset is non-repairable and should be retired
+    is_disposable: bool = False
+
 class RequestResponse(BaseModel):
     request_id: str
     emp_id: str
     asset_name: str
     asset_category: str
     reason: str
+    status: str
+    stage: Optional[str] = None
     action_type: Optional[str] = None
     hr_verified: Optional[bool] = None
-    status: str
-    stage: str
     req_date: datetime
     
     class Config:
