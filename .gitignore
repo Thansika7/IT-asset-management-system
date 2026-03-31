@@ -1,4 +1,11 @@
-*.env
-*__pycache__/
+.env
+__pycache__/
+*.pyc
+.venv/
 venv/
-*.md
+*.db
+test.db
+.gemini/
+scripts/
+!scripts/setup_db.py
+

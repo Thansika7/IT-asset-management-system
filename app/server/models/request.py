@@ -6,6 +6,7 @@ class RequestCreate(BaseModel):
     asset_name: str
     asset_category: str
     reason: str
+    action_type: Optional[str] = "new"
 
 class RequestTriage(BaseModel):
     action_type: str
@@ -32,7 +33,8 @@ class RequestResponse(BaseModel):
     stage: Optional[str] = None
     hr_verified: Optional[bool] = None
     action_type: Optional[str] = None
+    hr_verified: Optional[bool] = None
     req_date: datetime
-
+    
     class Config:
         from_attributes = True

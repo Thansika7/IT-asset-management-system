@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional, Set
 
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
-from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -15,9 +17,9 @@ from app.server.schema.employee import Employee, EmployeeRole
 
 load_dotenv()
 
-SECRET_KEY=os.getenv("SECRET_KEY")
-ALGORITHM=os.getenv("JWT_ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+SECRET_KEY=os.getenv("SECRET_KEY", "dev_secret_key_change_me_in_production")
+ALGORITHM=os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 pwd_context=CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
@@ -138,7 +140,7 @@ def get_current_user(token: str=Depends(get_token_from_header_or_cookie), db: Se
     return user
 
 
-def get_role_permissions(role: EmployeeRole) -> set[str]:
+def get_role_permissions(role: EmployeeRole) -> Set[str]:
     return ROLE_PERMISSIONS.get(role, set())
 
 
@@ -149,8 +151,8 @@ def create_oauth_user(
     email: str,
     oauth_provider: str,
     oauth_subject: str,
-    branch: str | None=None,
-    phone: str | None=None,
+    branch: Optional[str]=None,
+    phone: Optional[str]=None,
     role: EmployeeRole=EmployeeRole.EMPLOYEE,
 ) -> Employee:
     email_lower=email.lower()

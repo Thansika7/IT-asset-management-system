@@ -56,6 +56,15 @@ def manager_review(
 ):
     return RequestService.review_request_by_manager(db, request_id, payload, current_user)
 
+@router.post("/{request_id}/review/admin", response_model=RequestResponse)
+def admin_review(
+    request_id: str, 
+    payload: RequestReview, 
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
+):
+    return RequestService.review_request_by_admin(db, request_id, payload, current_user)
+
 @router.post("/{request_id}/execute")
 def execute_request(
     request_id: str, 
