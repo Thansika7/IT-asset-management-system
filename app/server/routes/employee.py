@@ -24,6 +24,33 @@ def register_employee(
     existing=db.query(Employee).filter(Employee.email==email_lower).first()
     if existing:
         raise InvalidStateError("The provided email address is already associated with an existing account.")
+        
+    if payload.phone:
+        existing_phone = db.query(Employee).filter(Employee.phone == payload.phone).first()
+        if existing_phone:
+            raise InvalidStateError("The provided phone number is already associated with an existing account.")
+
+    # Role Population Constraints
+    # 1. Global Admin Limit
+    if payload.role == EmployeeRole.ADMIN:
+        admin_count = db.query(Employee).filter(Employee.role == EmployeeRole.ADMIN, Employee.is_active == True).count()
+        if admin_count >= 1:
+            raise HTTPException(status_code=400, detail="A Global System Administrator already exists. Only 1 Admin is allowed.")
+
+    # 2. Branch-specific limits
+    if payload.role in [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR]:
+        current_count = db.query(Employee).filter(
+            Employee.branch == payload.branch,
+            Employee.role == payload.role,
+            Employee.is_active == True
+        ).count()
+        
+        if payload.role == EmployeeRole.MANAGER and current_count >= 1:
+            raise HTTPException(status_code=400, detail=f"Branch '{payload.branch}' already has a Manager. Only 1 is allowed per branch.")
+        if payload.role == EmployeeRole.SUPPORT_TEAM and current_count >= 1:
+            raise HTTPException(status_code=400, detail=f"Branch '{payload.branch}' already has a Support Team member. Only 1 is allowed per branch.")
+        if payload.role == EmployeeRole.HR and current_count >= 3:
+            raise HTTPException(status_code=400, detail=f"Branch '{payload.branch}' already has 3 HR members. Only 3 are allowed per branch.")
 
     user=Employee(
         name=payload.name,

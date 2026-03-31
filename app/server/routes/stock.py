@@ -9,6 +9,7 @@ from app.server.schema.category import Category
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.middlewares.auth import require_roles
 from app.server.services.stock_service import StockService
+from app.server.services.cron_service import CronService
 
 # Tagging as internal/manual-override to prioritize the automated Request lifecycle
 router=APIRouter(prefix="/stock", tags=["stock_inventory_manual"])
@@ -89,3 +90,15 @@ def manual_return(
     trk=StockService.return_asset(db, payload.tracking_id, current_user, payload.movement_reason)
     db.commit()
     return {"status": "success", "recovered_asset": trk.asset_id}
+
+@router.post("/check-expirations")
+def trigger_expiration_check(
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
+):
+    """
+    Manually triggers the daily scan for Warranty and License expirations.
+    In production, this could be pinged by a cron job at midnight.
+    """
+    result = CronService.check_and_notify_expirations(db)
+    return result

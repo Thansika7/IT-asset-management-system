@@ -14,6 +14,11 @@ class RequestTriage(BaseModel):
 class RequestReview(BaseModel):
     is_approved: bool
 
+class RequestCrossBranchTransfer(BaseModel):
+    target_branch: str
+    target_asset_brand: str
+    target_asset_name: str
+
 class RequestHRVerify(BaseModel):
     is_needed: bool
 
