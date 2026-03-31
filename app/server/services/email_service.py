@@ -128,3 +128,47 @@ class EmailService:
         """
         if manager_email:
             cls._send_email(manager_email, subject, body)
+
+    @classmethod
+    def notify_support_approaching_expiry(cls, expiring_assets: list):
+        helpdesk_email = os.getenv("HELP_DESK_EMAIL")
+        if not helpdesk_email:
+            return
+
+        subject = "Action Required: Assets Approaching Expiry"
+        
+        rows = ""
+        for item in expiring_assets:
+            color = "#ef4444" if item["days_left"] <= 7 else "#f59e0b"
+            rows += f"""
+            <tr>
+                <td style='padding: 8px; border-bottom: 1px solid #ddd;'>{item['asset_name']} ({item['asset_id'][:8]})</td>
+                <td style='padding: 8px; border-bottom: 1px solid #ddd;'>{item['type']}</td>
+                <td style='padding: 8px; border-bottom: 1px solid #ddd; color: {color};'><strong>{item['days_left']}</strong></td>
+                <td style='padding: 8px; border-bottom: 1px solid #ddd;'>{item['expiry_date']}</td>
+            </tr>
+            """
+
+        body = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; color: #333;">
+                <h2 style='color: #6366f1;'>Upcoming Asset Expirations</h2>
+                <p>The following assets have warranties or licenses expiring within the next 30 days:</p>
+                <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                    <thead>
+                        <tr style="background-color: #f3f4f6;">
+                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Asset</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Expiry Type</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Days Left</th>
+                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows}
+                    </tbody>
+                </table>
+                <p style="margin-top: 20px;">Please take appropriate renewal action.</p>
+            </body>
+        </html>
+        """
+        cls._send_email(helpdesk_email, subject, body)
