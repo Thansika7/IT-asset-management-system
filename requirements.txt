@@ -9,3 +9,4 @@ python-multipart==0.0.20
 pydantic[email]==2.11.7
 psycopg2
 supabase
+requests

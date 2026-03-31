@@ -1,0 +1,321 @@
+import React, { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  flexRender,
+} from '@tanstack/react-table'
+import { apiFetch } from '@/lib/api'
+import { R, canRegisterEmployees, canDeactivateEmployees, labelForRole } from '@/lib/roles'
+import { useAuth } from '@/context/AuthContext'
+import { RefreshCw, UserPlus, X, UserMinus } from 'lucide-react'
+
+export default function Employees() {
+  const { user } = useAuth()
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [deact, setDeact] = useState(null)
+
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
+    queryKey: ['employees'],
+    queryFn: () => apiFetch('/employees/'),
+  })
+
+  const regMut = useMutation({
+    mutationFn: (body) => apiFetch('/employees/register', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['employees'] })
+      setOpen(false)
+    },
+  })
+
+  const deactivateMut = useMutation({
+    mutationFn: (empId) => apiFetch(`/employees/${empId}/deactivate`, { method: 'POST' }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['employees'] })
+      qc.invalidateQueries({ queryKey: ['stock'] })
+      qc.invalidateQueries({ queryKey: ['tracking'] })
+      qc.invalidateQueries({ queryKey: ['my-assets'] })
+      setDeact(null)
+      const n = res?.recovered_hardware
+      if (typeof n === 'number') {
+        window.alert(`Employee deactivated. Recovered ${n} active assignment(s) to stock.`)
+      }
+    },
+  })
+
+  const columns = useMemo(
+    () => [
+      {
+        header: 'Name',
+        accessorKey: 'name',
+        cell: (c) => <span className="font-semibold text-slate-900">{c.getValue()}</span>,
+      },
+      {
+        header: 'Role',
+        accessorKey: 'role',
+        cell: (c) => {
+          const r = String(c.getValue() || '').toLowerCase()
+          const styles = {
+            [R.ADMIN]: 'bg-violet-100 text-violet-800 border-violet-200',
+            [R.HR]: 'bg-pink-100 text-pink-800 border-pink-200',
+            [R.MANAGER]: 'bg-blue-100 text-blue-800 border-blue-200',
+            [R.SUPPORT_TEAM]: 'bg-cyan-100 text-cyan-800 border-cyan-200',
+            [R.EMPLOYEE]: 'bg-slate-100 text-slate-700 border-slate-200',
+          }
+          return (
+            <span className={`px-2.5 py-1 border rounded-lg text-[11px] font-bold uppercase tracking-wide ${styles[r] || styles[R.EMPLOYEE]}`}>
+              {labelForRole(r)}
+            </span>
+          )
+        },
+      },
+      { header: 'Employee ID', accessorKey: 'employee_id', cell: (c) => <span className="font-mono text-xs text-slate-600">{c.getValue()}</span> },
+      { header: 'Branch', accessorKey: 'branch', cell: (c) => c.getValue() || '—' },
+      { header: 'Email', accessorKey: 'email', cell: (c) => <span className="font-mono text-xs text-slate-600">{c.getValue()}</span> },
+      {
+        header: 'Status',
+        accessorKey: 'is_active',
+        cell: (c) =>
+          c.getValue() ? (
+            <span className="text-emerald-700 text-xs font-semibold">Active</span>
+          ) : (
+            <span className="text-rose-600 text-xs font-semibold">Inactive</span>
+          ),
+      },
+      {
+        id: 'actions',
+        header: 'Actions',
+        cell: ({ row }) => {
+          const emp = row.original
+          if (!emp?.is_active) return <span className="text-slate-400 text-xs">—</span>
+          if (!canDeactivateEmployees(user.role)) return <span className="text-slate-400 text-xs">—</span>
+          if (user.employeeId && emp.employee_id === user.employeeId) {
+            return <span className="text-xs text-slate-400">Current user</span>
+          }
+          return (
+            <button
+              type="button"
+              onClick={() => setDeact({ id: emp.employee_id, name: emp.name })}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100"
+            >
+              <UserMinus className="w-3.5 h-3.5" />
+              Deactivate
+            </button>
+          )
+        },
+      },
+    ],
+    [user.role, user.employeeId],
+  )
+
+  const rows = data || []
+  const table = useReactTable({
+    data: rows,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  })
+
+  return (
+    <div className="p-6 sm:p-8 max-w-7xl mx-auto space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Team</h1>
+          <p className="text-sm text-slate-600 mt-1">
+            Active employees from <code className="text-xs bg-slate-100 px-1 rounded">GET /employees/</code>. HR and admin
+            can <strong className="font-medium text-slate-800">deactivate</strong> and recover hardware to stock.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          {canRegisterEmployees(user.role) ? (
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-semibold hover:bg-slate-800"
+            >
+              <UserPlus className="w-4 h-4" />
+              Register
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {open && canRegisterEmployees(user.role) ? (
+        <RegisterModal
+          onClose={() => setOpen(false)}
+          onSubmit={(body) => regMut.mutate(body)}
+          busy={regMut.isPending}
+          error={regMut.error?.message}
+        />
+      ) : null}
+
+      {deact ? (
+        <ConfirmDeactivate
+          name={deact.name}
+          empId={deact.id}
+          busy={deactivateMut.isPending}
+          error={deactivateMut.error?.message}
+          onCancel={() => setDeact(null)}
+          onConfirm={() => deactivateMut.mutate(deact.id)}
+        />
+      ) : null}
+
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+        {isLoading ? (
+          <div className="p-16 text-center text-slate-400 animate-pulse">Loading…</div>
+        ) : isError ? (
+          <div className="p-6 text-rose-700 text-sm">{error?.message}</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm min-w-[900px]">
+              <thead>
+                {table.getHeaderGroups().map((hg) => (
+                  <tr key={hg.id} className="bg-slate-50 border-b border-slate-200">
+                    {hg.headers.map((h) => (
+                      <th
+                        key={h.id}
+                        className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider cursor-pointer"
+                        onClick={h.column.getToggleSortingHandler()}
+                      >
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                      </th>
+                    ))}
+                  </tr>
+                ))}
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {table.getRowModel().rows.map((row) => (
+                  <tr key={row.id} className="hover:bg-slate-50/80">
+                    {row.getVisibleCells().map((cell) => (
+                      <td key={cell.id} className="p-4">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <button type="button" className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" aria-label="Close" onClick={onCancel} />
+      <div className="relative w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-xl p-6">
+        <h3 className="text-lg font-bold text-slate-900">Deactivate employee?</h3>
+        <p className="text-sm text-slate-600 mt-2">
+          <strong>{name}</strong> <span className="font-mono text-xs text-slate-500">({empId})</span> will be marked inactive. All open assignments are returned to inventory (
+          <code className="text-xs bg-slate-100 px-1 rounded">POST /employees/…/deactivate</code>).
+        </p>
+        {error ? <p className="text-xs text-rose-600 mt-3">{error}</p> : null}
+        <div className="flex gap-2 mt-5">
+          <button type="button" onClick={onCancel} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onConfirm}
+            className="flex-1 rounded-xl bg-rose-600 text-white py-2.5 text-sm font-semibold disabled:opacity-50"
+          >
+            {busy ? 'Working…' : 'Deactivate'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RegisterModal({ onClose, onSubmit, busy, error }) {
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [branch, setBranch] = useState('')
+  const [role, setRole] = useState(R.EMPLOYEE)
+  const [password, setPassword] = useState('')
+  const [onboardIds, setOnboardIds] = useState('')
+
+  const parseOnboarding = () => {
+    const parts = onboardIds
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    return [...new Set(parts)]
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <button type="button" className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" aria-label="Close" onClick={onClose} />
+      <div className="relative w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-slate-900">Register employee</h3>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <p className="text-xs text-slate-500 mb-4">
+          Password rules: 8+ chars, uppercase, digit, special char. Phone: 10 digits if provided. Optional onboarding assigns catalog assets (
+          manual allocate per id).
+        </p>
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            onSubmit({
+              name,
+              email,
+              phone: phone || null,
+              branch: branch || null,
+              role,
+              password,
+              onboarding_asset_ids: parseOnboarding(),
+            })
+          }}
+        >
+          <input required className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input required type="email" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Phone (10 digits)" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value={R.EMPLOYEE}>Employee</option>
+            <option value={R.HR}>HR</option>
+            <option value={R.MANAGER}>Manager</option>
+            <option value={R.SUPPORT_TEAM}>Support</option>
+            <option value={R.ADMIN}>Admin</option>
+          </select>
+          <input required type="password" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Initial password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono text-xs"
+            placeholder="Onboarding asset IDs (comma-separated, optional)"
+            value={onboardIds}
+            onChange={(e) => setOnboardIds(e.target.value)}
+          />
+          {error ? <p className="text-xs text-rose-600">{error}</p> : null}
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">
+              Cancel
+            </button>
+            <button type="submit" disabled={busy} className="flex-1 rounded-xl bg-slate-900 text-white py-2.5 text-sm font-semibold disabled:opacity-50">
+              {busy ? 'Saving…' : 'Create'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}

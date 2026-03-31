@@ -76,7 +76,14 @@ def manual_allocate(
     current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
 ):
     """Emergency manual allocation (Bypasses Request workflow)."""
-    trk=StockService.allocate_asset(db, payload.asset_id, payload.emp_id, payload.allocation_type, current_user, payload.movement_reason)
+    trk=StockService.allocate_asset(
+        db,
+        payload.asset_id,
+        payload.emp_id,
+        payload.allocation_type,
+        current_user,
+        payload.movement_reason or "MANUAL_ALLOCATE",
+    )
     db.commit()
     return trk
 
@@ -87,7 +94,7 @@ def manual_return(
     current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
 ):
     """Emergency manual return (Bypasses Request workflow)."""
-    trk=StockService.return_asset(db, payload.tracking_id, current_user, payload.movement_reason)
+    trk=StockService.return_asset(db, payload.tracking_id, current_user, payload.movement_reason or "MANUAL_RETURN")
     db.commit()
     return {"status": "success", "recovered_asset": trk.asset_id}
 

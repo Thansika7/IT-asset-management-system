@@ -19,7 +19,12 @@ def login(
     if not user:
         raise UnauthorizedActionError()
     update_last_login(db, user)
-    access_token=create_access_token(subject=user.email, role=user.role)
+    access_token=create_access_token(
+        subject=user.email,
+        role=user.role,
+        employee_id=user.employee_id,
+        branch=user.branch,
+    )
     
     # Set the cookie for automatic authorization in Swagger UI
     response.set_cookie(
@@ -44,7 +49,12 @@ def login_json(
     if not user:
         raise UnauthorizedActionError()
     update_last_login(db, user)
-    access_token=create_access_token(subject=user.email, role=user.role)
+    access_token=create_access_token(
+        subject=user.email,
+        role=user.role,
+        employee_id=user.employee_id,
+        branch=user.branch,
+    )
     
     # Also set a cookie for convenience, though frontend uses the token directly.
     response.set_cookie(

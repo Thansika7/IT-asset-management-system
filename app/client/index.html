@@ -1,70 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - IT Asset Management</title>
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style.css">
-    <style>
-        body {
-            /* Beautiful dynamic background for login */
-            background: linear-gradient(-45deg, #1e293b, #3b82f6, #0f172a, #60a5fa);
-            background-size: 400% 400%;
-            animation: gradientBG 15s ease infinite;
-        }
-
-        [data-theme="light"] body {
-            background: linear-gradient(-45deg, #f8fafc, #93c5fd, #e2e8f0, #bfdbfe);
-            background-size: 400% 400%;
-            animation: gradientBG 15s ease infinite;
-        }
-
-        @keyframes gradientBG {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-        }
-
-        .login-box {
-            /* Ensure the login box stands out against the animated background */
-            background: var(--glass-bg);
-            border: 1px solid var(--glass-border);
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-        }
-    </style>
-</head>
-<body>
-
-    <button id="themeToggleBtn" class="theme-toggle" aria-label="Toggle Theme"></button>
-
-    <div class="login-wrapper">
-        <div class="login-box glass">
-            <h1>Workspace Entry</h1>
-            <p class="subtitle">IT Resource & Asset Management</p>
-
-            <form id="loginForm">
-                <div class="form-group">
-                    <label for="username">Email Address</label>
-                    <input type="email" id="username" name="username" required placeholder="name@company.com" autocomplete="email">
-                </div>
-
-                <div class="form-group">
-                    <label for="password">Password</label>
-                    <input type="password" id="password" name="password" required placeholder="••••••••" autocomplete="current-password">
-                </div>
-
-                <div id="loginError" class="error-message">Invalid credentials provided.</div>
-
-                <button type="submit" class="btn-primary" id="loginSubmitBtn">Secure Login</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Scripts -->
-    <script src="js/theme.js"></script>
-    <script src="js/api.js"></script>
-    <script src="js/auth.js"></script>
-</body>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IT Asset Management</title>
+  </head>
+  <body class="bg-slate-50 text-slate-900 antialiased font-sans">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
 </html>

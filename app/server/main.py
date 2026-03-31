@@ -1,10 +1,11 @@
 import os
 import uuid
 import logging
+import time
 from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from jose import JWTError, jwt
 from app.server.database.database import Base, engine, SessionLocal
 from app.server.routes.auth import router as auth_router
 from app.server.routes.employee import router as employee_router
@@ -14,9 +15,10 @@ from app.server.routes.account import router as account_router
 from app.server.routes.tracking import router as tracking_router
 from app.server.schema import asset, employee, category, attribute, request, tracking, audit
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.auth.service import get_password_hash
+from app.server.auth.service import ALGORITHM, SECRET_KEY, get_password_hash
 from app.server.middlewares.cors import setup_cors
 from app.server.exceptions.base import AppBaseException
+from app.server.logging_utils import StructuredDefaultsFilter, StructuredJsonFormatter
 
 # --- Configure Daily Rotating Logs ---
 class DailyFileHandler(logging.FileHandler):
@@ -36,13 +38,15 @@ class DailyFileHandler(logging.FileHandler):
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         DailyFileHandler("logs"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+for handler in logging.getLogger().handlers:
+    handler.setFormatter(StructuredJsonFormatter())
+    handler.addFilter(StructuredDefaultsFilter())
 
 app=FastAPI(title="IT Asset Management System")
 
@@ -57,6 +61,80 @@ async def app_exception_handler(request: Request, exc: AppBaseException):
         status_code=exc.status_code,
         content={"error": exc.__class__.__name__, "message": exc.detail}
     )
+
+
+def _extract_user_id(request: Request) -> str:
+    token = request.headers.get("Authorization", "")
+    if token.startswith("Bearer "):
+        token = token[7:]
+    elif request.cookies.get("access_token", "").startswith("Bearer "):
+        token = request.cookies.get("access_token")[7:]
+    else:
+        token = request.cookies.get("access_token", "")
+
+    if not token:
+        return "anonymous"
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return "anonymous"
+
+    email = str(payload.get("sub", "")).lower()
+    if not email:
+        return "anonymous"
+
+    db = SessionLocal()
+    try:
+        user = db.query(Employee).filter(Employee.email == email).first()
+        return user.employee_id if user else email
+    finally:
+        db.close()
+
+
+@app.middleware("http")
+async def structured_request_logging(request: Request, call_next):
+    start = time.perf_counter()
+    user_id = _extract_user_id(request)
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        response_time = int((time.perf_counter() - start) * 1000)
+        logger.exception(
+            "HTTP request failed",
+            extra={
+                "userId": user_id,
+                "endpoint": request.url.path,
+                "method": request.method,
+                "statusCode": 500,
+                "responseTime": response_time,
+            },
+        )
+        raise
+
+    response_time = int((time.perf_counter() - start) * 1000)
+    message = "HTTP request completed"
+    level = logging.INFO
+    if response.status_code >= 500:
+        message = "HTTP request failed"
+        level = logging.ERROR
+    elif response.status_code >= 400:
+        message = "HTTP request completed with client error"
+        level = logging.WARNING
+
+    logger.log(
+        level,
+        message,
+        extra={
+            "userId": user_id,
+            "endpoint": request.url.path,
+            "method": request.method,
+            "statusCode": response.status_code,
+            "responseTime": response_time,
+        },
+    )
+    return response
 
 @app.on_event("startup")
 def init_admin():
@@ -77,9 +155,16 @@ def init_admin():
             )
             db.add(admin_emp)
             db.commit()
-            print(f"\n DEFAULT ADMIN CREATED ")
-            print(f"EMAIL: {admin_email}")
-            print(f"PASSWORD: {admin_password}")
+            logger.info(
+                "Default admin created",
+                extra={
+                    "userId": admin_emp.employee_id,
+                    "endpoint": "/startup",
+                    "method": "SYSTEM",
+                    "statusCode": 201,
+                    "responseTime": 0,
+                },
+            )
             
     db.close()
 

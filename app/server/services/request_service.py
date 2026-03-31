@@ -14,10 +14,12 @@ from app.server.services.stock_service import StockService
 from app.server.services.account_service import AccountService
 from app.server.services.audit_service import AuditService
 
+
 class RequestService:
     @staticmethod
     def get_inventory_across_branches(db: Session, category_name: str):
         from app.server.schema.category import Category
+
         query = db.query(
             Asset.branch,
             Asset.brand,
@@ -30,22 +32,27 @@ class RequestService:
         return query.group_by(Asset.branch, Asset.brand, Asset.name).all()
 
     @staticmethod
-    def get_manager_email_for_branch(db: Session, branch: str) -> str:
+    def get_manager_email_for_branch(db: Session, branch: str) -> str | None:
         manager = db.query(Employee).filter(
             Employee.branch == branch,
             Employee.role == EmployeeRole.MANAGER,
-            Employee.is_active == True
+            Employee.is_active == True,
         ).first()
         return manager.email if manager else None
 
     @staticmethod
     def create_asset_request(db: Session, payload: RequestCreate, current_user: Employee):
-        # 1. Role-based Restriction: Only employee, manager, and HR can request
-        allowed_roles = [EmployeeRole.EMPLOYEE, EmployeeRole.MANAGER, EmployeeRole.HR]
+        allowed_roles = [
+            EmployeeRole.EMPLOYEE,
+            EmployeeRole.MANAGER,
+            EmployeeRole.HR,
+            EmployeeRole.ADMIN,
+            EmployeeRole.SUPPORT_TEAM,
+        ]
         if current_user.role not in allowed_roles:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, 
-                detail=f"Role {current_user.role} is not authorized to create requests."
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role {current_user.role} is not authorized to create requests.",
             )
 
         # 2. Initialize Request: Start at HR Verification as planned
@@ -54,8 +61,9 @@ class RequestService:
             asset_name=payload.asset_name,
             asset_category=payload.asset_category,
             reason=payload.reason,
+            action_type=payload.action_type,
             status="PENDING_SUPPORT",
-            stage="HR_VERIFICATION"
+            stage="HR_VERIFICATION",
         )
         db.add(req)
         db.commit()
@@ -84,15 +92,21 @@ class RequestService:
             recipients = RequestService.get_emails_by_roles_in_branch(
                 db, [EmployeeRole.SUPPORT_TEAM], current_user.branch
             )
-            # Managers get a special alert sent to Admins
             EmailService.notify_admin_of_manager_request(current_user.name, payload.asset_name, admin_emails)
+        elif current_user.role == EmployeeRole.ADMIN:
+            recipients = RequestService.get_emails_by_roles_in_branch(
+                db,
+                [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM],
+                current_user.branch or "",
+            )
+        elif current_user.role == EmployeeRole.SUPPORT_TEAM:
+            recipients = RequestService.get_emails_by_roles_in_branch(
+                db, [EmployeeRole.MANAGER, EmployeeRole.HR], current_user.branch
+            )
 
-        # Include Admins in the general branch notification list for total visibility
         recipients.extend(admin_emails)
 
         # 4. Immediate Automated Notifications
-        # A. Notify Stakeholders (Manager, HR, Support, Admin)
-        print(f"DEBUG: Sending premium branch notifications for '{current_user.branch}' to: {recipients}")
         EmailService.notify_branch_stakeholders(
             current_user.name, payload.asset_name, recipients, current_user.role, current_user.branch
         )
@@ -106,10 +120,13 @@ class RequestService:
 
     @staticmethod
     def review_request_by_hr(db: Session, request_id: str, payload: RequestHRVerify, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HR_VERIFICATION").with_for_update().first()
+        req = db.query(Request).filter(
+            Request.request_id == request_id,
+            Request.stage == "HR_VERIFICATION",
+        ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
-        
+
         old_status = req.status
         req.hr_verified = payload.is_needed
         req.stage = "HELPDESK_TRIAGE"
@@ -117,9 +134,17 @@ class RequestService:
         
         db.commit()
         db.refresh(req)
-        
-        AuditService.log_change(db, "requests", request_id, "UPDATE", user, 
-                                {"status": old_status}, {"status": req.status, "hr_verified": req.hr_verified}, "HR_VERIFICATION")
+
+        AuditService.log_change(
+            db,
+            "requests",
+            request_id,
+            "UPDATE",
+            user,
+            {"status": old_status},
+            {"status": req.status, "hr_verified": req.hr_verified},
+            "HR_VERIFICATION",
+        )
 
         # Fetch branch support emails from DB
         support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch)
@@ -128,21 +153,31 @@ class RequestService:
 
     @staticmethod
     def triage_asset_request(db: Session, request_id: str, payload: RequestTriage, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HELPDESK_TRIAGE").with_for_update().first()
+        req = db.query(Request).filter(
+            Request.request_id == request_id,
+            Request.stage == "HELPDESK_TRIAGE",
+        ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
         
         from app.server.schema.category import Category
+
+        requested_action = payload.action_type.strip() if payload.action_type else ""
+        selected_target = None
+        if ":" in requested_action:
+            requested_action, selected_target = requested_action.split(":", 1)
+            requested_action = requested_action.strip()
+            selected_target = selected_target.strip()
+
         local_stock = db.query(sql_func.sum(Asset.unused)).join(Category).filter(
             Asset.branch == req.employee.branch,
-            Category.category_name == req.asset_category
+            Category.category_name == req.asset_category,
         ).scalar() or 0
-        
+
         stock_msg = ""
         if local_stock > 0:
             req.status = f"Available in local branch: {req.employee.branch}"
             stock_msg = req.status
-            req.action_type = "Fulfilment: Local"
         else:
             other_stocks = RequestService.get_inventory_across_branches(db, req.asset_category)
             if not other_stocks:
@@ -162,15 +197,13 @@ class RequestService:
                 branches_info = ", ".join([f"{b} [{', '.join(details)}]" for b, details in branch_details.items()])
                 req.status = f"Unavailable locally. Available in: {branches_info}"
                 stock_msg = req.status
-                if ":" in payload.action_type:
-                    action, target = payload.action_type.split(":", 1)
-                    req.action_type = action
-                    req.status += f" (Selected: {target})"
-        
-        if not req.action_type and payload.action_type:
-             req.action_type = payload.action_type
+                if selected_target:
+                    req.status += f" (Selected: {selected_target})"
 
-        # Routing the approval stage based on requester role
+        # Help desk triage decision is authoritative for fulfillment (overrides draft intent on the request).
+        if requested_action:
+            req.action_type = requested_action
+
         requester = req.employee
         if requester.role == EmployeeRole.MANAGER:
             req.status = "PENDING_ADMIN"
@@ -198,12 +231,18 @@ class RequestService:
 
     @staticmethod
     def review_request_by_manager(db: Session, request_id: str, payload: RequestReview, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "MANAGER_APPROVAL").with_for_update().first()
+        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        if req.hr_verified is False and payload.is_approved:
+            raise HTTPException(
+                status_code=400,
+                detail="Manager cannot approve a request that HR has explicitly rejected as NOT NEEDED.",
+            )
+
+        if req.stage != "MANAGER_APPROVAL":
             raise HTTPException(status_code=404, detail="Request not found or not in Manager stage")
-        
-        if not req.hr_verified and payload.is_approved:
-             raise HTTPException(status_code=400, detail="Manager cannot approve a request that HR has verified as NOT NEEDED.")
 
         old_status = req.status
         if not payload.is_approved:
@@ -219,7 +258,7 @@ class RequestService:
             else:
                 req.status = "APPROVED_FOR_SUPPORT"
                 req.stage = "READY"
-        
+
         db.commit()
         db.refresh(req)
         AuditService.log_change(db, "requests", request_id, "UPDATE", user, {"status": old_status}, {"status": req.status}, "MANAGER_REVIEW")
@@ -252,14 +291,14 @@ class RequestService:
         req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req: raise HTTPException(status_code=404)
         if req.status not in ["APPROVED_FOR_SUPPORT", "READY"] and req.stage != "READY":
-             raise HTTPException(status_code=400, detail="Request not actionable")
+            raise HTTPException(status_code=400, detail="Request not actionable")
 
         if req.action_type in ["NEW", "REPLACE"]:
             StockService.allocate_asset(db, provided_asset_id, req.emp_id, AllocationType.PERMANENT, user, f"FULFILL_REQ_{request_id}")
             if req.action_type == "REPLACE" and broken_asset_id:
                 active_trk = db.query(Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
                 if active_trk:
-                    StockService.return_asset(db, active_trk.tracking_id, user, "REPLACMENT_RETURN")
+                    StockService.return_asset(db, active_trk.tracking_id, user, "REPLACEMENT_RETURN")
             req.status = "COMPLETED"
             req.stage = "COMPLETED"
         elif req.action_type == "SERVICE":
@@ -273,7 +312,12 @@ class RequestService:
             req.serviced_asset_id = broken_asset_id
             req.status = "WIP_SERVICE"
             req.stage = "IN_REPAIR"
-            
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Request has no actionable type (NEW, REPLACE, or SERVICE). Complete help desk triage first.",
+            )
+
         db.commit()
         db.refresh(req)
         EmailService.notify_asset_assigned(req.employee.name, req.asset_name, RequestService.get_manager_email_for_branch(db, req.employee.branch))
@@ -326,8 +370,8 @@ class RequestService:
         
         # Update Request Status
         old_status = req.status
-        req.status = f"AWAITING_TRANSFER_FROM_{payload.target_branch.upper()}"
-        req.action_type = f"Transfer: {payload.target_branch} ({payload.target_asset_brand} {payload.target_asset_name})"
+        req.status = "AWAITING_TRANSFER"
+        req.action_type = f"TRANSFER:{payload.target_branch}"
         
         db.commit()
         db.refresh(req)

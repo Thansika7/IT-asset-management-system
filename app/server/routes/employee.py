@@ -1,5 +1,5 @@
 import uuid
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -51,6 +51,16 @@ def register_employee(
             raise HTTPException(status_code=400, detail=f"Branch '{payload.branch}' already has a Support Team member. Only 1 is allowed per branch.")
         if payload.role == EmployeeRole.HR and current_count >= 3:
             raise HTTPException(status_code=400, detail=f"Branch '{payload.branch}' already has 3 HR members. Only 3 are allowed per branch.")
+
+    # Enforcement: Singleton Manager per Branch
+    if payload.role == EmployeeRole.MANAGER:
+        existing_manager = db.query(Employee).filter(
+            Employee.branch == payload.branch,
+            Employee.role == EmployeeRole.MANAGER,
+            Employee.is_active == True
+        ).first()
+        if existing_manager:
+            raise InvalidStateError(f"A manager already exists for branch: {payload.branch or 'General'}")
 
     user=Employee(
         name=payload.name,

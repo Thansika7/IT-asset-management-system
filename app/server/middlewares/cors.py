@@ -1,23 +1,25 @@
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 
+
 def setup_cors(app: FastAPI):
+    raw = os.getenv("CORS_ORIGINS", "*").strip()
+    if raw == "*":
+        allow_origins = ["*"]
+        allow_credentials = False
+    else:
+        allow_origins = [o.strip() for o in raw.split(",") if o.strip()]
+        if not allow_origins:
+            allow_origins = ["*"]
+            allow_credentials = False
+        else:
+            allow_credentials = True
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost",
-            "http://localhost:8000",
-            "http://localhost:3000",
-            "http://localhost:5173",
-            "http://127.0.0.1",
-            "http://127.0.0.1:8000",
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:5173",
-            "http://localhost:5500",
-            "http://127.0.0.1:5500",
-            "null"
-        ],
-        allow_credentials=True,
+        allow_origins=allow_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

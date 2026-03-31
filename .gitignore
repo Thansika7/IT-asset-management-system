@@ -1,11 +1,92 @@
-.env
+# -------------------------------
+# Python / FastAPI
+# -------------------------------
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.pyd
+
+# Virtual Environments
 .venv/
 venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+*.env
+
+# Databases & Logs
 *.db
+*.sqlite3
 test.db
+logs/
+*.log
+
+# Pytest / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+*.tox/
+.nox/
+
+# -------------------------------
+# Node / React / Vite (Frontend)
+# -------------------------------
+# Dependencies
+node_modules/
+app/client/node_modules/
+.npm/
+.yarn/
+
+# Build Output
+dist/
+dist-ssr/
+build/
+app/client/dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next / Nuxt / General Framework config if added later
+.next/
+.nuxt/
+
+# Environment files for Frontend
+app/client/.env
+app/client/.env.local
+app/client/.env.development.local
+app/client/.env.test.local
+app/client/.env.production.local
+
+# -------------------------------
+# Project Specific
+# -------------------------------
 scripts/
 !scripts/setup_db.py
+test_data/
+uploads/
 
+# -------------------------------
+# OS / IDE
+# -------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
 
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln

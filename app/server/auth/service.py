@@ -85,13 +85,23 @@ def authenticate_user(db: Session, email: str, password: str) -> Employee | None
     return user
 
 
-def create_access_token(subject: str, role: EmployeeRole) -> str:
+def create_access_token(
+    subject: str,
+    role: EmployeeRole,
+    *,
+    employee_id: Optional[str] = None,
+    branch: Optional[str] = None,
+) -> str:
     expire=datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload={
         "sub": subject,
         "role": role.value,
         "exp": expire,
     }
+    if employee_id:
+        payload["emp_id"] = employee_id
+    if branch:
+        payload["branch"] = branch
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
