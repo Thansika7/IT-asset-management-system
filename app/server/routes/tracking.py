@@ -29,3 +29,19 @@ def get_asset_tracking(
     current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
 ):
     return TrackingService.get_asset_history(db, asset_id)
+
+@router.post("/check-expirations")
+def trigger_expiration_check(
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
+):
+    """
+    Manually trigger the 30-day expiration check.
+    This can also be hit by an automated CRON job using an Admin token.
+    """
+    expiring_items = TrackingService.check_expirations_and_notify_support(db)
+    return {
+        "status": "success",
+        "message": f"Expiration check completed. Found {len(expiring_items)} expiring items.",
+        "data": expiring_items
+    }

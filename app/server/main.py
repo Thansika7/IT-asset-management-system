@@ -55,7 +55,6 @@ def init_admin():
             
     db.close()
 
-# init_admin() called via @app.on_event("startup")
 
 app.include_router(auth_router)
 app.include_router(employee_router)
