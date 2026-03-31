@@ -13,6 +13,9 @@ class RequestTriage(BaseModel):
 class RequestReview(BaseModel):
     is_approved: bool
 
+class RequestHRVerify(BaseModel):
+    is_needed: bool
+
 class RequestResolve(BaseModel):
     resolution_notes: str
     repair_cost: Optional[float] = 0.0
@@ -27,6 +30,7 @@ class RequestResponse(BaseModel):
     reason: str
     status: str
     stage: Optional[str] = None
+    hr_verified: Optional[bool] = None
     action_type: Optional[str] = None
     req_date: datetime
 
