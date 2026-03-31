@@ -13,6 +13,7 @@ from app.server.services.email_service import EmailService
 from app.server.services.stock_service import StockService
 from app.server.services.account_service import AccountService
 from app.server.services.audit_service import AuditService
+from app.server.services.email_service import EmailService
 
 class RequestService:
     @staticmethod
@@ -22,7 +23,6 @@ class RequestService:
             Asset.branch,
             func.sum(Asset.unused).label("available_quantity")
         ).join(Category).filter(Category.category_name == category_name)
-        
         return query.group_by(Asset.branch).all()
 
     @staticmethod
@@ -35,14 +35,13 @@ class RequestService:
         return manager.email if manager else None
 
     @staticmethod
-    def create_asset_request(db: Session, payload: RequestCreate, current_user: Employee):
-        req = Request(
-            emp_id=current_user.employee_id,
+    def create_asset_request(db: Session, payload: RequestCreate, user: Employee):
+        req=Request(
+            emp_id=user.employee_id,
             asset_name=payload.asset_name,
             asset_category=payload.asset_category,
             reason=payload.reason,
-            status="PENDING_HR",
-            stage="HR_VERIFICATION"
+            status="PENDING_HR"
         )
         db.add(req)
         db.commit()
@@ -54,21 +53,17 @@ class RequestService:
             "asset_name": req.asset_name
         }, "USER_SUBMISSION")
 
-        # Notify Help Desk, HR, and Manager
-        manager_email = RequestService.get_manager_email_for_branch(db, current_user.branch)
-        EmailService.notify_request_created(current_user.name, payload.asset_name, manager_email)
-
+        manager_email = RequestService.get_manager_email_for_branch(db, user.branch)
+        EmailService.notify_request_created(user.name, payload.asset_name, manager_email)
         return req
 
     @staticmethod
     def review_request_by_hr(db: Session, request_id: str, payload: RequestHRVerify, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HR_VERIFICATION").with_for_update().first()
-        if not req:
-            raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
+        req=db.query(Request).filter(Request.request_id==request_id, Request.status=="PENDING_HR").with_for_update().first()
+        if not req: raise HTTPException(status_code=404, detail="Request not found or not in PENDING_HR state")
         
         old_status = req.status
         req.hr_verified = payload.is_needed
-        req.stage = "HELPDESK_TRIAGE"
         req.status = "PENDING_SUPPORT"
         
         db.commit()
@@ -77,49 +72,35 @@ class RequestService:
         AuditService.log_change(db, "requests", request_id, "UPDATE", user, 
                                 {"status": old_status}, {"status": req.status, "hr_verified": req.hr_verified}, "HR_VERIFICATION")
 
-        # Notify Help Desk that they can now triage
         EmailService.notify_hr_verified(req.employee.name, req.asset_name, payload.is_needed)
-        
         return req
 
     @staticmethod
     def triage_asset_request(db: Session, request_id: str, payload: RequestTriage, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id, Request.stage == "HELPDESK_TRIAGE").with_for_update().first()
-        if not req:
-            raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
+        req=db.query(Request).filter(Request.request_id==request_id, Request.status=="PENDING_SUPPORT").with_for_update().first()
+        if not req: raise HTTPException(status_code=404, detail="Request not found or not in PENDING_SUPPORT state")
         
-        # Check if asset is available in the current branch
+        # Check stock across branches dynamically
         from app.server.schema.category import Category
-        local_stock = db.query(sql_func.sum(Asset.unused)).join(Category).filter(
+        local_stock = db.query(func.sum(Asset.unused)).join(Category).filter(
             Asset.branch == req.employee.branch,
             Category.category_name == req.asset_category
         ).scalar() or 0
         
         stock_msg = ""
         if local_stock > 0:
-            req.status = f"Available in local branch: {req.employee.branch}"
-            stock_msg = req.status
+            stock_msg = f"Available in local branch: {req.employee.branch}"
             req.action_type = "Fulfilment: Local"
         else:
-            # Check other branches
             other_stocks = RequestService.get_inventory_across_branches(db, req.asset_category)
             if not other_stocks:
-                req.status = "Unavailable in all branches"
-                stock_msg = req.status
+                stock_msg = "Unavailable in all branches"
             else:
                 branches_info = ", ".join([f"{s.branch}({s.available_quantity})" for s in other_stocks])
-                req.status = f"Unavailable locally. Available in: {branches_info}"
-                stock_msg = req.status
-                
-                if ":" in payload.action_type:
-                    action, target = payload.action_type.split(":", 1)
-                    req.action_type = action
-                    req.status += f" (Selected: {target})"
+                stock_msg = f"Unavailable locally. Available in: {branches_info}"
         
-        if not req.action_type and payload.action_type:
-             req.action_type = payload.action_type
-
-        # Admin Override: If Admin triages, it can skip manager review
+        req.action_type = payload.action_type if payload.action_type else req.action_type
+        
         if user.role == EmployeeRole.ADMIN:
             req.status = "APPROVED_FOR_SUPPORT"
             req.stage = "READY"
@@ -132,11 +113,8 @@ class RequestService:
         
         AuditService.log_change(db, "requests", request_id, "UPDATE", user, 
                                 {"status": "PENDING_SUPPORT"}, {"status": req.status, "action": req.action_type}, "SUPPORT_TRIAGE")
-
-        # Notify Manager of stock availability
         manager_email = RequestService.get_manager_email_for_branch(db, req.employee.branch)
         EmailService.notify_stock_info_to_manager(req.employee.name, req.asset_name, manager_email, stock_msg)
-        
         return req
 
     @staticmethod
@@ -145,16 +123,13 @@ class RequestService:
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in Manager stage")
         
-        # Enforcement: if HR verified as NOT needed, manager cannot approve
-        if not req.hr_verified and payload.is_approved:
-             raise HTTPException(status_code=400, detail="Manager cannot approve a request that HR has verified as NOT NEEDED.")
-
-        old_status = req.status
+        if req.hr_verified is False and payload.is_approved:
+            raise HTTPException(status_code=400, detail="Manager cannot approve a request that HR explicitly rejected as Unnecessary.")
+        
         if not payload.is_approved:
             req.status = "REJECTED"
             req.stage = "REJECTED"
         else:
-            # High-level override: if an Admin is reviewing as a manager
             if user.role == EmployeeRole.ADMIN:
                 req.status = "APPROVED_FOR_SUPPORT"
                 req.stage = "READY"
@@ -167,12 +142,7 @@ class RequestService:
         
         db.commit()
         db.refresh(req)
-        
-        AuditService.log_change(db, "requests", request_id, "UPDATE", user, 
-                                {"status": old_status}, {"status": req.status}, "MANAGER_REVIEW")
-
         EmailService.notify_manager_decision(req.employee.name, req.asset_name, payload.is_approved)
-            
         return req
 
     @staticmethod
@@ -209,10 +179,11 @@ class RequestService:
                 # Automating return of the broken one
                 active_trk = db.query(Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
                 if active_trk:
-                    StockService.return_asset(db, active_trk.tracking_id, user, "REPLACEMENT_RETURN")
+                    StockService.return_asset(db, active_trk.tracking_id, user, "REPLACMENT_RETURN")
+            req.status = "COMPLETED"
             
-            req.status = "Assigned"
-            req.stage = "COMPLETED"
+            manager_email = RequestService.get_manager_email_for_branch(db, req.employee.branch)
+            EmailService.notify_asset_assigned(req.employee.name, req.asset_name, manager_email)
 
         elif req.action_type == "SERVICE":
             # 1. Identify active tracking for the broken asset
@@ -220,17 +191,20 @@ class RequestService:
             if not active_trk:
                 raise HTTPException(status_code=400, detail="Employee does not currently hold this asset")
 
-            # 2. Mark original asset as IN_REPAIR
-            asset = db.query(Asset).filter(Asset.asset_id == broken_asset_id).with_for_update().first()
+            # 2. Return original asset from user (increments unused)
+            StockService.return_asset(db, active_trk.tracking_id, user, "SENT_FOR_REPAIR")
+
+            # 3. Mark original asset as IN_REPAIR and lock it (decrement unused back)
+            asset = db.query(Asset).filter(Asset.asset_id==broken_asset_id).with_for_update().first()
             asset.asset_status = AssetStatus.IN_REPAIR
+            asset.unused -= 1
             
-            # 3. Provided asset is a LOANER
+            # 4. Provided asset is a LOANER
             if provided_asset_id:
                 StockService.allocate_asset(db, provided_asset_id, req.emp_id, AllocationType.TEMPORARY, user, f"LOANER_FOR_REQ_{request_id}")
             
             req.serviced_asset_id = broken_asset_id
-            req.status = "WIP_SERVICE" 
-            req.stage = "IN_REPAIR"
+            req.status = "WIP_SERVICE"
             
         db.commit()
         db.refresh(req)
@@ -272,7 +246,8 @@ class RequestService:
                 repaired_asset.asset_status = AssetStatus.RETIRED
             else:
                 repaired_asset.asset_status = AssetStatus.ACTIVE
-                # Return to employee
+                repaired_asset.used += 1 # Restore used count manually
+                # Return to employee: Create tracking record
                 new_trk = Tracking(
                     asset_id=repaired_asset.asset_id,
                     emp_id=req.emp_id,

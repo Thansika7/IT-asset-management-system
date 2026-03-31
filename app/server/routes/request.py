@@ -76,6 +76,14 @@ def execute_request(
     req=RequestService.execute_asset_request(db, request_id, provided_asset_id, broken_asset_id, current_user)
     return {"status": "success", "executed_action": req.action_type, "new_status": req.status}
 
+@router.post("/{request_id}/review/admin", response_model=RequestResponse)
+def admin_review(
+    request_id: str, 
+    payload: RequestReview, 
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
+):
+    return RequestService.review_request_by_admin(db, request_id, payload, current_user)
 @router.post("/{request_id}/resolve")
 def resolve_request(
     request_id: str,

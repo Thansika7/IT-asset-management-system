@@ -33,9 +33,10 @@ async def app_exception_handler(request: Request, exc: AppBaseException):
 @app.on_event("startup")
 def init_admin():
     db=SessionLocal()
-    admin_email=os.getenv("ADMIN_EMAIL")
+    admin_email_env=os.getenv("ADMIN_EMAIL")
     admin_password=os.getenv("ADMIN_PASSWORD") or str(uuid.uuid4())
-    if admin_email:
+    if admin_email_env:
+        admin_email = admin_email_env.lower()
         admin_emp=db.query(Employee).filter(Employee.email==admin_email).first()
         if not admin_emp:
             admin_emp = Employee(

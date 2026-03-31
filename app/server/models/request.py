@@ -31,6 +31,7 @@ class RequestResponse(BaseModel):
     reason: str
     status: str
     stage: Optional[str] = None
+    hr_verified: Optional[bool] = None
     action_type: Optional[str] = None
     hr_verified: Optional[bool] = None
     req_date: datetime

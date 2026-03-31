@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.server.database.database import get_db
-from app.server.models.stock import StockAdd, StockResponse, AllocateRequest, ReturnRequest
+from app.server.models.stock import AssetCreate, StockAdd, StockResponse, AllocateRequest, ReturnRequest
 from app.server.schema.asset import Asset
+from app.server.schema.category import Category
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.middlewares.auth import require_roles
 from app.server.services.stock_service import StockService
@@ -23,6 +24,33 @@ def list_inventory_status(
     if branch_name:
         query=query.filter(Asset.branch==branch_name)
     return query.all()
+
+@router.post("/", response_model=StockResponse, status_code=201)
+def create_asset_entry(
+    payload: AssetCreate, 
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
+):
+    """Register a new hardware item in the system's catalog."""
+    cat=db.query(Category).filter(Category.category_name==payload.category_name).first()
+    if not cat:
+        cat=Category(category_name=payload.category_name)
+        db.add(cat)
+        db.flush()
+
+    asset=Asset(
+        asset_id=payload.asset_id,
+        name=payload.name,
+        category_id=cat.category_id,
+        branch=payload.branch,
+        total_quantity=payload.total_quantity,
+        unused=payload.unused,
+        used=0
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
+    return asset
 
 @router.post("/add", response_model=StockResponse)
 def add_new_stock(

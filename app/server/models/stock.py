@@ -4,6 +4,14 @@ from app.server.schema.asset import AssetStatus
 from app.server.schema.tracking import MovementType, AllocationType
 from datetime import datetime
 
+class AssetCreate(BaseModel):
+    asset_id: str
+    name: str
+    category_name: str
+    branch: str = "Headquarters"
+    total_quantity: int = 1
+    unused: int = 1
+
 class StockAdd(BaseModel):
     asset_id: str
     quantity: int

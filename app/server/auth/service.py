@@ -76,7 +76,8 @@ def get_password_hash(password: str) -> str:
 
 
 def authenticate_user(db: Session, email: str, password: str) -> Employee | None:
-    user=db.query(Employee).filter(Employee.email==email, Employee.is_active==True).first()
+    email_lower=email.lower()
+    user=db.query(Employee).filter(Employee.email==email_lower, Employee.is_active==True).first()
     if not user or not user.password_hash:
         return None
     if not verify_password(password, user.password_hash):
@@ -133,7 +134,7 @@ def get_current_user(token: str=Depends(get_token_from_header_or_cookie), db: Se
     except (JWTError, ValueError):
         raise credentials_exception
 
-    user=db.query(Employee).filter(Employee.email==token_data.sub).first()
+    user=db.query(Employee).filter(Employee.email==token_data.sub.lower()).first()
     if not user or not user.is_active:
         raise credentials_exception
     return user
@@ -154,13 +155,14 @@ def create_oauth_user(
     phone: Optional[str]=None,
     role: EmployeeRole=EmployeeRole.EMPLOYEE,
 ) -> Employee:
-    existing=db.query(Employee).filter(Employee.email==email).first()
+    email_lower=email.lower()
+    existing=db.query(Employee).filter(Employee.email==email_lower).first()
     if existing:
         return existing
 
     user=Employee(
         name=name,
-        email=email,
+        email=email_lower,
         phone=phone,
         branch=branch,
         role=role,
