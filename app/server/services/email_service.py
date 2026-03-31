@@ -6,12 +6,17 @@ from typing import List
 
 class EmailService:
     @staticmethod
-    def _send_email(to_email: str, subject: str, html_body: str):
-        smtp_host = os.getenv("SMTP_HOST")
-        smtp_port = int(os.getenv("SMTP_PORT", 587))
-        smtp_user = os.getenv("SMTP_USER")
-        smtp_pass = os.getenv("SMTP_PASSWORD")
-        smtp_from = os.getenv("SMTP_FROM", "IT Asset System")
+    def _send_email(to_email: str, subject: str, html_body: str, reply_to: str = None):
+        # Force reload .env to bypass Uvicorn's hot-reload cache
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        
+        smtp_host = os.getenv("SMTP_HOST", "").strip()
+        smtp_port_raw = os.getenv("SMTP_PORT", "587").strip()
+        smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else 587
+        smtp_user = os.getenv("SMTP_USER", "").strip()
+        smtp_pass = os.getenv("SMTP_PASSWORD", "").strip()
+        smtp_from = os.getenv("SMTP_FROM", "IT Asset System").strip()
 
         if not all([smtp_host, smtp_user, smtp_pass]):
             print(f" Email Not Sent: SMTP credentials missing in .env (Subject: {subject})")
@@ -21,6 +26,9 @@ class EmailService:
         msg["From"] = smtp_from
         msg["To"] = to_email
         msg["Subject"] = subject
+        if reply_to:
+            msg.add_header('reply-to', reply_to)
+        
         msg.attach(MIMEText(html_body, "html"))
 
         try:
@@ -49,18 +57,12 @@ class EmailService:
             </body>
         </html>
         """
-        if helpdesk_email:
-            cls._send_email(helpdesk_email, subject, body)
-        if hr_email:
-            cls._send_email(hr_email, subject, body)
+        # Note: This method is now secondary to notify_branch_stakeholders
         if manager_email:
             cls._send_email(manager_email, subject, body)
 
     @classmethod
-    def notify_hr_verified(cls, employee_name: str, asset_name: str, is_needed: bool):
-        helpdesk_email = os.getenv("HELP_DESK_EMAIL")
-        manager_email = os.getenv("MANAGER_EMAIL") # Fallback or specific
-        
+    def notify_hr_verified(cls, employee_name: str, asset_name: str, is_needed: bool, helpdesk_emails: List[str]):
         status_text = "Verified as NEEDED" if is_needed else "Verified as NOT NEEDED"
         color = "#10b981" if is_needed else "#ef4444"
         
@@ -76,8 +78,9 @@ class EmailService:
             </body>
         </html>
         """
-        if helpdesk_email:
-            cls._send_email(helpdesk_email, subject, body)
+        for email in set(helpdesk_emails):
+            if email:
+                cls._send_email(email, subject, body)
 
     @classmethod
     def notify_stock_info_to_manager(cls, employee_name: str, asset_name: str, manager_email: str, stock_msg: str):
@@ -97,7 +100,7 @@ class EmailService:
             cls._send_email(manager_email, subject, body)
 
     @classmethod
-    def notify_manager_decision(cls, employee_name: str, asset_name: str, is_approved: bool):
+    def notify_manager_decision(cls, employee_name: str, asset_name: str, is_approved: bool, helpdesk_emails: List[str]):
         subject = f"Final Decision: {asset_name} for {employee_name} ({'Approved' if is_approved else 'Denied'})"
         color = "#10b981" if is_approved else "#ef4444"
         body = f"""
@@ -109,10 +112,9 @@ class EmailService:
             </body>
         </html>
         """
-        # Notify employee and helpdesk?
-        helpdesk_email = os.getenv("HELP_DESK_EMAIL")
-        if helpdesk_email:
-            cls._send_email(helpdesk_email, subject, body)
+        for email in set(helpdesk_emails):
+            if email:
+                cls._send_email(email, subject, body)
 
     @classmethod
     def notify_asset_assigned(cls, employee_name: str, asset_name: str, manager_email: str):
@@ -172,3 +174,228 @@ class EmailService:
         </html>
         """
         cls._send_email(helpdesk_email, subject, body)
+    @classmethod
+    def notify_branch_stakeholders(cls, employee_name: str, asset_name: str, recipients: List[str], requester_role: str, branch: str):
+        if not recipients:
+            return
+            
+        subject = f"Action Required: New Asset Request from {employee_name} ({branch})"
+        body = f"""
+        <html>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+                    <div style="background-color: #6366f1; padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">IT Asset Management</h1>
+                        <p style="color: #e0e7ff; margin: 10px 0 0 0; font-size: 14px;">Incoming Resource Request</p>
+                    </div>
+                    <div style="padding: 40px;">
+                        <h2 style="color: #1e293b; margin-top: 0; font-size: 20px; font-weight: 600;">Request Notification</h2>
+                        <p>A new asset request has been raised in your branch that requires attention from the relevant stakeholders.</p>
+                        
+                        <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="padding: 5px 0; color: #64748b; font-size: 14px; width: 40%;">Requester</td>
+                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500;">{employee_name}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Role</td>
+                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500;">{requester_role}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Branch</td>
+                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500;">{branch}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Asset Requested</td>
+                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500; color: #6366f1;">{asset_name}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        
+                        <p style="font-size: 14px; color: #64748b;">The request is currently at the <strong>HR & Support Triage</strong> stage. Please log in to the dashboard to review the details.</p>
+                        
+                        <div style="text-align: center; margin-top: 30px;">
+                            <a href="#" style="background-color: #6366f1; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block;">View in Dashboard</a>
+                        </div>
+                    </div>
+                    <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated message from IT Asset Management System.</p>
+                        <p style="font-size: 12px; color: #94a3b8; margin: 5px 0 0 0;">&copy; 2026 Your Organization . IT Dept</p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        for email in set(recipients):
+            if email:
+                cls._send_email(email, subject, body)
+
+    @classmethod
+    def notify_requester_confirmation(cls, requester_email: str, employee_name: str, asset_name: str, branch: str):
+        if not requester_email:
+            return
+            
+        subject = f"Request Received: {asset_name} for {branch}"
+        body = f"""
+        <html>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+                    <div style="background-color: #10b981; padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">Request Confirmed</h1>
+                        <p style="color: #d1fae5; margin: 10px 0 0 0; font-size: 14px;">Your IT Asset Request has been raised</p>
+                    </div>
+                    <div style="padding: 40px;">
+                        <p>Hello <strong>{employee_name}</strong>,</p>
+                        <p>We've received your request for a <strong>{asset_name}</strong> in the <strong>{branch}</strong> branch. Our team is now verifying the necessity and availability of this resource.</p>
+                        
+                        <div style="border-left: 4px solid #10b981; background-color: #f0fdf4; padding: 15px; margin: 25px 0; font-size: 14px;">
+                            <strong>What's Next?</strong><br>
+                            Our HR and Support teams will review your request. You will receive an automated notification once your Manager or an Admin makes a decision.
+                        </div>
+                        
+                        <p style="font-size: 14px; color: #64748b;">You can track the progress of your request at any time via the employee portal.</p>
+                    </div>
+                    <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated message from IT Asset Management System.</p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        cls._send_email(requester_email, subject, body)
+
+    @classmethod
+    def notify_admin_of_manager_request(cls, manager_name: str, asset_name: str, admin_emails: List[str]):
+        if not admin_emails:
+            return
+            
+        subject = f"Urgent: Manager Request Needs Your Approval ({asset_name})"
+        body = f"""
+        <html>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+                    <div style="background-color: #ef4444; padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">Admin Approval Required</h1>
+                        <p style="color: #fee2e2; margin: 10px 0 0 0; font-size: 14px;">A Manager has raised a restricted request</p>
+                    </div>
+                    <div style="padding: 40px;">
+                        <p>Manager <strong>{manager_name}</strong> has raised a request for <strong>{asset_name}</strong>. As per the system security policy, requests raised by Managers require high-level Admin authorization.</p>
+                        
+                        <div style="background-color: #fef2f2; border-radius: 8px; padding: 20px; margin: 25px 0; border: 1px solid #fee2e2;">
+                            <p style="margin-top: 0;"><strong>Details:</strong></p>
+                            <p style="margin-bottom: 0; font-size: 15px;">Target Asset: <span style="color: #ef4444; font-weight: 600;">{asset_name}</span></p>
+                        </div>
+                        
+                        <p style="font-size: 14px; color: #64748b;">Please review this request at your earliest convenience to maintain operational efficiency.</p>
+                        
+                        <div style="text-align: center; margin-top: 30px;">
+                            <a href="#" style="background-color: #ef4444; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block;">Approve / Deny Now</a>
+                        </div>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        for email in set(admin_emails):
+            if email:
+                cls._send_email(email, subject, body)
+
+    @classmethod
+    def notify_cross_branch_transfer_request(cls, requester_branch: str, target_branch: str, asset_brand: str, asset_name: str, recipients: List[str], reply_to_email: str):
+        if not recipients:
+            return
+            
+        subject = f"Urgent Transfer Request: {asset_brand} {asset_name} from {requester_branch} Branch"
+        body = f"""
+        <html>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+                    <div style="background-color: #f59e0b; padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">Cross-Branch Transfer Required</h1>
+                        <p style="color: #fef3c7; margin: 10px 0 0 0; font-size: 14px;">Incoming Resource Request from {requester_branch}</p>
+                    </div>
+                    <div style="padding: 40px;">
+                        <p>Hello <strong>{target_branch} IT & Management</strong>,</p>
+                        <p>The <strong>{requester_branch}</strong> branch is completely out of stock and urgently requires an asset to fulfill an employee request.</p>
+                        
+                        <div style="background-color: #fffbeb; border-radius: 8px; padding: 20px; margin: 25px 0; border: 1px solid #fde68a;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="padding: 5px 0; color: #b45309; font-size: 14px; width: 40%;">Target Asset Name</td>
+                                    <td style="padding: 5px 0; color: #92400e; font-weight: 600;">{asset_name}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #b45309; font-size: 14px;">Asset Brand Spec</td>
+                                    <td style="padding: 5px 0; color: #92400e; font-weight: 600;">{asset_brand}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #b45309; font-size: 14px;">Requesting Branch</td>
+                                    <td style="padding: 5px 0; color: #92400e; font-weight: 600;">{requester_branch}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        
+                        <div style="border-left: 4px solid #f59e0b; background-color: #f8fafc; padding: 15px; margin: 25px 0; font-size: 14px;">
+                            <strong>How to Respond:</strong><br>
+                            To formally accept or politely decline this transfer, please <strong>reply to this email directly</strong>. Your reply will be sent straight to the {requester_branch} Manager's inbox.
+                        </div>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        for email in set(recipients):
+            if email:
+                cls._send_email(email, subject, body, reply_to=reply_to_email)
+
+    @classmethod
+    def notify_asset_expiration(cls, asset_name: str, asset_id: str, expiry_date: str, attribute_name: str, owner_name: str, recipients: List[str]):
+        if not recipients:
+            return
+            
+        subject = f"Warning: {attribute_name} Expiring for {asset_name} in 30 Days"
+        body = f"""
+        <html>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+                    <div style="background-color: #ef4444; padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">{attribute_name} Expiration Alert</h1>
+                        <p style="color: #fee2e2; margin: 10px 0 0 0; font-size: 14px;">Action Required within 30 days</p>
+                    </div>
+                    <div style="padding: 40px;">
+                        <p>Hello,</p>
+                        <p>This is an automated notification that the <strong>{attribute_name}</strong> for the following asset will expire exactly 30 days from today.</p>
+                        
+                        <div style="background-color: #fef2f2; border-radius: 8px; padding: 20px; margin: 25px 0; border: 1px solid #fca5a5;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="padding: 5px 0; color: #b91c1c; font-size: 14px; width: 40%;">Asset Name</td>
+                                    <td style="padding: 5px 0; color: #7f1d1d; font-weight: 600;">{asset_name} ({asset_id})</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #b91c1c; font-size: 14px;">Current Owner</td>
+                                    <td style="padding: 5px 0; color: #7f1d1d; font-weight: 600;">{owner_name}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #b91c1c; font-size: 14px;">Expiration Date</td>
+                                    <td style="padding: 5px 0; color: #7f1d1d; font-weight: 600;">{expiry_date}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        
+                        <div style="border-left: 4px solid #ef4444; background-color: #f8fafc; padding: 15px; margin: 25px 0; font-size: 14px;">
+                            <strong>Next Steps:</strong><br>
+                            If this is a physical warranty, please notify the vendor if service is needed before expiration.
+                            If this is a software license, please ensure it is renewed before this date to prevent service disruption.
+                        </div>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        for email in set(recipients):
+            if email:
+                cls._send_email(email, subject, body)
+
+

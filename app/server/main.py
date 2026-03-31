@@ -1,5 +1,7 @@
 import os
 import uuid
+import logging
+from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +17,32 @@ from app.server.schema.employee import Employee, EmployeeRole
 from app.server.auth.service import get_password_hash
 from app.server.middlewares.cors import setup_cors
 from app.server.exceptions.base import AppBaseException
+
+# --- Configure Daily Rotating Logs ---
+class DailyFileHandler(logging.FileHandler):
+    def __init__(self, directory="logs"):
+        self.directory = directory
+        os.makedirs(self.directory, exist_ok=True)
+        filename = os.path.join(self.directory, f"{datetime.now().strftime('%Y-%m-%d')}.log")
+        super().__init__(filename)
+
+    def emit(self, record):
+        current_date_filename = os.path.join(self.directory, f"{datetime.now().strftime('%Y-%m-%d')}.log")
+        if self.baseFilename != os.path.abspath(current_date_filename):
+            self.stream.close()
+            self.baseFilename = os.path.abspath(current_date_filename)
+            self.stream = self._open()
+        super().emit(record)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        DailyFileHandler("logs"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 app=FastAPI(title="IT Asset Management System")
 
