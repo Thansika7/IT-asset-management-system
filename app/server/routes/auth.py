@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from app.server.auth.service import authenticate_user, create_access_token, update_last_login
+from app.server.auth.service import authenticate_user, create_access_token, get_current_user, update_last_login
 from app.server.database.database import get_db
-from app.server.models.api import Token, LoginRequest
+from app.server.models.api import EmployeeRead, Token, LoginRequest
+from app.server.schema.employee import Employee
 from app.server.exceptions.base import UnauthorizedActionError
 
 router=APIRouter(prefix="/auth", tags=["auth"])
@@ -69,3 +70,8 @@ def login_json(
 def logout(response: Response):
     response.delete_cookie(key="access_token")
     return {"message": "Successfully logged out"}
+
+
+@router.get("/me", response_model=EmployeeRead)
+def get_me(current_user: Employee = Depends(get_current_user)):
+    return current_user

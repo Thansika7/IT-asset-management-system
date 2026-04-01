@@ -18,7 +18,10 @@ def get_tracking_records(
 ):
     if current_user.role in [EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM]:
         return TrackingService.get_all_tracking(db)
-    
+
+    if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR]:
+        return TrackingService.get_all_tracking(db, branch=current_user.branch)
+
     # Simple employees only see their own tracking history
     return TrackingService.get_all_tracking(db, emp_id=current_user.employee_id)
 

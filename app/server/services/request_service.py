@@ -372,12 +372,47 @@ class RequestService:
         old_status = req.status
         req.status = "AWAITING_TRANSFER"
         req.action_type = f"TRANSFER:{payload.target_branch}"
+        transfer_tracking = None
+        if req.serviced_asset_id:
+            transfer_tracking = Tracking(
+                asset_id=req.serviced_asset_id,
+                asset_name=payload.target_asset_name,
+                emp_id=req.emp_id,
+                category=req.asset_category,
+                branch=req.employee.branch,
+                from_branch=req.employee.branch,
+                to_branch=payload.target_branch,
+                movement_type=MovementType.TRANSFER,
+                movement_reason=f"CROSS_BRANCH_REQUEST_{request_id}",
+                allocation_type=AllocationType.TEMPORARY,
+                transfer_status="PENDING",
+            )
+            db.add(transfer_tracking)
+            db.flush()
         
         db.commit()
         db.refresh(req)
         
         AuditService.log_change(db, "requests", request_id, "UPDATE", user, 
                                 {"status": old_status}, {"status": req.status, "action": req.action_type}, "CROSS_BRANCH_REQUEST")
+        if transfer_tracking:
+            AuditService.log_change(
+                db,
+                "tracking",
+                transfer_tracking.tracking_id,
+                "CREATE",
+                user,
+                None,
+                {
+                    "asset_name": transfer_tracking.asset_name,
+                    "emp_id": transfer_tracking.emp_id,
+                    "from_branch": transfer_tracking.from_branch,
+                    "to_branch": transfer_tracking.to_branch,
+                    "movement_type": transfer_tracking.movement_type.value,
+                    "transfer_status": transfer_tracking.transfer_status,
+                },
+                "CROSS_BRANCH_REQUEST",
+            )
 
         # Send Email
         recipients = [target_manager_email] + target_support_emails

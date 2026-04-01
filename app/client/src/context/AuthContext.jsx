@@ -9,6 +9,7 @@ function parseUserFromToken(token) {
   return {
     email: payload.sub,
     role: normalizeRole(payload.role),
+    name: null,
     employeeId: payload.emp_id || null,
     branch: payload.branch || null,
   }
@@ -34,12 +35,42 @@ export const AuthProvider = ({ children }) => {
       setLoading(false)
       return
     }
-    try {
-      setUser(parseUserFromToken(token))
-    } catch {
-      logout()
-    } finally {
-      setLoading(false)
+    let active = true
+
+    const hydrateUser = async () => {
+      try {
+        const parsed = parseUserFromToken(token)
+        if (active) setUser(parsed)
+
+        const response = await fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (!response.ok) {
+          throw new Error('Unable to load current user')
+        }
+
+        const profile = await response.json()
+        if (!active) return
+
+        setUser({
+          ...parsed,
+          name: profile.name || parsed.name,
+          email: profile.email || parsed.email,
+          role: normalizeRole(profile.role || parsed.role),
+          employeeId: profile.employee_id || parsed.employeeId,
+          branch: profile.branch || parsed.branch,
+        })
+      } catch {
+        if (active) logout()
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    hydrateUser()
+    return () => {
+      active = false
     }
   }, [token, logout])
 
