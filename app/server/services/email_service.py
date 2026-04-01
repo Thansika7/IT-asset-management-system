@@ -72,6 +72,51 @@ class EmailService:
             )
 
     @classmethod
+    def notify_low_stock(cls, asset_name: str, asset_id: str, branch: str, unused: int, threshold: int, recipients: list):
+        if not recipients:
+            return
+        urgency_color = "#ef4444" if unused == 0 else "#f59e0b"
+        urgency_label = "OUT OF STOCK" if unused == 0 else "LOW STOCK"
+        urgency_bg = "#fef2f2" if unused == 0 else "#fffbeb"
+        urgency_border = "#fca5a5" if unused == 0 else "#fde68a"
+        action_note = "This asset is completely out of stock. New requests cannot be fulfilled. Please initiate a procurement order immediately." if unused == 0 else "Stock is running low. Consider initiating a procurement or cross-branch transfer before inventory runs out."
+        subject = f"[{urgency_label}] {asset_name} - {unused} unit(s) remaining in {branch or 'Unassigned Branch'}"
+        body = f"""
+        <html>
+            <body style="font-family: Segoe UI, Tahoma, sans-serif; color: #1e293b; background-color: #f8fafc; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+                    <div style="background-color: {urgency_color}; padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 700;">{urgency_label}</h1>
+                        <p style="color: #fff; opacity: 0.85; margin: 10px 0 0 0; font-size: 14px;">Inventory action required for {branch or 'your branch'}</p>
+                    </div>
+                    <div style="padding: 40px;">
+                        <p>This is an automated alert. The following catalog asset has dropped to or below its configured restock threshold.</p>
+                        <div style="background-color: {urgency_bg}; border: 1px solid {urgency_border}; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr><td style="padding: 6px 0; color: #64748b; width: 40%;">Asset Name</td><td style="font-weight: 600;">{asset_name}</td></tr>
+                                <tr><td style="padding: 6px 0; color: #64748b;">Asset ID</td><td style="font-family: monospace; font-size: 13px;">{asset_id}</td></tr>
+                                <tr><td style="padding: 6px 0; color: #64748b;">Branch</td><td style="font-weight: 600;">{branch or '-'}</td></tr>
+                                <tr><td style="padding: 6px 0; color: #64748b;">Units Remaining</td><td style="font-weight: 700; font-size: 18px; color: {urgency_color};">{unused}</td></tr>
+                                <tr><td style="padding: 6px 0; color: #64748b;">Restock Threshold</td><td>{threshold} units</td></tr>
+                            </table>
+                        </div>
+                        <div style="border-left: 4px solid {urgency_color}; background-color: #f8fafc; padding: 15px; margin: 25px 0; font-size: 14px;">
+                            <strong>Recommended Action:</strong><br>{action_note}
+                        </div>
+                        <p style="font-size: 14px; color: #64748b;">Manage stock levels from the Inventory section of the IT Asset Management portal.</p>
+                    </div>
+                    <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated alert from IT Asset Management System.</p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        for email in set(recipients):
+            if email:
+                cls._send_email(email, subject, body)
+
+    @classmethod
     def notify_request_created(cls, employee_name: str, asset_name: str, manager_email: str):
         helpdesk_email = os.getenv("HELP_DESK_EMAIL")
         hr_email = os.getenv("HR_EMAIL")
@@ -244,11 +289,7 @@ class EmailService:
                             </table>
                         </div>
                         
-                        <p style="font-size: 14px; color: #64748b;">The request is currently at the <strong>HR & Support Triage</strong> stage. Please log in to the dashboard to review the details.</p>
-                        
-                        <div style="text-align: center; margin-top: 30px;">
-                            <a href="#" style="background-color: #6366f1; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block;">View in Dashboard</a>
-                        </div>
+                        <p style="font-size: 14px; color: #64748b;">The request is currently at the <strong>HR & Support Triage</strong> stage. Please review the details.</p>
                     </div>
                     <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
                         <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated message from IT Asset Management System.</p>
@@ -319,10 +360,6 @@ class EmailService:
                         </div>
                         
                         <p style="font-size: 14px; color: #64748b;">Please review this request at your earliest convenience to maintain operational efficiency.</p>
-                        
-                        <div style="text-align: center; margin-top: 30px;">
-                            <a href="#" style="background-color: #ef4444; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px; display: inline-block;">Approve / Deny Now</a>
-                        </div>
                     </div>
                 </div>
             </body>
@@ -428,5 +465,7 @@ class EmailService:
         for email in set(recipients):
             if email:
                 cls._send_email(email, subject, body)
+
+
 
 

@@ -66,7 +66,7 @@ function NewRequestForm({ onCreate, busy }) {
           className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
           placeholder="Category (e.g. Laptop)"
           value={asset_category}
-          onChange={(e) => setAssetCategory(e.target.value)}
+          onChange={(e) => setCategory(e.target.value)}
         />
       </div>
       <textarea

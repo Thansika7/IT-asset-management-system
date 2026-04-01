@@ -72,6 +72,7 @@ scripts/
 !scripts/setup_db.py
 test_data/
 uploads/
+manual_test_data_seed.py
 
 # -------------------------------
 # OS / IDE

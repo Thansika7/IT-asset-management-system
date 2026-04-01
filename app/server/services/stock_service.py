@@ -95,6 +95,42 @@ class StockService:
             },
             reason
         )
+        # Low stock alert fires whenever inventory is at or below threshold and
+        # the allocation moved stock further into the low-stock zone.
+        actual_threshold = asset.low_stock_threshold if asset.low_stock_threshold else 10
+        previous_unused = old_asset_val["unused"]
+        normalized_branch = (asset.branch or "").strip()
+        is_low_stock_now = asset.unused <= actual_threshold
+        moved_deeper_into_low_stock = previous_unused > actual_threshold or asset.unused < previous_unused
+
+        if normalized_branch and is_low_stock_now and moved_deeper_into_low_stock:
+            from app.server.services.email_service import EmailService
+            from app.server.schema.employee import EmployeeRole
+            support_emails = [
+                e.email for e in db.query(Employee).filter(
+                    func.lower(func.trim(Employee.branch)) == normalized_branch.lower(),
+                    Employee.role == EmployeeRole.SUPPORT_TEAM,
+                    Employee.is_active == True,
+                ).all() if e.email
+            ]
+            manager_emails = [
+                e.email for e in db.query(Employee).filter(
+                    func.lower(func.trim(Employee.branch)) == normalized_branch.lower(),
+                    Employee.role == EmployeeRole.MANAGER,
+                    Employee.is_active == True,
+                ).all() if e.email
+            ]
+            recipients = list(set(support_emails + manager_emails))
+            if recipients:
+                EmailService.notify_low_stock(
+                    asset_name=asset.name,
+                    asset_id=asset.asset_id,
+                    branch=normalized_branch,
+                    unused=asset.unused,
+                    threshold=actual_threshold,
+                    recipients=recipients,
+                )
+
         return trk
 
     @staticmethod
@@ -130,3 +166,4 @@ class StockService:
             reason
         )
         return trk
+

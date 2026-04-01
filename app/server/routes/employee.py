@@ -48,7 +48,7 @@ def register_employee(
         
         if payload.role == EmployeeRole.MANAGER and current_count >= 1:
             raise HTTPException(status_code=400, detail=f"Branch '{payload.branch}' already has a Manager. Only 1 is allowed per branch.")
-        if payload.role == EmployeeRole.SUPPORT_TEAM and current_count >= 1:
+        if payload.role == EmployeeRole.SUPPORT_TEAM and current_count >= 5:
             raise HTTPException(status_code=400, detail=f"Branch '{payload.branch}' already has a Support Team member. Only 1 is allowed per branch.")
         if payload.role == EmployeeRole.HR and current_count >= 3:
             raise HTTPException(status_code=400, detail=f"Branch '{payload.branch}' already has 3 HR members. Only 3 are allowed per branch.")

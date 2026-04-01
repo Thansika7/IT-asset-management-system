@@ -46,9 +46,9 @@ export default function Login() {
         <div className="absolute inset-0 bg-gradient-to-br from-teal-500/30 via-slate-900 to-indigo-900" />
         <div className="absolute inset-0 opacity-40 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-cyan-400/20 via-transparent to-transparent" />
         <div className="relative z-10 flex flex-col justify-end p-12 text-white">
-          <h1 className="text-3xl font-bold tracking-tight mb-3">IT asset management, unified.</h1>
+          <h1 className="text-3xl font-bold tracking-tight mb-3">IT asset management</h1>
           <p className="text-slate-300 text-sm leading-relaxed max-w-md">
-            Track inventory, approvals, and assignments with a workspace tailored to each role—from employees to support and finance.
+            Track inventory, approvals, and assignments with a workspace tailored to each role from employees to support and finance.
           </p>
         </div>
       </div>

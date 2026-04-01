@@ -102,7 +102,7 @@ export default function Dashboard() {
       <header className="space-y-1">
         <p className="text-sm font-medium text-slate-500">Overview</p>
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
-          Hello — you’re working as {labelForRole(user.role)}.
+          Hello {user.name}
         </h1>
         <p className="text-slate-600 max-w-2xl text-sm sm:text-base leading-relaxed">
           This dashboard pulls live totals from the API for your role. Open sections from the sidebar for full workflows.

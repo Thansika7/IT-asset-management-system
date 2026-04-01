@@ -28,7 +28,7 @@ class Asset(Base):
     vendor_contact=Column(String(255), nullable=True)
     maintenance_total_cost=Column(Float, nullable=False, default=0.0)
     sub_license_cost=Column(Float, nullable=False, default=0.0)
-    low_stock_threshold=Column(Integer, nullable=False, default=5)
+    low_stock_threshold=Column(Integer, nullable=False, default=10)
     total_quantity=Column(Integer, nullable=False, default=0)
     used=Column(Integer, nullable=False, default=0)
     unused=Column(Integer, nullable=False, default=0)
