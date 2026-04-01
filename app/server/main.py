@@ -21,13 +21,13 @@ from app.server.middlewares.cors import setup_cors
 from app.server.exceptions.base import AppBaseException
 from app.server.logging_utils import StructuredDefaultsFilter, StructuredJsonFormatter
 
-# --- Configure Daily Rotating Logs ---
 class DailyFileHandler(logging.FileHandler):
     def __init__(self, directory="logs"):
         self.directory = directory
         os.makedirs(self.directory, exist_ok=True)
         filename = os.path.join(self.directory, f"{datetime.now().strftime('%Y-%m-%d')}.log")
-        super().__init__(filename)
+        # delay=False opens the file immediately (not on first write)
+        super().__init__(filename, delay=False)
 
     def emit(self, record):
         current_date_filename = os.path.join(self.directory, f"{datetime.now().strftime('%Y-%m-%d')}.log")
@@ -36,6 +36,8 @@ class DailyFileHandler(logging.FileHandler):
             self.baseFilename = os.path.abspath(current_date_filename)
             self.stream = self._open()
         super().emit(record)
+        # Flush immediately so every log entry lands on disk in real-time
+        self.flush()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -181,4 +183,3 @@ app.include_router(onboarding_preset_router)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
-
