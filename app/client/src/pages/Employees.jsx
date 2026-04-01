@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   useReactTable,
@@ -242,26 +242,71 @@ function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
 }
 
 function RegisterModal({ onClose, onSubmit, busy, error }) {
+  const { data: presets = [] } = useQuery({
+    queryKey: ['onboarding-presets'],
+    queryFn: () => apiFetch('/onboarding-presets/'),
+  })
+
+  const { data: stock = [] } = useQuery({
+    queryKey: ['stock'],
+    queryFn: () => apiFetch('/stock/'),
+  })
+
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [branch, setBranch] = useState('')
   const [role, setRole] = useState(R.EMPLOYEE)
   const [password, setPassword] = useState('')
-  const [onboardIds, setOnboardIds] = useState('')
+  const [presetId, setPresetId] = useState('')
+  const [picked, setPicked] = useState(() => new Set())
+  const [extraIds, setExtraIds] = useState('')
 
-  const parseOnboarding = () => {
-    const parts = onboardIds
+  const availableStock = useMemo(() => stock.filter((a) => a.unused > 0), [stock])
+
+  const compatiblePresets = useMemo(() => {
+    const eb = branch.trim()
+    return presets.filter((p) => {
+      if (p.target_role && p.target_role !== role) return false
+      if (p.branch) {
+        if (!eb || p.branch !== eb) return false
+      }
+      return true
+    })
+  }, [presets, role, branch])
+
+  useEffect(() => {
+    if (!presetId) return
+    const ok = compatiblePresets.some((p) => p.preset_id === presetId)
+    if (!ok) setPresetId('')
+  }, [compatiblePresets, presetId])
+
+  const togglePick = (id) => {
+    setPicked((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }
+
+  const extraAssetIds = useMemo(() => {
+    const parts = extraIds
       .split(/[\s,]+/)
       .map((s) => s.trim())
       .filter(Boolean)
     return [...new Set(parts)]
+  }, [extraIds])
+
+  const mergeOnboardingIds = () => {
+    const fromPick = [...picked]
+    return [...new Set([...fromPick, ...extraAssetIds])]
   }
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <button type="button" className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" aria-label="Close" onClick={onClose} />
-      <div className="relative w-full max-w-lg rounded-2xl bg-white border border-slate-200 shadow-xl p-6 max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-2xl rounded-2xl bg-white border border-slate-200 shadow-xl p-6 max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold text-slate-900">Register employee</h3>
           <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600">
@@ -269,8 +314,8 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
           </button>
         </div>
         <p className="text-xs text-slate-500 mb-4">
-          Password rules: 8+ chars, uppercase, digit, special char. Phone: 10 digits if provided. Optional onboarding assigns catalog assets (
-          manual allocate per id).
+          Password: 8+ chars, uppercase, digit, symbol. Phone: 10 digits if provided. Choose an <strong>onboarding kit</strong> (set up under{' '}
+          <strong>Onboarding kits</strong>) and/or tick lines with free stock — no need to copy IDs from inventory unless you use the optional field.
         </p>
         <form
           className="space-y-3"
@@ -283,14 +328,15 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
               branch: branch || null,
               role,
               password,
-              onboarding_asset_ids: parseOnboarding(),
+              preset_id: presetId || null,
+              onboarding_asset_ids: mergeOnboardingIds(),
             })
           }}
         >
           <input required className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
           <input required type="email" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Phone (10 digits)" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
+          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Branch (required if kit is branch-specific)" value={branch} onChange={(e) => setBranch(e.target.value)} />
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value={R.EMPLOYEE}>Employee</option>
             <option value={R.HR}>HR</option>
@@ -298,14 +344,59 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
             <option value={R.SUPPORT_TEAM}>Support</option>
             <option value={R.ADMIN}>Admin</option>
           </select>
-          <input required type="password" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Initial password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <input
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono text-xs"
-            placeholder="Onboarding asset IDs (comma-separated, optional)"
-            value={onboardIds}
-            onChange={(e) => setOnboardIds(e.target.value)}
-          />
-          {error ? <p className="text-xs text-rose-600">{error}</p> : null}
+
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Onboarding kit (optional)</label>
+            <select className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={presetId} onChange={(e) => setPresetId(e.target.value)}>
+              <option value="">— None —</option>
+              {compatiblePresets.map((p) => (
+                <option key={p.preset_id} value={p.preset_id}>
+                  {p.name} ({p.preset_id})
+                  {p.target_role ? ` · ${labelForRole(p.target_role)}` : ''}
+                  {p.branch ? ` · ${p.branch}` : ''}
+                </option>
+              ))}
+            </select>
+            {compatiblePresets.length === 0 && presets.length > 0 ? (
+              <p className="text-[11px] text-amber-700 mt-1">No kit matches this role/branch — adjust branch or role, or create a kit.</p>
+            ) : null}
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Also assign from inventory (unused &gt; 0)</label>
+            <div className="mt-1 max-h-36 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100 text-sm">
+              {availableStock.length === 0 ? (
+                <p className="p-3 text-xs text-slate-500">No spare units in catalog.</p>
+              ) : (
+                availableStock.map((a) => (
+                  <label key={a.asset_id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                    <input type="checkbox" checked={picked.has(a.asset_id)} onChange={() => togglePick(a.asset_id)} />
+                    <span className="font-mono text-[11px]">{a.asset_id}</span>
+                    <span className="text-slate-600 truncate text-xs">{a.name}</span>
+                    <span className="text-xs text-teal-700 ml-auto">{a.unused} free</span>
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-600">Extra asset IDs (optional)</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono text-xs"
+              placeholder="Comma-separated, only if not listed above"
+              value={extraIds}
+              onChange={(e) => setExtraIds(e.target.value)}
+            />
+          </div>
+
+          <input required type="password" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Initial password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+          <p className="text-[11px] text-slate-500">
+            Example: <code className="bg-slate-100 px-1 rounded">MyPass1!</code>
+          </p>
+          {error ? (
+            <p className="text-xs text-rose-600 whitespace-pre-wrap break-words rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">{error}</p>
+          ) : null}
           <div className="flex gap-2 pt-2">
             <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">
               Cancel

@@ -11,6 +11,7 @@ from app.server.schema.tracking import Tracking
 from app.server.middlewares.auth import require_roles
 from app.server.services.stock_service import StockService
 from app.server.exceptions.base import InvalidStateError, ResourceNotFoundError
+from app.server.schema.onboarding_preset import OnboardingPreset
 
 router=APIRouter(prefix="/employees", tags=["employees"])
 
@@ -74,9 +75,34 @@ def register_employee(
     db.add(user)
     db.flush()
 
-    if payload.onboarding_asset_ids:
+    asset_ids = list(payload.onboarding_asset_ids)
+    if payload.preset_id:
+        pid = payload.preset_id.strip()
+        preset = db.query(OnboardingPreset).filter(OnboardingPreset.preset_id == pid).first()
+        if not preset:
+            raise ResourceNotFoundError("OnboardingPreset", pid)
+        if preset.target_role and preset.target_role != payload.role.value:
+            raise InvalidStateError(
+                f"This onboarding kit is for role '{preset.target_role}'. New employee role is '{payload.role.value}'."
+            )
+        if preset.branch:
+            emp_branch = (payload.branch or "").strip() or None
+            if emp_branch != preset.branch.strip():
+                raise InvalidStateError(
+                    f"This kit is for branch '{preset.branch}'. Set the new employee's branch to match (or use another kit)."
+                )
+        merged = []
+        seen = set()
+        for aid in preset.get_asset_ids() + asset_ids:
+            if aid and aid not in seen:
+                seen.add(aid)
+                merged.append(aid)
+        asset_ids = merged
+
+    if asset_ids:
         from app.server.schema.tracking import AllocationType
-        for aid in payload.onboarding_asset_ids:
+
+        for aid in asset_ids:
             try:
                 StockService.allocate_asset(db, aid, user.employee_id, AllocationType.PERMANENT, current_user, "ONBOARDING_PACKAGE")
             except Exception:
@@ -121,6 +147,9 @@ def deactivate_employee(
     if not target:
         raise ResourceNotFoundError("Employee", emp_id)
 
+    if target.role == EmployeeRole.ADMIN:
+        raise HTTPException(status_code=403, detail="The Global System Administrator is a singleton and cannot be deactivated.")
+
     target.is_active=False
     active=db.query(Tracking).filter(Tracking.emp_id==emp_id, Tracking.returned_at==None).all()
     for trk in active:
@@ -138,4 +167,24 @@ def get_employee_assets(
     if current_user.role==EmployeeRole.EMPLOYEE and current_user.employee_id!=emp_id:
         raise ResourceNotFoundError("Employee", emp_id)
     active=db.query(Tracking).filter(Tracking.emp_id==emp_id, Tracking.returned_at==None).all()
-    return {"employee_id": emp_id, "active_assets": [{"tracking_id": t.tracking_id, "asset_id": t.asset_id, "is_acknowledged": t.is_acknowledged} for t in active]}
+    
+    result = []
+    for t in active:
+        asset_info = None
+        if t.asset:
+            asset_info = {
+                "name": t.asset.name,
+                "brand": t.asset.brand,
+                "category": t.asset.category.category_name if getattr(t.asset, "category", None) else None,
+                "status": t.asset.asset_status.value if t.asset.asset_status else None
+            }
+        result.append({
+            "tracking_id": t.tracking_id,
+            "asset_id": t.asset_id,
+            "is_acknowledged": t.is_acknowledged,
+            "assigned_date": t.assigned_date.isoformat() if t.assigned_date else None,
+            "allocation_type": t.allocation_type.value if t.allocation_type else "PERMANENT",
+            "asset": asset_info
+        })
+        
+    return {"employee_id": emp_id, "active_assets": result}

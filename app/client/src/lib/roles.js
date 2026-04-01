@@ -31,6 +31,8 @@ export const NAV = {
   requests: () => true,
   tracking: () => true,
   employees: (r) => [R.ADMIN, R.HR, R.MANAGER].includes(r),
+  /** View kits for registration / allocation planning */
+  onboardingKits: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   stock: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   finance: (r) => [R.ADMIN, R.MANAGER].includes(r),
 }
@@ -47,6 +49,10 @@ export function canManualStockOverride(r) {
 /** Deactivate employee + recover hardware — backend: HR + admin */
 export function canDeactivateEmployees(r) {
   return [R.ADMIN, R.HR].includes(r)
+}
+
+export function canManageOnboardingKits(r) {
+  return [R.ADMIN, R.MANAGER].includes(r)
 }
 
 export function canRegisterEmployees(r) {

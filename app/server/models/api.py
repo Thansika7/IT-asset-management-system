@@ -27,17 +27,25 @@ class EmployeeBase(BaseModel):
     branch: Optional[str] = None
     role: EmployeeRole = EmployeeRole.EMPLOYEE
 
-    @field_validator("name", "branch", mode="before")
+    @field_validator("name", mode="before")
     @classmethod
-    def normalize_text_fields(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
+    def normalize_name(cls, v: str) -> str:
         if not isinstance(v, str):
             raise ValueError("Value must be a string")
         value = v.strip()
         if not value:
             raise ValueError("Value must not be blank")
         return value
+
+    @field_validator("branch", mode="before")
+    @classmethod
+    def normalize_branch(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("Value must be a string")
+        s = v.strip()
+        return s or None
 
     @field_validator("email", mode="before")
     @classmethod
@@ -58,6 +66,7 @@ class EmployeeBase(BaseModel):
 class EmployeeCreate(EmployeeBase):
     password: str
     onboarding_asset_ids: List[str] = Field(default_factory=list)
+    preset_id: Optional[str] = None
 
     @field_validator("password")
     @classmethod
@@ -89,6 +98,16 @@ class EmployeeCreate(EmployeeBase):
             seen.add(normalized)
             cleaned.append(normalized)
         return cleaned
+
+    @field_validator("preset_id", mode="before")
+    @classmethod
+    def normalize_preset_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return None
 
 class OAuthEmployeeCreate(EmployeeBase):
     oauth_provider: str

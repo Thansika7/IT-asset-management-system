@@ -8,6 +8,7 @@ import {
   Users,
   Wallet,
   Laptop,
+  Layers,
   LogOut,
   Menu,
   X,
@@ -24,6 +25,7 @@ const navDef = [
   { to: '/tracking', label: 'Tracking', icon: MapPinned, show: NAV.tracking },
   { to: '/finance', label: 'Finance', icon: Wallet, show: NAV.finance },
   { to: '/employees', label: 'Team', icon: Users, show: NAV.employees },
+  { to: '/onboarding-kits', label: 'Onboarding kits', icon: Layers, show: NAV.onboardingKits },
 ]
 
 export default function MainLayout() {

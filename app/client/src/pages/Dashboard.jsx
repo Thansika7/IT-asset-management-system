@@ -4,7 +4,7 @@ import { useQueries } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
 import { R, NAV, labelForRole } from '@/lib/roles'
-import { FileStack, MapPinned, PackageSearch, Wallet, ArrowRight, Laptop, Users } from 'lucide-react'
+import { FileStack, MapPinned, PackageSearch, Wallet, ArrowRight, Laptop, Users, Layers } from 'lucide-react'
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -88,6 +88,13 @@ export default function Dashboard() {
     { title: 'Inventory', desc: 'On-hand stock by catalog asset.', to: '/stock', show: NAV.stock(user.role), icon: PackageSearch },
     { title: 'Finance snapshot', desc: 'Totals and overhead.', to: '/finance', show: NAV.finance(user.role), icon: Wallet },
     { title: 'Team directory', desc: 'People in your org scope.', to: '/employees', show: NAV.employees(user.role), icon: Users },
+    {
+      title: 'Onboarding kits',
+      desc: 'Preset bundles for new hires; use when registering employees.',
+      to: '/onboarding-kits',
+      show: NAV.onboardingKits(user.role),
+      icon: Layers,
+    },
   ].filter((x) => x.show)
 
   return (

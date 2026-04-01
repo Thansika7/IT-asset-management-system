@@ -1,16 +1,22 @@
 import React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
 
 export default function MyAssets() {
   const { user } = useAuth()
+  const qc = useQueryClient()
   const empId = user.employeeId
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['my-assets', empId],
     queryFn: () => apiFetch(`/employees/${empId}/assets`),
     enabled: Boolean(empId),
+  })
+
+  const ackMut = useMutation({
+    mutationFn: (trackingId) => apiFetch(`/accounts/acknowledge/${encodeURIComponent(trackingId)}`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-assets', empId] }),
   })
 
   const rows = data?.active_assets ?? []
@@ -29,7 +35,11 @@ export default function MyAssets() {
     <div className="p-6 sm:p-8 max-w-3xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">My assets</h1>
-        <p className="text-sm text-slate-600 mt-1">Active assignments from your profile.</p>
+        <p className="text-sm text-slate-600 mt-1">
+          Confirm receipt of each assignment. This records your acknowledgment in the system (
+          <code className="text-xs bg-slate-100 px-1 rounded">POST /accounts/acknowledge/…</code>
+          ).
+        </p>
       </div>
 
       {isLoading ? (
@@ -41,36 +51,70 @@ export default function MyAssets() {
       ) : (
         <>
           <p className="text-xs text-slate-500">
-            Use the tracking id for admin return-to-stock (<strong>Inventory → Return / recover</strong>).
+            Use <strong>Copy id</strong> if an admin needs the tracking id for a return-to-stock action.
           </p>
           <ul className="space-y-3">
             {rows.map((r) => (
               <li key={r.tracking_id} className="rounded-2xl border border-slate-200 bg-white p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="font-mono text-xs text-slate-600">{r.tracking_id}</p>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <p className="font-mono text-xs text-slate-500">{r.asset_id}</p>
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
+                      {r.allocation_type || 'PERMANENT'}
+                    </span>
+                    {r.asset?.category && (
+                      <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100">
+                        {r.asset.category}
+                      </span>
+                    )}
+                  </div>
+                  
+                  <p className="font-bold text-slate-900 text-lg leading-tight">
+                    {r.asset?.brand ? `${r.asset.brand} ` : ''}{r.asset?.name || 'Unknown Asset'}
+                  </p>
+                  
+                  {r.assigned_date && (
+                    <p className="text-xs text-slate-500 mt-1">
+                      Assigned: {new Date(r.assigned_date).toLocaleDateString()}
+                    </p>
+                  )}
+
+                  <div className="mt-3 flex items-center gap-2 bg-slate-50 w-fit px-2 py-1.5 rounded-lg border border-slate-100">
+                    <span className="text-[11px] font-medium text-slate-500">Trk: <span className="font-mono text-slate-700">{r.tracking_id}</span></span>
                     <button
                       type="button"
-                      className="text-xs font-semibold text-teal-700 hover:underline"
+                      className="text-[11px] font-semibold text-teal-600 hover:text-teal-800 hover:underline cursor-pointer transition-colors"
                       onClick={() => navigator.clipboard.writeText(r.tracking_id)}
                     >
-                      Copy id
+                      Copy
                     </button>
                   </div>
-                  <p className="font-semibold text-slate-900 mt-1">Asset {r.asset_id}</p>
                 </div>
-                <span
-                  className={`text-xs font-bold uppercase px-2 py-1 rounded-lg self-start ${
-                    r.is_acknowledged ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'
-                  }`}
-                >
-                  {r.is_acknowledged ? 'Acknowledged' : 'Pending ack'}
-                </span>
+                <div className="flex flex-col sm:items-end gap-2">
+                  <span
+                    className={`text-xs font-bold uppercase px-2 py-1 rounded-lg self-start sm:self-end ${
+                      r.is_acknowledged ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'
+                    }`}
+                  >
+                    {r.is_acknowledged ? 'Acknowledged' : 'Pending acknowledgment'}
+                  </span>
+                  {!r.is_acknowledged ? (
+                    <button
+                      type="button"
+                      disabled={ackMut.isPending}
+                      onClick={() => ackMut.mutate(r.tracking_id)}
+                      className="rounded-xl bg-slate-900 text-white text-sm font-semibold px-4 py-2 hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {ackMut.isPending ? 'Saving…' : 'I acknowledge receipt'}
+                    </button>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>
         </>
       )}
+      {ackMut.isError ? <p className="text-sm text-rose-600">{ackMut.error?.message}</p> : null}
     </div>
   )
 }

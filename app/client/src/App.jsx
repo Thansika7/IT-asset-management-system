@@ -11,6 +11,7 @@ import Requests from './pages/Requests'
 import Stock from './pages/Stock'
 import Finance from './pages/Finance'
 import MyAssets from './pages/MyAssets'
+import OnboardingKits from './pages/OnboardingKits'
 import MainLayout from './layouts/MainLayout'
 
 const APP_ROLES = [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM, R.EMPLOYEE]
@@ -28,6 +29,14 @@ export default function App() {
           <Route path="tracking" element={<Tracking />} />
           <Route path="finance" element={<RoleGate roles={[R.ADMIN, R.MANAGER]}><Finance /></RoleGate>} />
           <Route path="employees" element={<RoleGate roles={[R.ADMIN, R.HR, R.MANAGER]}><Employees /></RoleGate>} />
+          <Route
+            path="onboarding-kits"
+            element={
+              <RoleGate roles={[R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM]}>
+                <OnboardingKits />
+              </RoleGate>
+            }
+          />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
