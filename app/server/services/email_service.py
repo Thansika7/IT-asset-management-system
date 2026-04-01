@@ -10,6 +10,35 @@ logger = logging.getLogger(__name__)
 
 class EmailService:
     @staticmethod
+    def _format_role_label(role_value) -> str:
+        if role_value is None:
+            return "User"
+        raw = getattr(role_value, "value", role_value)
+        text = str(raw).replace("_", " ").strip()
+        return text.title() if text else "User"
+
+    @staticmethod
+    def _wrap_email(title: str, subtitle: str, body_html: str, accent_color: str = "#6366f1", footer_note: str = "Automated message from IT Asset Management System.") -> str:
+        return f"""
+        <html>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+                    <div style="background-color: {accent_color}; padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">{title}</h1>
+                        <p style="color: #ffffff; opacity: 0.85; margin: 10px 0 0 0; font-size: 14px;">{subtitle}</p>
+                    </div>
+                    <div style="padding: 40px;">
+                        {body_html}
+                    </div>
+                    <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">{footer_note}</p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+
+    @staticmethod
     def _send_email(to_email: str, subject: str, html_body: str, reply_to: str = None):
         # Force reload .env to bypass Uvicorn's hot-reload cache
         from dotenv import load_dotenv
@@ -121,18 +150,21 @@ class EmailService:
         helpdesk_email = os.getenv("HELP_DESK_EMAIL")
         hr_email = os.getenv("HR_EMAIL")
         subject = f"New Asset Request: {asset_name} from {employee_name}"
-        body = f"""
-        <html>
-            <body>
-                <h2 style='color: #6366f1;'>New Asset Request</h2>
-                <p><strong>Employee:</strong> {employee_name}</p>
-                <p><strong>Asset Requested:</strong> {asset_name}</p>
-                <p><strong>Status:</strong> Pending HR Verification.</p>
-                <hr>
-                <p>This request has been shared with IT Help Desk, HR, and the Department Manager.</p>
-            </body>
-        </html>
-        """
+        body = cls._wrap_email(
+            "New Asset Request",
+            "Pending HR verification",
+            f"""
+            <p>A new request has been raised and shared with the relevant reviewers.</p>
+            <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr><td style="padding: 5px 0; color: #64748b; width: 40%;">Employee</td><td style="font-weight: 600;">{employee_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">Asset requested</td><td style="font-weight: 600;">{asset_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">Status</td><td style="font-weight: 600;">Pending HR Verification</td></tr>
+                </table>
+            </div>
+            <p style="font-size: 14px; color: #64748b;">This request has been shared with IT Help Desk, HR, and the department manager.</p>
+            """,
+        )
         # Note: This method is now secondary to notify_branch_stakeholders
         if manager_email:
             cls._send_email(manager_email, subject, body)
@@ -143,17 +175,22 @@ class EmailService:
         color = "#10b981" if is_needed else "#ef4444"
         
         subject = f"HR Verification: {asset_name} for {employee_name} ({'Needed' if is_needed else 'Not Needed'})"
-        body = f"""
-        <html>
-            <body>
-                <h2 style='color: {color};'>HR Request Verification</h2>
-                <p><strong>Employee:</strong> {employee_name}</p>
-                <p><strong>Asset:</strong> {asset_name}</p>
-                <p><strong>HR Decision:</strong> {status_text}</p>
-                <p>Help Desk can now proceed with inventory check.</p>
-            </body>
-        </html>
-        """
+        body = cls._wrap_email(
+            "HR Verification",
+            f"{employee_name} · {asset_name}",
+            f"""
+            <p>HR has completed the necessity review for this request.</p>
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr><td style="padding: 5px 0; color: #64748b; width: 40%;">Employee</td><td style="font-weight: 600;">{employee_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">Asset</td><td style="font-weight: 600;">{asset_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">HR decision</td><td style="font-weight: 700; color: {color};">{status_text}</td></tr>
+                </table>
+            </div>
+            <p style="font-size: 14px; color: #64748b;">Help Desk can now continue the inventory and fulfilment review.</p>
+            """,
+            accent_color=color,
+        )
         for email in set(helpdesk_emails):
             if email:
                 cls._send_email(email, subject, body)
@@ -161,17 +198,21 @@ class EmailService:
     @classmethod
     def notify_stock_info_to_manager(cls, employee_name: str, asset_name: str, manager_email: str, stock_msg: str):
         subject = f"Inventory Check Result: {asset_name} for {employee_name}"
-        body = f"""
-        <html>
-            <body>
-                <h2 style='color: #6366f1;'>Inventory Triage Report</h2>
-                <p><strong>Employee:</strong> {employee_name}</p>
-                <p><strong>Asset:</strong> {asset_name}</p>
-                <p><strong>Stock Availability:</strong> {stock_msg}</p>
-                <p>Please review and provide final approval/denial.</p>
-            </body>
-        </html>
-        """
+        body = cls._wrap_email(
+            "Inventory Triage Report",
+            "Manager review required",
+            f"""
+            <p>Inventory triage is complete and this request is ready for your review.</p>
+            <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr><td style="padding: 5px 0; color: #64748b; width: 40%;">Employee</td><td style="font-weight: 600;">{employee_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">Asset</td><td style="font-weight: 600;">{asset_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">Stock availability</td><td style="font-weight: 600;">{stock_msg}</td></tr>
+                </table>
+            </div>
+            <p style="font-size: 14px; color: #64748b;">Please review and provide final approval or denial.</p>
+            """,
+        )
         if manager_email:
             cls._send_email(manager_email, subject, body)
 
@@ -179,15 +220,22 @@ class EmailService:
     def notify_manager_decision(cls, employee_name: str, asset_name: str, is_approved: bool, helpdesk_emails: List[str]):
         subject = f"Final Decision: {asset_name} for {employee_name} ({'Approved' if is_approved else 'Denied'})"
         color = "#10b981" if is_approved else "#ef4444"
-        body = f"""
-        <html>
-            <body>
-                <h2 style='color: {color};'>Manager's Final Decision</h2>
-                <p>The request for <strong>{asset_name}</strong> for <strong>{employee_name}</strong> has been <strong>{'Approved' if is_approved else 'Denied'}</strong>.</p>
-                <p>{'Fulfillment will begin shortly.' if is_approved else 'No further action will be taken.'}</p>
-            </body>
-        </html>
-        """
+        body = cls._wrap_email(
+            "Manager Decision",
+            f"{'Approved' if is_approved else 'Denied'} request",
+            f"""
+            <p>The final branch review has been completed for this request.</p>
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr><td style="padding: 5px 0; color: #64748b; width: 40%;">Employee</td><td style="font-weight: 600;">{employee_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">Asset</td><td style="font-weight: 600;">{asset_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">Decision</td><td style="font-weight: 700; color: {color};">{'Approved' if is_approved else 'Denied'}</td></tr>
+                </table>
+            </div>
+            <p style="font-size: 14px; color: #64748b;">{'Fulfilment can begin now.' if is_approved else 'No further action will be taken on this request.'}</p>
+            """,
+            accent_color=color,
+        )
         for email in set(helpdesk_emails):
             if email:
                 cls._send_email(email, subject, body)
@@ -195,15 +243,20 @@ class EmailService:
     @classmethod
     def notify_asset_assigned(cls, employee_name: str, asset_name: str, manager_email: str):
         subject = f"Asset Assigned: {asset_name} to {employee_name}"
-        body = f"""
-        <html>
-            <body>
-                <h2 style='color: #6366f1;'>Asset Hand-over Complete</h2>
-                <p>The requested <strong>{asset_name}</strong> has been successfully assigned to <strong>{employee_name}</strong>.</p>
-                <p>Inventory records have been updated.</p>
-            </body>
-        </html>
-        """
+        body = cls._wrap_email(
+            "Asset Hand-over Complete",
+            "Fulfilment completed successfully",
+            f"""
+            <p>The request has been fulfilled and the asset has been assigned.</p>
+            <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr><td style="padding: 5px 0; color: #64748b; width: 40%;">Employee</td><td style="font-weight: 600;">{employee_name}</td></tr>
+                    <tr><td style="padding: 5px 0; color: #64748b;">Assigned asset</td><td style="font-weight: 600;">{asset_name}</td></tr>
+                </table>
+            </div>
+            <p style="font-size: 14px; color: #64748b;">Inventory and tracking records have been updated.</p>
+            """,
+        )
         if manager_email:
             cls._send_email(manager_email, subject, body)
 
@@ -227,33 +280,34 @@ class EmailService:
             </tr>
             """
 
-        body = f"""
-        <html>
-            <body style="font-family: Arial, sans-serif; color: #333;">
-                <h2 style='color: #6366f1;'>Upcoming Asset Expirations</h2>
-                <p>The following assets have warranties or licenses expiring within the next 30 days:</p>
-                <table style="width: 100%; border-collapse: collapse; text-align: left;">
-                    <thead>
-                        <tr style="background-color: #f3f4f6;">
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Asset</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Expiry Type</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Days Left</th>
-                            <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Date</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows}
-                    </tbody>
-                </table>
-                <p style="margin-top: 20px;">Please take appropriate renewal action.</p>
-            </body>
-        </html>
-        """
+        body = cls._wrap_email(
+            "Upcoming Asset Expirations",
+            "Action required within 30 days",
+            f"""
+            <p>The following assets have warranties or licenses expiring within the next 30 days:</p>
+            <table style="width: 100%; border-collapse: collapse; text-align: left; margin-top: 20px;">
+                <thead>
+                    <tr style="background-color: #f3f4f6;">
+                        <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Asset</th>
+                        <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Expiry Type</th>
+                        <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Days Left</th>
+                        <th style="padding: 10px; border-bottom: 2px solid #cbd5e1;">Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+            <p style="margin-top: 20px; font-size: 14px; color: #64748b;">Please take appropriate renewal action.</p>
+            """,
+        )
         cls._send_email(helpdesk_email, subject, body)
     @classmethod
     def notify_branch_stakeholders(cls, employee_name: str, asset_name: str, recipients: List[str], requester_role: str, branch: str):
         if not recipients:
             return
+
+        role_label = cls._format_role_label(requester_role)
             
         subject = f"Action Required: New Asset Request from {employee_name} ({branch})"
         body = f"""
@@ -276,7 +330,7 @@ class EmailService:
                                 </tr>
                                 <tr>
                                     <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Role</td>
-                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500;">{requester_role}</td>
+                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500;">{role_label}</td>
                                 </tr>
                                 <tr>
                                     <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Branch</td>

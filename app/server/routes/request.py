@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 from typing import List, Optional
 
 from app.server.database.database import get_db
@@ -17,9 +18,15 @@ def list_requests(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(get_current_user)
 ):
-    if current_user.role in [EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR, EmployeeRole.MANAGER]:
-        return db.query(Request).all()
-    return db.query(Request).filter(Request.emp_id == current_user.employee_id).all()
+    query = db.query(Request).options(joinedload(Request.employee))
+
+    if current_user.role == EmployeeRole.ADMIN:
+        return query.all()
+
+    if current_user.role in [EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR, EmployeeRole.MANAGER]:
+        return query.join(Request.employee).filter(Employee.branch == current_user.branch).all()
+
+    return query.filter(Request.emp_id == current_user.employee_id).all()
 
 @router.post("/", response_model=RequestResponse)
 def create_request(

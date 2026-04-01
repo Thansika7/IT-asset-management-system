@@ -45,11 +45,14 @@ export default function Login() {
       <div className="hidden lg:flex lg:w-[42%] relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-teal-500/30 via-slate-900 to-indigo-900" />
         <div className="absolute inset-0 opacity-40 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-cyan-400/20 via-transparent to-transparent" />
-        <div className="relative z-10 flex flex-col justify-end p-12 text-white">
-          <h1 className="text-3xl font-bold tracking-tight mb-3">IT asset management</h1>
-          <p className="text-slate-300 text-sm leading-relaxed max-w-md">
-            Track inventory, approvals, and assignments with a workspace tailored to each role from employees to support and finance.
-          </p>
+        <div className="relative z-10 flex w-full items-center px-12 py-16 text-white">
+          <div className="max-w-lg">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300 mb-4">Asset Workspace</p>
+            <h1 className="text-4xl font-bold tracking-tight mb-4 leading-tight">IT asset management</h1>
+            <p className="text-slate-300 text-base leading-relaxed max-w-md">
+              Track inventory, approvals, and assignments with a workspace tailored to each role from employees to support and finance.
+            </p>
+          </div>
         </div>
       </div>
 

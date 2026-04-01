@@ -108,6 +108,9 @@ class RequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
     request_id: str
     emp_id: str
+    requester_name: Optional[str] = None
+    requester_branch: Optional[str] = None
+    requester_role: Optional[str] = None
     asset_name: str
     asset_category: str
     reason: str

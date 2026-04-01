@@ -18,3 +18,15 @@ class Request(Base):
     serviced_asset_id=Column(String(50), nullable=True)
     req_date=Column(DateTime(timezone=True), server_default=func.now())
     employee=relationship("Employee", back_populates="requests")
+
+    @property
+    def requester_name(self) -> str | None:
+        return self.employee.name if self.employee else None
+
+    @property
+    def requester_branch(self) -> str | None:
+        return self.employee.branch if self.employee else None
+
+    @property
+    def requester_role(self) -> str | None:
+        return self.employee.role.value if self.employee and self.employee.role else None
