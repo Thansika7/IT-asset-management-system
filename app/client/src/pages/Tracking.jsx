@@ -36,7 +36,7 @@ function isSoftwareAsset(record) {
   return ['software', 'license', 'subscription', 'saas', 'antivirus', 'office'].some((term) => combined.includes(term))
 }
 
-function getPrimaryExpiry(record) {
+function getApplicableExpiry(record) {
   if (isSoftwareAsset(record)) {
     return {
       label: 'Software License',
@@ -52,26 +52,6 @@ function getPrimaryExpiry(record) {
     tone: 'orange',
     helpText: 'Tracks physical device warranty coverage and service expiry.',
   }
-}
-
-function getSecondaryExpiry(record) {
-  if (isSoftwareAsset(record)) {
-    return record?.warranty_expiry
-      ? {
-          label: 'Additional Hardware Warranty',
-          value: record.warranty_expiry,
-          tone: 'orange',
-        }
-      : null
-  }
-
-  return record?.license_expiry
-    ? {
-        label: 'Linked Software License',
-        value: record.license_expiry,
-        tone: 'sky',
-      }
-    : null
 }
 
 function DetailItem({ label, value }) {
@@ -153,44 +133,25 @@ export default function Tracking() {
         header: 'Expiry',
         accessorKey: 'license_expiry',
         cell: ({ row }) => {
-          const primaryExpiry = getPrimaryExpiry(row.original)
-          const secondaryExpiry = getSecondaryExpiry(row.original)
+          const expiry = getApplicableExpiry(row.original)
           return (
-            <div className="space-y-2 min-w-[190px]">
+            <div className="min-w-[190px]">
               <div
                 className={`rounded-lg px-3 py-2 ${
-                  primaryExpiry.tone === 'sky'
+                  expiry.tone === 'sky'
                     ? 'border border-sky-100 bg-sky-50'
                     : 'border border-orange-100 bg-orange-50'
                 }`}
               >
                 <p
                   className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${
-                    primaryExpiry.tone === 'sky' ? 'text-sky-700' : 'text-orange-700'
+                    expiry.tone === 'sky' ? 'text-sky-700' : 'text-orange-700'
                   }`}
                 >
-                  {primaryExpiry.label}
+                  {expiry.label}
                 </p>
-                <p className="mt-1 text-xs font-medium text-slate-900">{primaryExpiry.value || '-'}</p>
+                <p className="mt-1 text-xs font-medium text-slate-900">{expiry.value || '-'}</p>
               </div>
-              {secondaryExpiry ? (
-                <div
-                  className={`rounded-lg px-3 py-2 ${
-                    secondaryExpiry.tone === 'sky'
-                      ? 'border border-sky-100 bg-sky-50'
-                      : 'border border-orange-100 bg-orange-50'
-                  }`}
-                >
-                  <p
-                    className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${
-                      secondaryExpiry.tone === 'sky' ? 'text-sky-700' : 'text-orange-700'
-                    }`}
-                  >
-                    {secondaryExpiry.label}
-                  </p>
-                  <p className="mt-1 text-xs font-medium text-slate-900">{secondaryExpiry.value}</p>
-                </div>
-              ) : null}
             </div>
           )
         },
@@ -300,82 +261,62 @@ export default function Tracking() {
               {selectedRecord ? (
                 <div className="mt-6 space-y-6">
                   {(() => {
-                    const primaryExpiry = getPrimaryExpiry(selectedRecord)
-                    const secondaryExpiry = getSecondaryExpiry(selectedRecord)
+                    const expiry = getApplicableExpiry(selectedRecord)
                     return (
                       <>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <DetailItem label="Asset ID" value={selectedRecord.asset_id} />
-                    <DetailItem label="Employee" value={selectedRecord.emp_id} />
-                    <DetailItem label="Category" value={selectedRecord.category} />
-                    <DetailItem label="Sub Category" value={selectedRecord.sub_category} />
-                    <DetailItem label="Current Branch" value={selectedRecord.branch} />
-                    <DetailItem label="Allocation Type" value={selectedRecord.allocation_type} />
-                    <DetailItem label="Movement Type" value={selectedRecord.movement_type} />
-                    <DetailItem label="Assigned Date" value={formatDate(selectedRecord.assigned_date)} />
-                    <DetailItem label="Returned At" value={formatDate(selectedRecord.returned_at)} />
-                    <DetailItem
-                      label="Acknowledged"
-                      value={selectedRecord.is_acknowledged ? `Yes${selectedRecord.acknowledged_at ? ` on ${formatDate(selectedRecord.acknowledged_at)}` : ''}` : 'No'}
-                    />
-                  </div>
-
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900">Branch Flow</h3>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                      <DetailItem label="From Branch" value={selectedRecord.from_branch} />
-                      <DetailItem label="To Branch" value={selectedRecord.to_branch} />
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900">Applicable Expiry</h3>
-                    <div className="mt-3 grid gap-4">
-                      <div
-                        className={`rounded-2xl px-4 py-4 ${
-                          primaryExpiry.tone === 'sky'
-                            ? 'border border-sky-100 bg-sky-50'
-                            : 'border border-orange-100 bg-orange-50'
-                        }`}
-                      >
-                        <p
-                          className={`text-xs font-semibold uppercase tracking-[0.16em] ${
-                            primaryExpiry.tone === 'sky' ? 'text-sky-700' : 'text-orange-700'
-                          }`}
-                        >
-                          {primaryExpiry.label} Expiry
-                        </p>
-                        <p className="mt-2 text-base font-semibold text-slate-900">{primaryExpiry.value || '-'}</p>
-                        <p className="mt-1 text-sm text-slate-600">{primaryExpiry.helpText}</p>
-                      </div>
-                      {secondaryExpiry ? (
-                        <div
-                          className={`rounded-2xl px-4 py-4 ${
-                            secondaryExpiry.tone === 'sky'
-                              ? 'border border-sky-100 bg-sky-50'
-                              : 'border border-orange-100 bg-orange-50'
-                          }`}
-                        >
-                          <p
-                            className={`text-xs font-semibold uppercase tracking-[0.16em] ${
-                              secondaryExpiry.tone === 'sky' ? 'text-sky-700' : 'text-orange-700'
-                            }`}
-                          >
-                            {secondaryExpiry.label}
-                          </p>
-                          <p className="mt-2 text-base font-semibold text-slate-900">{secondaryExpiry.value}</p>
-                          <p className="mt-1 text-sm text-slate-600">Shown separately so category-specific expiry stays clear.</p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <DetailItem label="Asset ID" value={selectedRecord.asset_id} />
+                          <DetailItem label="Employee" value={selectedRecord.emp_id} />
+                          <DetailItem label="Category" value={selectedRecord.category} />
+                          <DetailItem label="Sub Category" value={selectedRecord.sub_category} />
+                          <DetailItem label="Current Branch" value={selectedRecord.branch} />
+                          <DetailItem label="Allocation Type" value={selectedRecord.allocation_type} />
+                          <DetailItem label="Movement Type" value={selectedRecord.movement_type} />
+                          <DetailItem label="Assigned Date" value={formatDate(selectedRecord.assigned_date)} />
+                          <DetailItem label="Returned At" value={formatDate(selectedRecord.returned_at)} />
+                          <DetailItem
+                            label="Acknowledged"
+                            value={selectedRecord.is_acknowledged ? `Yes${selectedRecord.acknowledged_at ? ` on ${formatDate(selectedRecord.acknowledged_at)}` : ''}` : 'No'}
+                          />
                         </div>
-                      ) : null}
-                    </div>
-                  </div>
 
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900">Movement Reason</h3>
-                    <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                      {selectedRecord.movement_reason || 'No movement reason recorded.'}
-                    </div>
-                  </div>
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-900">Branch Flow</h3>
+                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <DetailItem label="From Branch" value={selectedRecord.from_branch} />
+                            <DetailItem label="To Branch" value={selectedRecord.to_branch} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-900">Applicable Expiry</h3>
+                          <div className="mt-3">
+                            <div
+                              className={`rounded-2xl px-4 py-4 ${
+                                expiry.tone === 'sky'
+                                  ? 'border border-sky-100 bg-sky-50'
+                                  : 'border border-orange-100 bg-orange-50'
+                              }`}
+                            >
+                              <p
+                                className={`text-xs font-semibold uppercase tracking-[0.16em] ${
+                                  expiry.tone === 'sky' ? 'text-sky-700' : 'text-orange-700'
+                                }`}
+                              >
+                                {expiry.label} Expiry
+                              </p>
+                              <p className="mt-2 text-base font-semibold text-slate-900">{expiry.value || '-'}</p>
+                              <p className="mt-1 text-sm text-slate-600">{expiry.helpText}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-900">Movement Reason</h3>
+                          <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                            {selectedRecord.movement_reason || 'No movement reason recorded.'}
+                          </div>
+                        </div>
                       </>
                     )
                   })()}

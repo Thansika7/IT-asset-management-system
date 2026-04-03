@@ -10,6 +10,8 @@ from app.server.database.database import Base, engine, SessionLocal
 from app.server.routes.auth import router as auth_router
 from app.server.routes.employee import router as employee_router
 from app.server.routes.stock import router as stock_router
+from app.server.routes.assets import router as assets_router
+from app.server.routes.analytics import router as analytics_router
 from app.server.routes.request import router as req_router
 from app.server.routes.account import router as account_router
 from app.server.routes.tracking import router as tracking_router
@@ -173,6 +175,8 @@ def init_admin():
 app.include_router(auth_router)
 app.include_router(employee_router)
 app.include_router(stock_router)
+app.include_router(assets_router)
+app.include_router(analytics_router)
 app.include_router(req_router)
 app.include_router(account_router)
 app.include_router(tracking_router)

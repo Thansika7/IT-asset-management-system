@@ -5,7 +5,7 @@ from typing import List, Optional
 from app.server.database.database import get_db
 from app.server.models.stock import AssetCreate, StockAdd, StockResponse, AllocateRequest, ReturnRequest
 from app.server.schema.asset import Asset
-from app.server.schema.category import Category
+from app.server.schema.category import Category, SubCategory
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.middlewares.auth import require_roles
 from app.server.services.stock_service import StockService
@@ -39,14 +39,31 @@ def create_asset_entry(
         db.add(cat)
         db.flush()
 
+    sub_category = db.query(SubCategory).filter(
+        SubCategory.category_id == cat.category_id,
+        SubCategory.sub_category_name == payload.sub_category_name,
+    ).first()
+    if not sub_category:
+        sub_category = SubCategory(
+            category_id=cat.category_id,
+            sub_category_name=payload.sub_category_name,
+        )
+        db.add(sub_category)
+        db.flush()
+
     asset=Asset(
         asset_id=payload.asset_id,
         name=payload.name,
         category_id=cat.category_id,
+        sub_category_id=sub_category.sub_category_id,
         branch=payload.branch,
+        purchased_date=payload.purchased_date,
+        purchase_cost=payload.purchase_cost,
+        salvage_value=payload.salvage_value,
+        useful_life_years=payload.useful_life_years,
         total_quantity=payload.total_quantity,
         unused=payload.unused,
-        used=0
+        used=max(payload.total_quantity - payload.unused, 0)
     )
     db.add(asset)
     db.commit()

@@ -1,6 +1,6 @@
 import uuid
 import enum
-from sqlalchemy import Column, Date, DateTime, Enum, ForeignKey, Integer, String, Float
+from sqlalchemy import CheckConstraint, Column, Date, DateTime, Enum, ForeignKey, Integer, String, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.server.database.database import Base
@@ -14,6 +14,19 @@ class AssetStatus(str, enum.Enum):
     DAMAGED="DAMAGED"
 class Asset(Base):
     __tablename__="assets"
+    __table_args__ = (
+        CheckConstraint("total_quantity >= 0", name="ck_assets_total_quantity_non_negative"),
+        CheckConstraint("used >= 0", name="ck_assets_used_non_negative"),
+        CheckConstraint("unused >= 0", name="ck_assets_unused_non_negative"),
+        CheckConstraint("purchase_cost IS NULL OR purchase_cost >= 0", name="ck_assets_purchase_cost_non_negative"),
+        CheckConstraint("salvage_value IS NULL OR salvage_value >= 0", name="ck_assets_salvage_value_non_negative"),
+        CheckConstraint("maintenance_total_cost >= 0", name="ck_assets_maintenance_non_negative"),
+        CheckConstraint("sub_license_cost >= 0", name="ck_assets_sub_license_non_negative"),
+        CheckConstraint("repair_total_cost >= 0", name="ck_assets_repair_non_negative"),
+        CheckConstraint("repair_count >= 0", name="ck_assets_repair_count_non_negative"),
+        CheckConstraint("performance_issues_count >= 0", name="ck_assets_perf_issue_non_negative"),
+        CheckConstraint("useful_life_years > 0", name="ck_assets_useful_life_positive"),
+    )
     asset_id=Column(String(50), primary_key=True, index=True, default=lambda: f"AST-{uuid.uuid4().hex[:8].upper()}")
     name=Column(String(150), nullable=False, index=True)
     category_id=Column(String(50), ForeignKey("categories.category_id"), nullable=False)
@@ -27,7 +40,11 @@ class Asset(Base):
     vendor_name=Column(String(150), nullable=True)
     vendor_contact=Column(String(255), nullable=True)
     maintenance_total_cost=Column(Float, nullable=False, default=0.0)
+    repair_total_cost=Column(Float, nullable=False, default=0.0)
+    repair_count=Column(Integer, nullable=False, default=0)
+    performance_issues_count=Column(Integer, nullable=False, default=0)
     sub_license_cost=Column(Float, nullable=False, default=0.0)
+    useful_life_years=Column(Integer, nullable=False, default=5)
     low_stock_threshold=Column(Integer, nullable=False, default=10)
     total_quantity=Column(Integer, nullable=False, default=0)
     used=Column(Integer, nullable=False, default=0)
