@@ -7,11 +7,24 @@ from pydantic import BaseModel, ConfigDict, field_validator
 VALID_REQUEST_ACTIONS = {"NEW", "REPLACE", "SERVICE"}
 
 
-class RequestUrgency(str, Enum):
+class SeverityLevel(str, Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
     CRITICAL = "CRITICAL"
+
+
+class UrgencyLevel(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class PriorityLevel(str, Enum):
+    P1 = "P1"
+    P2 = "P2"
+    P3 = "P3"
+    P4 = "P4"
 
 
 class RequestCreate(BaseModel):
@@ -20,8 +33,9 @@ class RequestCreate(BaseModel):
     asset_category: str
     reason: str
     action_type: Optional[str] = None
-    priority: Optional[RequestUrgency] = None
-    severity: Optional[RequestUrgency] = None
+    priority: Optional[PriorityLevel] = None
+    severity: Optional[SeverityLevel] = None
+    urgency: Optional[UrgencyLevel] = None
 
     @field_validator("asset_name", "asset_category", "reason")
     @classmethod
@@ -44,6 +58,16 @@ class RequestCreate(BaseModel):
 class RequestTriage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action_type: str
+    severity: SeverityLevel = SeverityLevel.MEDIUM
+    urgency: Optional[UrgencyLevel] = None
+    affected_users: int = 1
+
+    @field_validator("affected_users")
+    @classmethod
+    def validate_affected_users(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("affected_users must be at least 1")
+        return v
 
     @field_validator("action_type")
     @classmethod
@@ -88,19 +112,6 @@ class RequestCrossBranchTransfer(BaseModel):
 class RequestHRVerify(BaseModel):
     model_config = ConfigDict(extra="forbid")
     is_needed: bool
-    action_type: Optional[str] = None
-    priority: RequestUrgency = RequestUrgency.MEDIUM
-    severity: RequestUrgency = RequestUrgency.MEDIUM
-
-    @field_validator("action_type")
-    @classmethod
-    def validate_hr_action_type(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        value = v.strip().upper()
-        if value not in VALID_REQUEST_ACTIONS:
-            raise ValueError(f"action_type must be one of: {', '.join(sorted(VALID_REQUEST_ACTIONS))}")
-        return value
 
 class RequestResolve(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -144,6 +155,30 @@ class RequestResponse(BaseModel):
     action_type: Optional[str] = None
     priority: Optional[str] = None
     severity: Optional[str] = None
+    urgency: Optional[str] = None
+    urgency_response_time: Optional[str] = None
     sla_target_at: Optional[datetime] = None
     sla_breached: bool = False
+    escalation_triggered: bool = False
+    escalation_role: Optional[str] = None
+    severity_description: Optional[str] = None
+    priority_description: Optional[str] = None
+    priority_response_time: Optional[str] = None
     req_date: datetime
+
+
+class RequestFormAssetOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: Optional[str] = None
+    asset_name: str
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    branch: Optional[str] = None
+    owned_by_requester: bool = False
+
+
+class RequestFormOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    categories: list[str]
+    reasons_by_category: dict[str, list[str]]
+    known_assets: list[RequestFormAssetOption]

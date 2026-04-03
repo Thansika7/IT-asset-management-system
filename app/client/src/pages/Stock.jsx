@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+﻿import React, { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
@@ -10,16 +10,29 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 import { RefreshCw } from 'lucide-react'
+import AssetDetailPanel from '@/components/AssetDetailPanel'
 
 export default function Stock() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const canWrite = canManageStockWrites(user.role)
   const canOverride = canManualStockOverride(user.role)
+  const [selectedAssetId, setSelectedAssetId] = useState(null)
 
   const { data = [], isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['stock'],
     queryFn: () => apiFetch('/stock/'),
+  })
+
+  const selectedStockAsset = useMemo(() => {
+    if (!data.length) return null
+    return data.find((item) => item.asset_id === selectedAssetId) || data[0]
+  }, [data, selectedAssetId])
+
+  const assetDetailQuery = useQuery({
+    queryKey: ['asset-detail', selectedStockAsset?.asset_id],
+    queryFn: () => apiFetch(`/assets/${selectedStockAsset.asset_id}/detail`),
+    enabled: Boolean(selectedStockAsset?.asset_id),
   })
 
   const invalidateStockRelated = () => {
@@ -40,20 +53,20 @@ export default function Stock() {
 
   const allocateMut = useMutation({
     mutationFn: (body) => apiFetch('/stock/allocate_manual_override', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: (data) => {
+    onSuccess: (payload) => {
       invalidateStockRelated()
-      if (data?.tracking_id) {
-        window.alert(`Assigned. Tracking ID: ${data.tracking_id}`)
+      if (payload?.tracking_id) {
+        window.alert(`Assigned. Tracking ID: ${payload.tracking_id}`)
       }
     },
   })
 
   const returnMut = useMutation({
     mutationFn: (body) => apiFetch('/stock/return_manual_override', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: (data) => {
+    onSuccess: (payload) => {
       invalidateStockRelated()
-      if (data?.recovered_asset) {
-        window.alert(`Returned to stock. Asset: ${data.recovered_asset}`)
+      if (payload?.recovered_asset) {
+        window.alert(`Returned to stock. Asset: ${payload.recovered_asset}`)
       }
     },
   })
@@ -104,49 +117,53 @@ export default function Stock() {
       </div>
 
       {canWrite ? <StockForms createMut={createMut} addMut={addMut} /> : null}
+      {canOverride ? <AdminAllocateReturn allocateMut={allocateMut} returnMut={returnMut} /> : null}
 
-      {canOverride ? (
-        <AdminAllocateReturn allocateMut={allocateMut} returnMut={returnMut} />
-      ) : null}
-
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-        {isLoading ? (
-          <div className="p-16 text-center text-slate-400 animate-pulse">Loading inventory…</div>
-        ) : isError ? (
-          <div className="p-6 text-rose-700 text-sm">{error?.message}</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm min-w-[720px]">
-              <thead>
-                {table.getHeaderGroups().map((hg) => (
-                  <tr key={hg.id} className="bg-slate-50 border-b border-slate-200">
-                    {hg.headers.map((h) => (
-                      <th
-                        key={h.id}
-                        className="p-4 font-semibold text-slate-600 cursor-pointer text-xs uppercase tracking-wider"
-                        onClick={h.column.getToggleSortingHandler()}
-                      >
-                        {flexRender(h.column.columnDef.header, h.getContext())}
-                        {{ asc: ' ↑', desc: ' ↓' }[h.column.getIsSorted()] ?? ''}
-                      </th>
-                    ))}
-                  </tr>
-                ))}
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/80">
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="p-4 text-slate-700">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr] items-start">
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+          {isLoading ? (
+            <div className="p-16 text-center text-slate-400 animate-pulse">Loading inventory...</div>
+          ) : isError ? (
+            <div className="p-6 text-rose-700 text-sm">{error?.message}</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm min-w-[720px]">
+                <thead>
+                  {table.getHeaderGroups().map((hg) => (
+                    <tr key={hg.id} className="bg-slate-50 border-b border-slate-200">
+                      {hg.headers.map((h) => (
+                        <th
+                          key={h.id}
+                          className="p-4 font-semibold text-slate-600 cursor-pointer text-xs uppercase tracking-wider"
+                          onClick={h.column.getToggleSortingHandler()}
+                        >
+                          {flexRender(h.column.columnDef.header, h.getContext())}
+                          {{ asc: ' ↑', desc: ' ↓' }[h.column.getIsSorted()] ?? ''}
+                        </th>
+                      ))}
+                    </tr>
+                  ))}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {table.getRowModel().rows.map((row) => (
+                    <tr key={row.id} className={`cursor-pointer hover:bg-slate-50/80 ${selectedStockAsset?.asset_id === row.original.asset_id ? 'bg-cyan-50/60' : ''}`} onClick={() => setSelectedAssetId(row.original.asset_id)}>
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="p-4 text-slate-700">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <AssetDetailPanel
+          asset={assetDetailQuery.data}
+          title="Inventory Asset"
+          subtitle={assetDetailQuery.isLoading ? 'Loading selected asset details...' : 'Click any asset row to inspect full details.'}
+        />
       </div>
     </div>
   )
@@ -158,7 +175,6 @@ function StockForms({ createMut, addMut }) {
   const [ccat, setCcat] = useState('Hardware')
   const [cbranch, setCbranch] = useState('Headquarters')
   const [cqty, setCqty] = useState('1')
-
   const [aid, setAid] = useState('')
   const [aqty, setAqty] = useState('1')
 
@@ -172,6 +188,7 @@ function StockForms({ createMut, addMut }) {
             asset_id: cid,
             name: cname,
             category_name: ccat,
+            sub_category_name: 'General',
             branch: cbranch,
             total_quantity: parseInt(cqty, 10) || 1,
             unused: parseInt(cqty, 10) || 1,
@@ -219,17 +236,14 @@ function AdminAllocateReturn({ allocateMut, returnMut }) {
   const [aEmp, setAEmp] = useState('')
   const [aType, setAType] = useState('PERMANENT')
   const [aReason, setAReason] = useState('MANUAL_ALLOCATE')
-
   const [rTrk, setRTrk] = useState('')
   const [rReason, setRReason] = useState('MANUAL_RETURN')
 
   return (
     <div className="rounded-2xl border border-amber-200/80 bg-amber-50/40 p-5 space-y-4">
-      <h2 className="text-sm font-bold text-amber-900 uppercase tracking-wide">Admin · Manual allocation & return</h2>
+      <h2 className="text-sm font-bold text-amber-900 uppercase tracking-wide">Admin · Manual allocation and return</h2>
       <p className="text-xs text-amber-900/80">
-        Uses <code className="bg-white/80 px-1 rounded">allocate_manual_override</code> and{' '}
-        <code className="bg-white/80 px-1 rounded">return_manual_override</code>. Tracking IDs appear on{' '}
-        <strong>Tracking</strong> and <strong>My assets</strong>. Returning increments available quantity for that catalog asset.
+        Uses <code className="bg-white/80 px-1 rounded">allocate_manual_override</code> and <code className="bg-white/80 px-1 rounded">return_manual_override</code>. Tracking IDs appear on <strong>Tracking</strong> and <strong>My assets</strong>. Returning increments available quantity for that catalog asset.
       </p>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <form
@@ -247,7 +261,7 @@ function AdminAllocateReturn({ allocateMut, returnMut }) {
         >
           <h3 className="font-bold text-slate-900 text-sm">Assign unit to employee</h3>
           <input required className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Catalog asset id" value={aAsset} onChange={(e) => setAAsset(e.target.value)} />
-          <input required className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Employee id (e.g. EMP-…)" value={aEmp} onChange={(e) => setAEmp(e.target.value)} />
+          <input required className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Employee id (e.g. EMP-...)" value={aEmp} onChange={(e) => setAEmp(e.target.value)} />
           <select className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={aType} onChange={(e) => setAType(e.target.value)}>
             <option value="PERMANENT">Permanent</option>
             <option value="TEMPORARY">Temporary (loaner)</option>
@@ -269,7 +283,7 @@ function AdminAllocateReturn({ allocateMut, returnMut }) {
           }}
         >
           <h3 className="font-bold text-slate-900 text-sm">Return assignment to stock</h3>
-          <input required className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono text-xs" placeholder="Tracking id (TRK-…)" value={rTrk} onChange={(e) => setRTrk(e.target.value)} />
+          <input required className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono text-xs" placeholder="Tracking id (TRK-...)" value={rTrk} onChange={(e) => setRTrk(e.target.value)} />
           <input className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Reason" value={rReason} onChange={(e) => setRReason(e.target.value)} />
           <button type="submit" disabled={returnMut.isPending} className="w-full rounded-xl border-2 border-amber-700 text-amber-900 text-sm font-semibold py-2.5 disabled:opacity-50 bg-white">
             Return / recover

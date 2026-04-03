@@ -62,7 +62,7 @@ export default function OnboardingKits() {
         />
       ) : (
         <p className="text-sm text-slate-600 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          Only <strong>administrators</strong> and <strong>managers</strong> can create or delete kits. You can still use kits when registering employees.
+          Only <strong>administrators</strong>, <strong>managers</strong>, and <strong>HR</strong> can work with onboarding kits.
         </p>
       )}
 

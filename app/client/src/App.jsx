@@ -32,7 +32,7 @@ export default function App() {
           <Route
             path="onboarding-kits"
             element={
-              <RoleGate roles={[R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM]}>
+              <RoleGate roles={[R.ADMIN, R.MANAGER, R.HR]}>
                 <OnboardingKits />
               </RoleGate>
             }

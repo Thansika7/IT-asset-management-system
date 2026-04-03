@@ -1,3 +1,4 @@
+
 import React, { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
@@ -11,16 +12,29 @@ import {
   canResolveService,
   canTransferCrossBranch,
 } from '@/lib/roles'
-import { Eye, Plus, RefreshCw } from 'lucide-react'
+import { Eye, Plus, RefreshCw, Search } from 'lucide-react'
 
-const COMMON_CATEGORIES = ['Laptop', 'Monitor', 'Keyboard', 'Mouse', 'Printer', 'Phone', 'Accessory']
-const REQUEST_TYPES = [
-  { value: 'NEW', label: 'New allocation' },
-  { value: 'REPLACE', label: 'Replace asset' },
-  { value: 'SERVICE', label: 'Service / repair' },
-]
+const SEVERITY_OPTIONS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
+const PRIORITY_OPTIONS = ['P1', 'P2', 'P3', 'P4']
+const SEVERITY_HELP = {
+  CRITICAL: 'Complete system failure',
+  HIGH: 'Major functionality affected',
+  MEDIUM: 'Partial impact',
+  LOW: 'Minor issue',
+}
+const PRIORITY_RESPONSE_TIME = {
+  P1: '< 1 hour',
+  P2: '< 4 hours',
+  P3: '< 24 hours',
+  P4: '2-3 days',
+}
+const URGENCY_RESPONSE_TIME = {
+  HIGH: '< 1 hour',
+  MEDIUM: '< 4 hours',
+  LOW: '< 24 hours',
+}
 
-function Badge({ children, tone = 'slate' }) {
+function Badge({ children, tone = 'slate', className = '' }) {
   const tones = {
     slate: 'bg-slate-100 text-slate-700 border-slate-200',
     amber: 'bg-amber-50 text-amber-800 border-amber-200',
@@ -30,7 +44,7 @@ function Badge({ children, tone = 'slate' }) {
     cyan: 'bg-cyan-50 text-cyan-800 border-cyan-200',
   }
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-semibold uppercase tracking-wide border ${tones[tone]}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-[11px] font-semibold uppercase tracking-wide border ${tones[tone]} ${className}`}>
       {children}
     </span>
   )
@@ -43,6 +57,54 @@ function stageTone(stage) {
   if (String(stage).includes('APPROVAL') || stage === 'HR_VERIFICATION') return 'amber'
   if (stage === 'READY' || stage === 'IN_REPAIR') return 'violet'
   return 'cyan'
+}
+
+function priorityTone(priority) {
+  if (priority === 'P1') return 'rose'
+  if (priority === 'P2') return 'amber'
+  if (priority === 'P3') return 'cyan'
+  return 'emerald'
+}
+
+function severityTone(severity) {
+  if (severity === 'CRITICAL') return 'rose'
+  if (severity === 'HIGH') return 'amber'
+  if (severity === 'MEDIUM') return 'cyan'
+  return 'emerald'
+}
+
+function deriveUrgencyPreview({ severity, affectedUsers, actionType, reason, assetCategory, assetName }) {
+  const text = `${assetName || ''} ${reason || ''}`.toLowerCase()
+  const category = (assetCategory || '').toLowerCase()
+  const action = (actionType || '').toUpperCase()
+
+  if (severity === 'CRITICAL') return 'HIGH'
+  if (affectedUsers >= 10) return 'HIGH'
+  if (['production down', 'not powering on', 'not turning on', 'network outage', 'cannot login', 'service disruption'].some((term) => text.includes(term))) return 'HIGH'
+  if (['server', 'network', 'security'].some((term) => category.includes(term))) return 'HIGH'
+  if (action === 'SERVICE' && severity === 'HIGH') return 'HIGH'
+  if (severity === 'HIGH') return 'MEDIUM'
+  if (action === 'NEW' && ['onboarding', 'new joiner', 'starter kit'].some((term) => text.includes(term))) return 'MEDIUM'
+  if (['mouse', 'keyboard', 'accessory'].some((term) => category.includes(term))) return 'LOW'
+  return severity === 'LOW' ? 'LOW' : 'MEDIUM'
+}
+
+function computePriorityPreview(severity, urgency) {
+  const matrix = {
+    'CRITICAL:HIGH': 'P1',
+    'CRITICAL:MEDIUM': 'P1',
+    'CRITICAL:LOW': 'P2',
+    'HIGH:HIGH': 'P1',
+    'HIGH:MEDIUM': 'P2',
+    'HIGH:LOW': 'P3',
+    'MEDIUM:HIGH': 'P2',
+    'MEDIUM:MEDIUM': 'P3',
+    'MEDIUM:LOW': 'P4',
+    'LOW:HIGH': 'P3',
+    'LOW:MEDIUM': 'P4',
+    'LOW:LOW': 'P4',
+  }
+  return matrix[`${severity}:${urgency}`] || 'P3'
 }
 
 function formatDate(value) {
@@ -58,103 +120,301 @@ function prettyBool(value) {
   return 'Pending'
 }
 
-function NewRequestForm({ onCreate, busy }) {
-  const [asset_name, setAssetName] = useState('')
-  const [asset_category, setCategory] = useState('Laptop')
-  const [reason, setReason] = useState('')
-  const [action_type, setActionType] = useState('NEW')
+function NewRequestForm({ onCreate, busy, options }) {
+  const categories = options?.categories?.length ? options.categories : ['Laptop', 'Monitor', 'Keyboard', 'Mouse', 'Printer', 'Phone', 'Accessory', 'Software', 'Other']
+  const knownAssets = options?.known_assets ?? []
+  const reasonsByCategory = options?.reasons_by_category ?? {}
+
+  const [assetCategory, setAssetCategory] = useState(categories[0] || 'Laptop')
+  const [selectedReason, setSelectedReason] = useState('')
+  const [selectedKnownAsset, setSelectedKnownAsset] = useState('')
+  const [assetName, setAssetName] = useState('')
+  const [customReason, setCustomReason] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [submittedSearch, setSubmittedSearch] = useState('')
+  const [selectedCategoryId, setSelectedCategoryId] = useState('')
+  const [selectedSubCategoryId, setSelectedSubCategoryId] = useState('')
+
+  const reasonOptions = reasonsByCategory[assetCategory] || reasonsByCategory.Other || ['General issue', 'Other']
+
+  const categoriesQuery = useQuery({
+    queryKey: ['discover-categories'],
+    queryFn: () => apiFetch('/categories'),
+  })
+  const subCategoriesQuery = useQuery({
+    queryKey: ['discover-subcategories', selectedCategoryId],
+    queryFn: () => apiFetch(`/categories/${encodeURIComponent(selectedCategoryId)}/subcategories`),
+    enabled: Boolean(selectedCategoryId),
+  })
+  const categoryAssetsQuery = useQuery({
+    queryKey: ['discover-assets-by-subcategory', selectedSubCategoryId],
+    queryFn: () => apiFetch(`/subcategories/${encodeURIComponent(selectedSubCategoryId)}/assets`),
+    enabled: Boolean(selectedSubCategoryId),
+  })
+
+  const suggestionsQuery = useQuery({
+    queryKey: ['discover-suggestions', searchInput],
+    queryFn: () => apiFetch(`/search/suggestions?q=${encodeURIComponent(searchInput)}`),
+    enabled: searchInput.trim().length >= 2,
+  })
+  const popularQuery = useQuery({
+    queryKey: ['discover-popular'],
+    queryFn: () => apiFetch('/search/popular'),
+  })
+  const recentQuery = useQuery({
+    queryKey: ['discover-recent'],
+    queryFn: () => apiFetch('/search/recent'),
+  })
+  const searchResultsQuery = useQuery({
+    queryKey: ['discover-search', submittedSearch],
+    queryFn: () => apiFetch(`/search?q=${encodeURIComponent(submittedSearch)}`),
+    enabled: submittedSearch.trim().length >= 2,
+  })
+
+  useEffect(() => {
+    setSelectedReason(reasonOptions[0] || '')
+  }, [assetCategory])
+
+  useEffect(() => {
+    setSelectedSubCategoryId('')
+  }, [selectedCategoryId])
+
+  const matchingKnownAsset = useMemo(() => {
+    const typed = assetName.trim().toLowerCase()
+    if (!typed) return null
+    return knownAssets.find((item) => item.asset_name.toLowerCase() === typed) || null
+  }, [assetName, knownAssets])
+
+  useEffect(() => {
+    if (selectedKnownAsset) {
+      const match = knownAssets.find((item) => item.asset_name === selectedKnownAsset)
+      if (match) {
+        setAssetName(match.asset_name)
+        if (match.category) setAssetCategory(match.category)
+      }
+    }
+  }, [selectedKnownAsset, knownAssets])
+
+  useEffect(() => {
+    if (!selectedKnownAsset && matchingKnownAsset?.category && assetCategory === 'Other') {
+      setAssetCategory(matchingKnownAsset.category)
+    }
+  }, [selectedKnownAsset, matchingKnownAsset, assetCategory])
 
   const submit = (e) => {
     e.preventDefault()
-    const cleanedCategory = asset_category.trim()
-    const cleanedReason = reason.trim()
-    const cleanedAssetName = asset_name.trim() || `${cleanedCategory} request`
+    const resolvedAssetName = assetName.trim() || selectedKnownAsset.trim()
+    const inferredCategory = matchingKnownAsset?.category || assetCategory
+    const resolvedCategory = inferredCategory === 'Other' && matchingKnownAsset?.category ? matchingKnownAsset.category : inferredCategory
+    const resolvedReason = selectedReason === 'Other'
+      ? (customReason.trim() || `General support needed for ${resolvedAssetName || resolvedCategory}`)
+      : selectedReason
+
     onCreate({
-      asset_name: cleanedAssetName,
-      asset_category: cleanedCategory,
-      reason: cleanedReason,
-      action_type,
+      asset_name: resolvedAssetName || `${resolvedCategory} request`,
+      asset_category: resolvedCategory,
+      reason: resolvedReason,
     })
+
+    setSelectedKnownAsset('')
     setAssetName('')
-    setReason('')
+    setCustomReason('')
+    setAssetCategory(categories[0] || 'Laptop')
+    setSearchInput('')
+    setSubmittedSearch('')
   }
 
+  const applySuggestedAsset = (item) => {
+    if (!item) return
+    setAssetName(item.asset_name || '')
+    if (item.category) setAssetCategory(item.category)
+    setSelectedKnownAsset(item.asset_name || '')
+  }
+
+  const defaultSuggestions = useMemo(() => {
+    if (searchInput.trim().length >= 2) return suggestionsQuery.data || []
+    const popular = popularQuery.data || []
+    const recent = recentQuery.data || []
+    const merged = []
+    const seen = new Set()
+    for (const item of [...recent, ...popular]) {
+      const key = item.asset_id || item.asset_name
+      if (key && !seen.has(key)) {
+        seen.add(key)
+        merged.push(item)
+      }
+    }
+    return merged.slice(0, 10)
+  }, [searchInput, suggestionsQuery.data, popularQuery.data, recentQuery.data])
+
   return (
-    <form onSubmit={submit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+    <form onSubmit={submit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5 motion-fade-up surface-sheen">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Create Request</h2>
-          <p className="text-sm text-slate-600 mt-1">You can request by category even if you do not know the exact asset model.</p>
+          <p className="text-sm text-slate-600 mt-1">Choose a category and reason from the guided list. If your asset is already known to the system, type or pick its name and the form will load what it can automatically.</p>
         </div>
         <Badge tone="cyan">For Employees</Badge>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Asset category</label>
-          <input
-            required
-            list="request-categories"
-            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
-            placeholder="Laptop, Monitor, Keyboard..."
-            value={asset_category}
-            onChange={(e) => setCategory(e.target.value)}
-          />
-          <datalist id="request-categories">
-            {COMMON_CATEGORIES.map((item) => (
-              <option key={item} value={item} />
-            ))}
-          </datalist>
-          <div className="flex flex-wrap gap-2 pt-1">
-            {COMMON_CATEGORIES.map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setCategory(item)}
-                className={`rounded-full border px-3 py-1 text-xs font-medium ${asset_category === item ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}
-              >
-                {item}
-              </button>
-            ))}
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</label>
+          <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={assetCategory} onChange={(e) => setAssetCategory(e.target.value)}>
+            {categories.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</label>
+          <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedReason} onChange={(e) => setSelectedReason(e.target.value)}>
+            {reasonOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Search assets</label>
+          <div className="flex gap-2">
+            <input
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+              placeholder="Type at least 2 chars (e.g. laptop, laptp)"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-2xl border border-slate-300 px-3 py-2 text-sm font-semibold"
+              onClick={() => setSubmittedSearch(searchInput.trim())}
+              disabled={searchInput.trim().length < 2}
+            >
+              <Search className="w-4 h-4" />
+              Search
+            </button>
           </div>
+          {defaultSuggestions.length > 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 max-h-40 overflow-auto">
+              {defaultSuggestions.map((item) => (
+                <button
+                  key={`${item.asset_id || item.asset_name}-sg`}
+                  type="button"
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-100"
+                  onClick={() => applySuggestedAsset(item)}
+                >
+                  <span className="font-medium text-slate-900">{item.asset_name}</span>
+                  <span className="text-xs text-slate-500"> · {item.category || 'Unknown'} {item.sub_category ? `· ${item.sub_category}` : ''}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {submittedSearch && searchResultsQuery.data?.total === 0 ? (
+            <p className="text-xs text-amber-700">
+              No direct match. {searchResultsQuery.data?.did_you_mean?.length ? `Did you mean: ${searchResultsQuery.data.did_you_mean.join(', ')}` : 'Try another keyword.'}
+            </p>
+          ) : null}
+          {submittedSearch && searchResultsQuery.data?.items?.length ? (
+            <div className="rounded-2xl border border-teal-200 bg-teal-50 p-2">
+              {searchResultsQuery.data.items.map((item) => (
+                <button
+                  key={`${item.asset_id || item.asset_name}-res`}
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-sm hover:bg-white rounded"
+                  onClick={() => applySuggestedAsset(item)}
+                >
+                  {item.asset_name} <span className="text-xs text-slate-500">({item.category || 'Unknown'})</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {knownAssets.length ? (
+            <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedKnownAsset} onChange={(e) => setSelectedKnownAsset(e.target.value)}>
+              <option value="">Or pick from known assets</option>
+              {knownAssets.map((item) => (
+                <option key={`${item.asset_id || item.asset_name}`} value={item.asset_name}>
+                  {item.asset_name}{item.category ? ` · ${item.category}` : ''}{item.owned_by_requester ? ' · My asset' : ''}
+                </option>
+              ))}
+            </select>
+          ) : null}
         </div>
 
         <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Preferred asset name</label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Asset name</label>
           <input
             className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
-            placeholder="Optional: Dell Latitude, 24-inch monitor, wireless mouse..."
-            value={asset_name}
-            onChange={(e) => setAssetName(e.target.value)}
+            placeholder="Type asset name only when needed"
+            value={assetName}
+            onChange={(e) => {
+              setSelectedKnownAsset('')
+              setAssetName(e.target.value)
+            }}
+            required={assetCategory === 'Other' || selectedReason === 'Other'}
           />
-          <p className="text-xs text-slate-500">If you leave this blank, we will send the request using the category name.</p>
+          {matchingKnownAsset ? (
+            <p className="text-xs text-cyan-700">Matched existing asset. Category loaded as {matchingKnownAsset.category || 'Unknown'}.</p>
+          ) : (
+            <p className="text-xs text-slate-500">If the name matches existing data, category details are filled automatically.</p>
+          )}
         </div>
       </div>
 
-      <div className="space-y-2">
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason / context</label>
-        <textarea
-          required
-          className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm min-h-[110px]"
-          placeholder="Explain what you need, for whom, and whether this is urgent."
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        />
-      </div>
-
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Request type</label>
-          <select className="rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={action_type} onChange={(e) => setActionType(e.target.value)}>
-            {REQUEST_TYPES.map((item) => (
-              <option key={item.value} value={item.value}>{item.label}</option>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Browse by category</label>
+          <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedCategoryId} onChange={(e) => setSelectedCategoryId(e.target.value)}>
+            <option value="">Select category</option>
+            {(categoriesQuery.data || []).map((cat) => (
+              <option key={cat.category_id} value={cat.category_id}>{cat.category_name}</option>
             ))}
           </select>
         </div>
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subcategory</label>
+          <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedSubCategoryId} onChange={(e) => setSelectedSubCategoryId(e.target.value)} disabled={!selectedCategoryId}>
+            <option value="">{selectedCategoryId ? 'Select subcategory' : 'Select category first'}</option>
+            {(subCategoriesQuery.data || []).map((sub) => (
+              <option key={sub.sub_category_id} value={sub.sub_category_id}>{sub.sub_category_name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {selectedSubCategoryId && (categoryAssetsQuery.data || []).length > 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 max-h-36 overflow-auto">
+          {(categoryAssetsQuery.data || []).slice(0, 10).map((asset) => (
+            <button
+              key={asset.asset_id}
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm hover:bg-slate-100"
+              onClick={() => applySuggestedAsset({ asset_name: asset.name, category: asset.category, sub_category: asset.sub_category, asset_id: asset.asset_id })}
+            >
+              {asset.name} <span className="text-xs text-slate-500">· {asset.asset_id}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {selectedReason === 'Other' ? (
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Additional details</label>
+          <textarea
+            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm min-h-[96px]"
+            placeholder="Only add extra detail if the predefined reasons do not fit."
+            value={customReason}
+            onChange={(e) => setCustomReason(e.target.value)}
+          />
+        </div>
+      ) : null}
+
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+        <p className="font-medium text-slate-800">What happens next</p>
+        <p className="mt-1">Support will classify the request as NEW, SERVICE, or REPLACE. Urgency is also derived automatically by the system based on the issue and impact, so the employee does not need to guess it.</p>
+      </div>
+
+      <div className="flex justify-end">
         <button
           type="submit"
           disabled={busy}
-          className="sm:ml-auto inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 text-white text-sm font-semibold px-5 py-3 disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 text-white text-sm font-semibold px-5 py-3 disabled:opacity-50"
         >
           <Plus className="w-4 h-4" />
           Submit Request
@@ -164,22 +424,67 @@ function NewRequestForm({ onCreate, busy }) {
   )
 }
 
+function RequestFilters({ draft, onChange, onApply, onClear, count }) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm space-y-4 motion-fade-up motion-delay-1">
+      <div>
+        <h2 className="text-sm font-bold text-slate-900 uppercase tracking-[0.16em]">Filters</h2>
+        <p className="text-xs text-slate-500 mt-1">{count} matching request{count === 1 ? '' : 's'}</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Priority</label>
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.priority} onChange={(e) => onChange('priority', e.target.value)}>
+            <option value="">All</option>
+            {PRIORITY_OPTIONS.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Severity</label>
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.severity} onChange={(e) => onChange('severity', e.target.value)}>
+            <option value="">All</option>
+            {SEVERITY_OPTIONS.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Urgency</label>
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.urgency} onChange={(e) => onChange('urgency', e.target.value)}>
+            <option value="">All</option>
+            <option value="HIGH">HIGH</option>
+            <option value="MEDIUM">MEDIUM</option>
+            <option value="LOW">LOW</option>
+          </select>
+        </div>
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button type="button" className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em]" onClick={onApply}>Apply filters</button>
+        <button type="button" className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em]" onClick={onClear}>Clear</button>
+      </div>
+    </div>
+  )
+}
+
 function RequestList({ rows, selectedId, onSelect }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden motion-fade-up motion-delay-2">
       <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
         <div className="flex items-center gap-3">
           <Eye className="w-4 h-4 text-slate-500" />
           <div>
             <h2 className="text-lg font-bold text-slate-900">View Requests</h2>
-            <p className="text-sm text-slate-600">Select any request to see the full details and available actions.</p>
+            <p className="text-sm text-slate-600">Highest priority requests are shown first so overdue work stays visible.</p>
           </div>
         </div>
       </div>
 
-      <div className="hidden md:grid grid-cols-[1.2fr_1fr_.8fr_.8fr] gap-3 px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 border-b border-slate-100">
+      <div className="hidden md:grid grid-cols-[1.2fr_1fr_.8fr_.8fr_0.9fr] gap-3 px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 border-b border-slate-100">
         <span>Requester / Asset</span>
         <span>Request ID / Branch</span>
+        <span>Priority</span>
         <span>Stage</span>
         <span>Status</span>
       </div>
@@ -194,17 +499,28 @@ function RequestList({ rows, selectedId, onSelect }) {
             onClick={() => onSelect(row.request_id)}
             className={`w-full text-left px-5 py-4 transition ${selectedId === row.request_id ? 'bg-cyan-50/60' : 'bg-white hover:bg-slate-50'}`}
           >
-            <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr_.8fr_.8fr] gap-3 items-start">
-              <div>
-                <p className="font-semibold text-slate-900">{row.requester_name || row.emp_id}</p>
-                <p className="text-xs text-slate-500 mt-1">{row.asset_name} � {row.asset_category || 'Category not set'}</p>
+            <div className="grid grid-cols-1 md:grid-cols-[1.2fr_1fr_.8fr_.8fr_0.9fr] gap-3 items-center min-h-[72px]">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-900 truncate">{row.requester_name || row.emp_id}</p>
+                <p className="text-xs text-slate-500 mt-1 truncate">{row.asset_name} · {row.asset_category || 'Category not set'}</p>
               </div>
-              <div>
-                <p className="text-sm font-mono text-slate-600">{row.request_id}</p>
-                <p className="text-xs text-slate-500 mt-1">{row.requester_branch || 'Branch not set'}</p>
+              <div className="min-w-0">
+                <p className="text-sm font-mono text-slate-600 truncate">{row.request_id}</p>
+                <p className="text-xs text-slate-500 mt-1 truncate">{row.requester_branch || 'Branch not set'}</p>
               </div>
-              <div><Badge tone={stageTone(row.stage)}>{row.stage || 'Unknown'}</Badge></div>
-              <div><Badge>{row.status || 'Unknown'}</Badge></div>
+              <div className="space-y-1 min-w-0">
+                <Badge tone={priorityTone(row.priority || 'P3')}>{row.priority || 'P3'}</Badge>
+                <p className="text-xs text-slate-500 truncate">{row.priority_response_time || 'No SLA'}</p>
+              </div>
+              <div className="min-w-0">
+                <Badge tone={stageTone(row.stage)} className="whitespace-nowrap">{row.stage || 'Unknown'}</Badge>
+              </div>
+              <div className="space-y-1 min-w-0">
+                <Badge className="whitespace-nowrap">{row.status || 'Unknown'}</Badge>
+                {row.escalation_triggered && row.escalation_role ? (
+                  <p className="text-xs font-medium text-rose-600 truncate">Escalate to {row.escalation_role}</p>
+                ) : null}
+              </div>
             </div>
           </button>
         ))}
@@ -215,6 +531,8 @@ function RequestList({ rows, selectedId, onSelect }) {
 
 function DetailPanel({ row, user, mutations }) {
   const [triageAction, setTriageAction] = useState('NEW')
+  const [triageSeverity, setTriageSeverity] = useState('MEDIUM')
+  const [affectedUsers, setAffectedUsers] = useState('1')
   const [providedId, setProvidedId] = useState('')
   const [brokenId, setBrokenId] = useState('')
   const [resolveNotes, setResolveNotes] = useState('')
@@ -226,6 +544,8 @@ function DetailPanel({ row, user, mutations }) {
 
   useEffect(() => {
     setTriageAction('NEW')
+    setTriageSeverity('MEDIUM')
+    setAffectedUsers('1')
     setProvidedId('')
     setBrokenId('')
     setResolveNotes('')
@@ -238,13 +558,22 @@ function DetailPanel({ row, user, mutations }) {
 
   if (!row) {
     return (
-      <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center text-slate-500 text-sm">
+      <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center text-slate-500 text-sm motion-fade-up motion-delay-3">
         Select a request from the list to see complete details here.
       </div>
     )
   }
 
   const stage = row.stage
+  const autoUrgencyPreview = deriveUrgencyPreview({
+    severity: triageSeverity,
+    affectedUsers: parseInt(affectedUsers || '1', 10) || 1,
+    actionType: triageAction,
+    reason: row.reason,
+    assetCategory: row.asset_category,
+    assetName: row.asset_name,
+  })
+  const priorityPreview = computePriorityPreview(triageSeverity, autoUrgencyPreview)
   const err = (m) => m.error?.message || m.error?.data?.message
   const detailRows = [
     ['Request ID', row.request_id],
@@ -257,17 +586,26 @@ function DetailPanel({ row, user, mutations }) {
     ['Stage', row.stage || 'Not available'],
     ['Status', row.status || 'Not available'],
     ['Request type', row.action_type || 'Not selected'],
+    ['Priority', row.priority ? `${row.priority}${row.priority_response_time ? ` (${row.priority_response_time})` : ''}` : 'Not calculated'],
+    ['Severity', row.severity || 'Not set'],
+    ['Urgency', row.urgency || 'Not set'],
+    ['Urgency response target', row.urgency_response_time || 'Not set'],
     ['HR verified', prettyBool(row.hr_verified)],
     ['Requested at', formatDate(row.req_date)],
+    ['Escalation', row.escalation_triggered && row.escalation_role ? `Overdue - escalate to ${row.escalation_role}` : 'Within current SLA'],
   ]
 
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-6 motion-fade-up motion-delay-3">
       <div className="flex flex-col gap-3 border-b border-slate-100 pb-5">
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={stageTone(stage)}>{stage || 'Unknown stage'}</Badge>
           <Badge>{row.status || 'Unknown status'}</Badge>
           {row.action_type ? <Badge tone="cyan">Action: {row.action_type}</Badge> : null}
+          {row.priority ? <Badge tone={priorityTone(row.priority)}>{row.priority}</Badge> : null}
+          {row.severity ? <Badge tone={severityTone(row.severity)}>{row.severity}</Badge> : null}
+          {row.urgency ? <Badge>{row.urgency} urgency</Badge> : null}
+          {row.escalation_triggered && row.escalation_role ? <Badge tone="rose">Escalate to {row.escalation_role}</Badge> : null}
         </div>
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Request details</p>
@@ -296,15 +634,57 @@ function DetailPanel({ row, user, mutations }) {
       ) : null}
 
       {stage === 'HELPDESK_TRIAGE' && canTriage(user.role) ? (
-        <div className="space-y-3 border-t border-slate-100 pt-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Triage action</p>
+        <div className="space-y-4 border-t border-slate-100 pt-5">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Support triage</p>
+            <p className="mt-1 text-sm text-slate-600">Support decides whether this should be fulfilled as NEW, handled as SERVICE, or processed as REPLACE. Urgency is derived automatically from the issue and impact.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Action type</label>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={triageAction} onChange={(e) => setTriageAction(e.target.value)}>
+                <option value="NEW">NEW</option>
+                <option value="REPLACE">REPLACE</option>
+                <option value="SERVICE">SERVICE</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Severity</label>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={triageSeverity} onChange={(e) => setTriageSeverity(e.target.value)}>
+                {SEVERITY_OPTIONS.map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500">{SEVERITY_HELP[triageSeverity]}</p>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Affected users</label>
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" type="number" min="1" value={affectedUsers} onChange={(e) => setAffectedUsers(e.target.value)} />
+            </div>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-3">
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Auto urgency</span>
+            <Badge tone={autoUrgencyPreview === 'HIGH' ? 'rose' : autoUrgencyPreview === 'MEDIUM' ? 'amber' : 'emerald'}>{autoUrgencyPreview}</Badge>
+            <span className="text-sm text-slate-600">{URGENCY_RESPONSE_TIME[autoUrgencyPreview]} escalation limit from system rules.</span>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-3">
+            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Priority preview</span>
+            <Badge tone={priorityTone(priorityPreview)}>{priorityPreview}</Badge>
+            <span className="text-sm text-slate-600">{PRIORITY_RESPONSE_TIME[priorityPreview]} response target. Final priority is derived from severity plus auto urgency and asset impact rules.</span>
+          </div>
           <div className="flex flex-wrap gap-2">
-            <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={triageAction} onChange={(e) => setTriageAction(e.target.value)}>
-              <option value="NEW">NEW</option>
-              <option value="REPLACE">REPLACE</option>
-              <option value="SERVICE">SERVICE</option>
-            </select>
-            <button type="button" className="rounded-xl bg-indigo-600 text-white text-sm font-medium px-4 py-2" onClick={() => mutations.triageMut.mutate({ id: row.request_id, action_type: triageAction })}>Apply triage</button>
+            <button
+              type="button"
+              className="rounded-xl bg-indigo-600 text-white text-sm font-medium px-4 py-2"
+              onClick={() => mutations.triageMut.mutate({
+                id: row.request_id,
+                action_type: triageAction,
+                severity: triageSeverity,
+                affected_users: parseInt(affectedUsers || '1', 10) || 1,
+              })}
+            >
+              Apply triage
+            </button>
           </div>
           {mutations.triageMut.isError ? <p className="text-xs text-rose-600">{err(mutations.triageMut)}</p> : null}
         </div>
@@ -386,27 +766,41 @@ export default function Requests() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const [selectedId, setSelectedId] = useState(null)
+  const initialFilters = { priority: '', severity: '', urgency: '' }
+  const [draftFilters, setDraftFilters] = useState(initialFilters)
+  const [filters, setFilters] = useState(initialFilters)
+
+  const formOptionsQuery = useQuery({
+    queryKey: ['request-form-options'],
+    queryFn: () => apiFetch('/requests/form-options'),
+  })
 
   const { data = [], isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ['requests'],
-    queryFn: () => apiFetch('/requests/'),
+    queryKey: ['requests', filters],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      params.set('sort_by_priority', 'true')
+      if (filters.priority) params.set('priority', filters.priority)
+      if (filters.severity) params.set('severity', filters.severity)
+      if (filters.urgency) params.set('urgency', filters.urgency)
+      const query = params.toString()
+      return apiFetch(`/requests/${query ? `?${query}` : ''}`)
+    },
   })
 
   useEffect(() => {
-    if (!selectedId && data.length > 0) {
-      setSelectedId(data[0].request_id)
-    }
-    if (selectedId && !data.some((row) => row.request_id === selectedId) && data.length > 0) {
-      setSelectedId(data[0].request_id)
-    }
+    if (!selectedId && data.length > 0) setSelectedId(data[0].request_id)
+    if (selectedId && !data.some((row) => row.request_id === selectedId) && data.length > 0) setSelectedId(data[0].request_id)
   }, [data, selectedId])
 
   const selected = useMemo(() => data.find((r) => r.request_id === selectedId) ?? null, [data, selectedId])
-
   const invalidate = () => qc.invalidateQueries({ queryKey: ['requests'] })
 
   const hrMut = useMutation({ mutationFn: ({ id, is_needed }) => apiFetch(`/requests/${id}/review/hr`, { method: 'POST', body: JSON.stringify({ is_needed }) }), onSuccess: invalidate })
-  const triageMut = useMutation({ mutationFn: ({ id, action_type }) => apiFetch(`/requests/${id}/triage`, { method: 'POST', body: JSON.stringify({ action_type }) }), onSuccess: invalidate })
+  const triageMut = useMutation({
+    mutationFn: ({ id, action_type, severity, affected_users }) => apiFetch(`/requests/${id}/triage`, { method: 'POST', body: JSON.stringify({ action_type, severity, affected_users }) }),
+    onSuccess: invalidate,
+  })
   const mgrMut = useMutation({ mutationFn: ({ id, is_approved }) => apiFetch(`/requests/${id}/review/manager`, { method: 'POST', body: JSON.stringify({ is_approved }) }), onSuccess: invalidate })
   const admMut = useMutation({ mutationFn: ({ id, is_approved }) => apiFetch(`/requests/${id}/review/admin`, { method: 'POST', body: JSON.stringify({ is_approved }) }), onSuccess: invalidate })
   const execMut = useMutation({
@@ -425,19 +819,20 @@ export default function Requests() {
 
   return (
     <div className="p-6 sm:p-8 max-w-7xl mx-auto space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 motion-fade-up">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Requests</h1>
-          <p className="text-slate-600 text-sm mt-1">Create requests without needing an exact model name, then review each request with full details.</p>
+          <p className="text-slate-600 text-sm mt-1">Guided request creation with known asset autofill, then full workflow review with priority-first visibility.</p>
         </div>
-        <button type="button" onClick={() => refetch()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        <button type="button" onClick={() => { refetch(); formOptionsQuery.refetch() }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
           Refresh
         </button>
       </div>
 
       <NewRequestForm
-        busy={createMut.isPending}
+        busy={createMut.isPending || formOptionsQuery.isLoading}
+        options={formOptionsQuery.data}
         onCreate={(body) => {
           createMut.mutate(body, {
             onSuccess: (row) => {
@@ -446,15 +841,26 @@ export default function Requests() {
           })
         }}
       />
+      {formOptionsQuery.isError ? <p className="text-sm text-rose-600">{formOptionsQuery.error?.message}</p> : null}
       {createMut.isError ? <p className="text-sm text-rose-600">{createMut.error?.message}</p> : null}
 
       {isLoading ? (
-        <div className="py-20 text-center text-slate-400 font-medium animate-pulse">Loading requests�</div>
+        <div className="py-20 text-center text-slate-400 font-medium animate-pulse">Loading requests...</div>
       ) : isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-rose-800 text-sm">{error?.message}</div>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 items-start">
-          <div className="xl:col-span-2">
+          <div className="xl:col-span-2 space-y-6">
+            <RequestFilters
+              draft={draftFilters}
+              count={data.length}
+              onChange={(key, value) => setDraftFilters((prev) => ({ ...prev, [key]: value }))}
+              onApply={() => setFilters(draftFilters)}
+              onClear={() => {
+                setDraftFilters(initialFilters)
+                setFilters(initialFilters)
+              }}
+            />
             <RequestList rows={data} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
           <div className="xl:col-span-3">
@@ -465,6 +871,3 @@ export default function Requests() {
     </div>
   )
 }
-
-
-
