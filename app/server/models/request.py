@@ -1,8 +1,17 @@
-from pydantic import BaseModel, ConfigDict, field_validator
-from typing import Optional
 from datetime import datetime
+from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, field_validator
 
 VALID_REQUEST_ACTIONS = {"NEW", "REPLACE", "SERVICE"}
+
+
+class RequestUrgency(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
 
 
 class RequestCreate(BaseModel):
@@ -10,7 +19,9 @@ class RequestCreate(BaseModel):
     asset_name: str
     asset_category: str
     reason: str
-    action_type: Optional[str] = "new"
+    action_type: Optional[str] = None
+    priority: Optional[RequestUrgency] = None
+    severity: Optional[RequestUrgency] = None
 
     @field_validator("asset_name", "asset_category", "reason")
     @classmethod
@@ -77,6 +88,19 @@ class RequestCrossBranchTransfer(BaseModel):
 class RequestHRVerify(BaseModel):
     model_config = ConfigDict(extra="forbid")
     is_needed: bool
+    action_type: Optional[str] = None
+    priority: RequestUrgency = RequestUrgency.MEDIUM
+    severity: RequestUrgency = RequestUrgency.MEDIUM
+
+    @field_validator("action_type")
+    @classmethod
+    def validate_hr_action_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip().upper()
+        if value not in VALID_REQUEST_ACTIONS:
+            raise ValueError(f"action_type must be one of: {', '.join(sorted(VALID_REQUEST_ACTIONS))}")
+        return value
 
 class RequestResolve(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -118,4 +142,8 @@ class RequestResponse(BaseModel):
     stage: Optional[str] = None
     hr_verified: Optional[bool] = None
     action_type: Optional[str] = None
+    priority: Optional[str] = None
+    severity: Optional[str] = None
+    sla_target_at: Optional[datetime] = None
+    sla_breached: bool = False
     req_date: datetime

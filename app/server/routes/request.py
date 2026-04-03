@@ -15,18 +15,23 @@ router=APIRouter(prefix="/requests", tags=["requests"])
 
 @router.get("/", response_model=List[RequestResponse])
 def list_requests(
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    severity: Optional[str] = None,
+    branch: Optional[str] = None,
+    sort_by_priority: bool = False,
     db: Session=Depends(get_db),
     current_user: Employee=Depends(get_current_user)
 ):
-    query = db.query(Request).options(joinedload(Request.employee))
-
-    if current_user.role == EmployeeRole.ADMIN:
-        return query.all()
-
-    if current_user.role in [EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR, EmployeeRole.MANAGER]:
-        return query.join(Request.employee).filter(Employee.branch == current_user.branch).all()
-
-    return query.filter(Request.emp_id == current_user.employee_id).all()
+    return RequestService.list_requests(
+        db,
+        current_user,
+        status=status,
+        priority=priority,
+        severity=severity,
+        branch=branch,
+        sort_by_priority=sort_by_priority,
+    )
 
 @router.post("/", response_model=RequestResponse)
 def create_request(

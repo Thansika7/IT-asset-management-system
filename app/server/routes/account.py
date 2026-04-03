@@ -38,7 +38,10 @@ def get_financial_summary(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER))
 ):
-    return AccountService.get_financial_dashboard(db, branch)
+    effective_branch = branch
+    if current_user.role == EmployeeRole.MANAGER:
+        effective_branch = current_user.branch
+    return AccountService.get_financial_dashboard(db, effective_branch)
 
 @router.get("/tco/{asset_id}")
 def get_asset_tco(

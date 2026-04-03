@@ -165,5 +165,8 @@ class StockService:
             {"returned_at": "NOW", "asset_id": trk.asset_id},
             reason
         )
+        from app.server.services.request_service import RequestService
+
+        RequestService.try_auto_allocate_for_asset(db, asset.asset_id, user, "AUTO_RETURN_REALLOCATION")
         return trk
 

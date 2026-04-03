@@ -46,11 +46,22 @@ class AccountService:
         
         if cost < 0: raise InvalidStateError("Maintenance cost cannot be negative.")
 
-        old_val = {"maintenance_total_cost": asset.maintenance_total_cost}
-        asset.maintenance_total_cost = (asset.maintenance_total_cost or 0.0) + cost
+        old_val = {
+            "maintenance_total_cost": asset.maintenance_total_cost,
+            "repair_total_cost": asset.repair_total_cost,
+            "repair_count": asset.repair_count,
+        }
+        normalized_reason = (reason or "").upper()
+        if "REPAIR" in normalized_reason or "SERVICE_REQ" in normalized_reason:
+            asset.repair_total_cost = (asset.repair_total_cost or 0.0) + cost
+            asset.repair_count = (asset.repair_count or 0) + 1
+        else:
+            asset.maintenance_total_cost = (asset.maintenance_total_cost or 0.0) + cost
         
         AuditService.log_change(db, "assets", asset_id, "UPDATE", user, old_val, {
-            "maintenance_total_cost": asset.maintenance_total_cost
+            "maintenance_total_cost": asset.maintenance_total_cost,
+            "repair_total_cost": asset.repair_total_cost,
+            "repair_count": asset.repair_count,
         }, reason)
         return asset
 
@@ -85,8 +96,9 @@ class AccountService:
         if not asset: raise ResourceNotFoundError("Asset", asset_id)
         purchase_cost=asset.purchase_cost or 0.0
         maintenance_cost=asset.maintenance_total_cost or 0.0
+        repair_cost=asset.repair_total_cost or 0.0
         sub_license_cost=asset.sub_license_cost or 0.0
-        return purchase_cost + maintenance_cost + sub_license_cost
+        return purchase_cost + maintenance_cost + repair_cost + sub_license_cost
 
     @staticmethod
     def acknowledge_asset(db: Session, tracking_id: str, user: Employee):
