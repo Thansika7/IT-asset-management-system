@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 from sqlalchemy.sql import func as sql_func
@@ -329,7 +329,13 @@ class RequestService:
             pass
         elif current_user.role in [EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR, EmployeeRole.MANAGER]:
             effective_branch = current_user.branch
-            query = query.join(Request.employee).filter(Employee.branch == effective_branch)
+            # Show requests from own branch OR requests pending transfer TO own branch
+            query = query.join(Request.employee).filter(
+                or_(
+                    Employee.branch == effective_branch,
+                    Request.action_type.like(f"TRANSFER:{effective_branch}%"),  # Pending transfer to this branch
+                )
+            )
         else:
             query = query.filter(Request.emp_id == current_user.employee_id)
 
@@ -433,7 +439,9 @@ class RequestService:
                 detail="Priority is system-derived from severity, urgency, and asset impact rules.",
             )
 
-        # 2. Initialize Request: Start at HR Verification as planned
+        # 2. Initialize Request: Start at HR Verification as planned, unless admin
+        initial_status = "APPROVED_FOR_SUPPORT" if current_user.role == EmployeeRole.ADMIN else "PENDING_SUPPORT"
+        initial_stage = "READY" if current_user.role == EmployeeRole.ADMIN else "HR_VERIFICATION"
         req = Request(
             emp_id=current_user.employee_id,
             asset_name=payload.asset_name,
@@ -444,18 +452,19 @@ class RequestService:
             priority="P3",
             severity="MEDIUM",
             urgency="MEDIUM",
-            status="PENDING_SUPPORT",
-            stage="HR_VERIFICATION",
+            status=initial_status,
+            stage=initial_stage,
         )
         db.add(req)
         db.commit()
         db.refresh(req)
         
+        audit_action = "AUTO_APPROVED" if current_user.role == EmployeeRole.ADMIN else "USER_SUBMISSION"
         AuditService.log_change(db, "requests", req.request_id, "CREATE", current_user, None, {
             "status": req.status,
             "asset_name": req.asset_name,
             "role": current_user.role
-        }, "USER_SUBMISSION")
+        }, audit_action)
 
         # 3. Branch-Specific Notification Logic
         # We find stakeholders in the SAME branch, AND all Global Admins

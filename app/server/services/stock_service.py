@@ -121,6 +121,9 @@ class StockService:
                 ).all() if e.email
             ]
             recipients = list(set(support_emails + manager_emails))
+            if not recipients:
+                recipients = EmailService.collect_hr_admin_emails(db, normalized_branch)
+
             if recipients:
                 EmailService.notify_low_stock(
                     asset_name=asset.name,

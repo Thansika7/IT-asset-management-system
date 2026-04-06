@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 class AssetCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    asset_id: str
+    asset_id: Optional[str] = None
     name: str
     category_name: str
     sub_category_name: Optional[str] = None
@@ -18,7 +18,17 @@ class AssetCreate(BaseModel):
     purchased_date: Optional[date] = None
     useful_life_years: int = 5
 
-    @field_validator("asset_id", "name", "category_name", "branch")
+    @field_validator("asset_id")
+    @classmethod
+    def validate_optional_asset_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("asset_id must be a string")
+        value = v.strip()
+        return value or None
+
+    @field_validator("name", "category_name", "branch")
     @classmethod
     def validate_text_fields(cls, v: str) -> str:
         if not isinstance(v, str):

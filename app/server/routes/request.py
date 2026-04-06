@@ -5,6 +5,8 @@ from typing import List, Optional
 
 from app.server.database.database import get_db
 from app.server.models.request import (
+    AdminDirectAllocationCreate,
+    AdminDirectAllocationResponse,
     RequestCreate,
     RequestCrossBranchTransfer,
     RequestFormOptions,
@@ -176,3 +178,62 @@ def resolve_request(
 ):
     req=RequestService.resolve_service_request(db, request_id, payload, current_user)
     return {"status": "resolved", "final_action": "REPAIRED_AND_RETURNED", "new_status": req.status}
+
+
+@router.post("/allocate/direct", response_model=AdminDirectAllocationResponse)
+def direct_allocate_asset(
+    payload: AdminDirectAllocationCreate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN))
+):
+    """
+    Allows admin to directly allocate an asset to an employee without going through the request workflow.
+    This bypasses all request approval stages and directly creates an allocation record.
+    """
+    from app.server.services.stock_service import StockService
+    from app.server.schema.tracking import AllocationType
+    from app.server.exceptions.base import ResourceNotFoundError, InsufficientStockError
+    
+    # Validate that the employee exists
+    employee = db.query(Employee).filter(Employee.employee_id == payload.employee_id).first()
+    if not employee:
+        raise ResourceNotFoundError("Employee", payload.employee_id)
+    
+    # Convert allocation_type string to enum
+    try:
+        alloc_type = AllocationType[payload.allocation_type.upper()]
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid allocation_type. Must be PERMANENT or TEMPORARY."
+        )
+    
+    try:
+        # Directly allocate the asset
+        tracking = StockService.allocate_asset(
+            db=db,
+            asset_id=payload.asset_id,
+            emp_id=payload.employee_id,
+            alloc_type=alloc_type,
+            user=current_user,
+            reason=payload.reason
+        )
+        db.commit()
+        
+        return AdminDirectAllocationResponse(
+            tracking_id=tracking.tracking_id,
+            asset_id=tracking.asset_id,
+            employee_id=tracking.emp_id,
+            allocation_type=tracking.allocation_type.value,
+            movement_reason=tracking.movement_reason,
+            assigned_date=tracking.assigned_date
+        )
+    except (ResourceNotFoundError, InsufficientStockError) as e:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to allocate asset: {str(e)}"
+        )

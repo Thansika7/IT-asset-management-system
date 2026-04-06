@@ -399,7 +399,6 @@ export default function Stock() {
 }
 
 function StockForms({ createMut, addMut }) {
-  const [cid, setCid] = useState('')
   const [cname, setCname] = useState('')
   const [ccat, setCcat] = useState('Hardware')
   const [cbranch, setCbranch] = useState('Headquarters')
@@ -414,7 +413,6 @@ function StockForms({ createMut, addMut }) {
         onSubmit={(e) => {
           e.preventDefault()
           createMut.mutate({
-            asset_id: cid,
             name: cname,
             category_name: ccat,
             sub_category_name: 'General',
@@ -426,7 +424,6 @@ function StockForms({ createMut, addMut }) {
       >
         <h3 className="font-bold text-slate-900">Register catalog asset</h3>
         <div className="grid grid-cols-2 gap-2">
-          <input required className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Asset id" value={cid} onChange={(e) => setCid(e.target.value)} />
           <input required className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Display name" value={cname} onChange={(e) => setCname(e.target.value)} />
           <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Category" value={ccat} onChange={(e) => setCcat(e.target.value)} />
           <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Branch" value={cbranch} onChange={(e) => setCbranch(e.target.value)} />
