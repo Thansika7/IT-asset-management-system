@@ -36,9 +36,9 @@ class AssetInsightsService:
     def _apply_role_scope(query, current_user):
         from app.server.schema.employee import EmployeeRole
 
-        if current_user.role == EmployeeRole.ADMIN:
+        if current_user.role in [EmployeeRole.ADMIN, EmployeeRole.MANAGER]:
             return query
-        if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
+        if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
             return query.filter(Asset.branch == current_user.branch)
         if current_user.role == EmployeeRole.EMPLOYEE and current_user.branch:
             return query.filter(Asset.branch == current_user.branch)

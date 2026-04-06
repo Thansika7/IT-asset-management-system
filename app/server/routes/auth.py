@@ -9,10 +9,14 @@ from app.server.auth.service import (
     update_last_login,
     verify_password,
     get_password_hash,
+    create_password_reset_token,
+    verify_password_reset_token,
+    generate_random_password,
 )
 from app.server.database.database import get_db
-from app.server.models.api import EmployeeRead, Token, LoginRequest, PasswordChangeRequest
+from app.server.models.api import EmployeeRead, Token, LoginRequest, PasswordChangeRequest, ForgotPasswordRequest
 from app.server.schema.employee import Employee
+from app.server.services.email_service import EmailService
 from app.server.exceptions.base import UnauthorizedActionError
 
 router=APIRouter(prefix="/auth", tags=["auth"])
@@ -97,3 +101,27 @@ def change_password(
     db.add(current_user)
     db.commit()
     return {"status": "ok", "password_reset_required": False}
+
+
+@router.post("/forgot-password")
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    user = db.query(Employee).filter(Employee.email == payload.email, Employee.is_active == True).first()
+    if not user:
+        # Don't reveal if email exists or not for security
+        return {"message": "If an account with this email exists, a new password has been sent."}
+    
+    # Generate new password
+    new_password = generate_random_password()
+    user.password_hash = get_password_hash(new_password)
+    user.password_reset_required = True  # Force password change on next login
+    db.add(user)
+    db.commit()
+    
+    # Send new password to personal email if available, otherwise to work email
+    email_to_send = user.personal_email or user.email
+    EmailService.send_password_reset_email(email_to_send, new_password, user.name)
+    
+    return {"message": "If an account with this email exists, a new password has been sent."}

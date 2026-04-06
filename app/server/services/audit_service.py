@@ -15,31 +15,15 @@ class AuditService:
         new_values: dict = None,
         reason: str = None
     ):
+        if action not in ["CREATE", "UPDATE"]:
+            return
+            
         audit=AuditLog(
             table_name=table_name,
             record_id=record_id,
             action=action,
             old_values=old_values,
             new_values=new_values,
-            changed_by=user.employee_id if user else "SYSTEM",
-            user_role=user.role.value if user else "SYSTEM",
-            branch=user.branch if user else "HEADQUARTERS",
-            reason=reason
-        )
-        db.add(audit)
-
-    @staticmethod
-    def log_read(
-        db: Session,
-        table_name: str,
-        record_id: str,
-        user: Employee,
-        reason: Optional[str]=None
-    ):
-        audit=AuditLog(
-            table_name=table_name,
-            record_id=record_id,
-            action="READ",
             changed_by=user.employee_id if user else "SYSTEM",
             user_role=user.role.value if user else "SYSTEM",
             branch=user.branch if user else "HEADQUARTERS",

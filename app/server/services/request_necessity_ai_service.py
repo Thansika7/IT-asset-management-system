@@ -150,7 +150,7 @@ def _gather_context(db: Session, user: Employee, asset_category: str) -> dict[st
     recent: list[dict[str, Any]] = []
     for req in (
         db.query(Request)
-        .filter(Request.emp_id == user.employee_id, Request.request_type != "RESIGNATION")
+        .filter(Request.emp_id == user.employee_id)
         .order_by(Request.req_date.desc())
         .limit(6)
         .all()
@@ -260,8 +260,6 @@ def recommend_necessity_for_request(db: Session, viewer: Employee, request_id: s
     )
     if not req:
         raise ResourceNotFoundError("Request", request_id)
-    if (req.request_type or "").strip().upper() == "RESIGNATION":
-        raise ValueError("Necessity recommendation applies to asset requests, not resignation requests.")
 
     requester = req.employee
     if not requester:

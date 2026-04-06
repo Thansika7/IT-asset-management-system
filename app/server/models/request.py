@@ -139,6 +139,17 @@ class RequestResolve(BaseModel):
             raise ValueError("repair_cost cannot be negative")
         return float(v)
 
+class RequestManagerNotes(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    manager_notes: str
+
+    @field_validator("manager_notes")
+    @classmethod
+    def validate_manager_notes(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("manager_notes must be a string")
+        return v.strip()
+
 class RequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="forbid")
     request_id: str
@@ -167,6 +178,7 @@ class RequestResponse(BaseModel):
     priority_description: Optional[str] = None
     priority_response_time: Optional[str] = None
     req_date: datetime
+    manager_notes: Optional[str] = None
 
 
 class RequestListResponse(BaseModel):
@@ -201,3 +213,21 @@ class RequestNecessityRecommendationResponse(BaseModel):
     summary: str
     factors: List[str] = Field(default_factory=list)
     model_note: str = "Advisory only; HR/Admin make final decisions."
+
+
+class AssetNecessityRecommendationInput(BaseModel):
+    """Inventory/asset panel necessity recommendation input for HR/Admin."""
+
+    model_config = ConfigDict(extra="forbid")
+    requester_employee_id: str
+    reason: str
+
+    @field_validator("requester_employee_id", "reason")
+    @classmethod
+    def strip_required_text(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Value must be a string")
+        s = v.strip()
+        if not s:
+            raise ValueError("Value must not be blank")
+        return s

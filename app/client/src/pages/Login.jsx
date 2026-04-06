@@ -109,6 +109,16 @@ export default function Login() {
               {busy ? 'Signing in...' : 'Continue'}
             </button>
           </form>
+
+          <div className="mt-6 text-center motion-fade-up motion-delay-4">
+            <button
+              type="button"
+              onClick={() => navigate('/forgot-password')}
+              className="text-sm text-teal-400 hover:text-teal-300 transition-colors duration-200"
+            >
+              Forgot your password?
+            </button>
+          </div>
         </div>
       </div>
     </div>

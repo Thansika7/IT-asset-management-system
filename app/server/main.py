@@ -17,7 +17,6 @@ from app.server.routes.account import router as account_router
 from app.server.routes.tracking import router as tracking_router
 from app.server.routes.onboarding_preset import router as onboarding_preset_router
 from app.server.routes.discovery import router as discovery_router
-from app.server.routes.resignation import router as resignation_router
 from app.server.routes.cmdb import router as cmdb_router
 from app.server.schema import asset, employee, category, attribute, request, tracking, audit, onboarding_preset
 import app.server.schema.cmdb  # noqa: F401 — register CMDB tables
@@ -185,7 +184,6 @@ app.include_router(account_router)
 app.include_router(tracking_router)
 app.include_router(onboarding_preset_router)
 app.include_router(discovery_router)
-app.include_router(resignation_router)
 app.include_router(cmdb_router)
 @app.get("/health")
 def health_check():
