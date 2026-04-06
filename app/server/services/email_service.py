@@ -553,29 +553,6 @@ class EmailService:
         return list({x for x in out if x})
 
     @classmethod
-    def notify_resignation_request(cls, employee_name: str, company_email: str, reason: str, recipients: List[str]):
-        if not recipients:
-            return
-        subject = f"Resignation request: {employee_name}"
-        identity = f"<span style='color:#64748b'>Company identity (login):</span> <strong>{company_email}</strong>"
-        body = cls._wrap_email(
-            "Employee resignation",
-            "Pending HR / Admin review",
-            f"""
-            <p>{employee_name} has submitted a resignation request.</p>
-            <p>{identity}</p>
-            <div style="background-color:#f1f5f9;border-radius:8px;padding:16px;margin:16px 0;">
-                <p style="margin:0;white-space:pre-wrap;">{reason}</p>
-            </div>
-            <p style="font-size:14px;color:#64748b;">Approve or reject from the HR console (Resignations).</p>
-            """,
-            accent_color="#0f766e",
-        )
-        for email in set(recipients):
-            if email:
-                cls._send_email(email, subject, body)
-
-    @classmethod
     def send_provisioning_credentials(cls, personal_email: str, employee_name: str, company_email: str, temp_password: str):
         if not personal_email:
             return
@@ -598,6 +575,29 @@ class EmailService:
             footer_note="Automated message from Kovan IT — do not reply.",
         )
         cls._send_email(personal_email, subject, body)
+
+    @classmethod
+    def send_password_reset_email(cls, email: str, new_password: str, employee_name: str):
+        """Send new password via email"""
+        
+        subject = "Password Reset - IT Asset Management System"
+        body = cls._wrap_email(
+            "Password Reset",
+            "Your new password",
+            f"""
+            <p>Hello <strong>{employee_name}</strong>,</p>
+            <p>Your password has been reset. Use the credentials below to sign in:</p>
+            <div style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:20px 0;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <tr><td style="padding:6px 0;color:#64748b;width:40%;">New Password</td><td style="font-family:monospace;font-weight:600;font-size:16px;">{new_password}</td></tr>
+                </table>
+            </div>
+            <p style="font-size: 14px; color: #64748b;">For security reasons, please change this password after signing in.</p>
+            """,
+            accent_color="#6366f1",
+            footer_note="Automated message from IT Asset Management System — do not reply.",
+        )
+        cls._send_email(email, subject, body)
 
 
 

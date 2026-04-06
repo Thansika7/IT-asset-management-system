@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
 import {
+  R,
   canTriage,
   canHrReview,
   canManagerReview,
@@ -583,58 +584,6 @@ function NewRequestForm({ onCreate, busy, options }) {
   )
 }
 
-function ResignationForm({ onSubmit, busy }) {
-  const [reason, setReason] = useState('')
-  const [lastWorkingDay, setLastWorkingDay] = useState('')
-
-  const submit = (event) => {
-    event.preventDefault()
-    if (!reason.trim()) return
-    onSubmit({ reason: reason.trim(), last_working_day: lastWorkingDay.trim() || undefined })
-    setReason('')
-    setLastWorkingDay('')
-  }
-
-  return (
-    <form onSubmit={submit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5 motion-fade-up surface-sheen">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">Submit Resignation</h2>
-          <p className="text-sm text-slate-600 mt-1">Employees can submit a resignation request that HR or Admin may approve or reject from the requests console.</p>
-        </div>
-        <Badge tone="rose">HR Review</Badge>
-      </div>
-      <div className="space-y-2">
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Resignation reason</label>
-        <textarea
-          className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm min-h-[96px]"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          required
-          placeholder="Brief reason for resignation"
-        />
-      </div>
-      <div className="space-y-2">
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Last working day</label>
-        <input
-          type="date"
-          className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
-          value={lastWorkingDay}
-          onChange={(e) => setLastWorkingDay(e.target.value)}
-        />
-      </div>
-      <div className="flex justify-end">
-        <button
-          type="submit"
-          disabled={busy}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 text-white text-sm font-semibold px-5 py-3 disabled:opacity-50"
-        >
-          Submit Resignation
-        </button>
-      </div>
-    </form>
-  )
-}
 
 function RequestFilters({ draft, onChange, onApply, onClear, count }) {
   return (
@@ -676,7 +625,6 @@ function RequestFilters({ draft, onChange, onApply, onClear, count }) {
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.request_type} onChange={(e) => onChange('request_type', e.target.value)}>
             <option value="">All</option>
             <option value="ASSET">Asset</option>
-            <option value="RESIGNATION">Resignation</option>
           </select>
         </div>
       </div>
@@ -749,7 +697,7 @@ function RequestList({ rows, selectedId, onSelect }) {
   )
 }
 
-function DetailPanel({ row, user, mutations }) {
+function DetailPanel({ row, user, mutations, onDelete }) {
   const [triageAction, setTriageAction] = useState('NEW')
   const [triageSeverity, setTriageSeverity] = useState('MEDIUM')
   const [affectedUsers, setAffectedUsers] = useState('1')
@@ -764,6 +712,7 @@ function DetailPanel({ row, user, mutations }) {
   const [rejectNotes, setRejectNotes] = useState('')
   const [aiRecommendation, setAiRecommendation] = useState(null)
   const [aiError, setAiError] = useState('')
+  const [managerNotes, setManagerNotes] = useState('')
 
   const necessityMut = useMutation({
     mutationFn: (requestId) => apiFetch(`/requests/${requestId}/recommend-necessity`, { method: 'POST' }),
@@ -774,6 +723,19 @@ function DetailPanel({ row, user, mutations }) {
     onError: (err) => {
       setAiRecommendation(null)
       setAiError(err?.message || 'Could not get recommendation.')
+    },
+  })
+
+  const managerNotesMut = useMutation({
+    mutationFn: ({ id, notes }) => apiFetch(`/requests/${id}/manager-notes`, { method: 'POST', body: JSON.stringify({ manager_notes: notes }) }),
+    onSuccess: () => mutations.invalidate(),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (requestId) => apiFetch(`/requests/${encodeURIComponent(requestId)}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      mutations.invalidate()
+      onDelete()
     },
   })
 
@@ -792,6 +754,7 @@ function DetailPanel({ row, user, mutations }) {
     setRejectNotes('')
     setAiRecommendation(null)
     setAiError('')
+    setManagerNotes('')
   }, [row?.request_id])
 
   if (!row) {
@@ -803,6 +766,11 @@ function DetailPanel({ row, user, mutations }) {
   }
 
   const stage = row.stage
+  const canDeleteRequest = stage === 'HR_VERIFICATION' && (
+    user.role === R.ADMIN ||
+    row.emp_id === user.employee_id ||
+    ([R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(user.role) && row.requester_branch === user.branch)
+  )
   const autoUrgencyPreview = deriveUrgencyPreview({
     severity: triageSeverity,
     affectedUsers: parseInt(affectedUsers || '1', 10) || 1,
@@ -830,6 +798,7 @@ function DetailPanel({ row, user, mutations }) {
     ['Urgency response target', row.urgency_response_time || 'Not set'],
     ['HR verified', prettyBool(row.hr_verified)],
     ['Requested at', formatDate(row.req_date)],
+    ['Manager notes', row.manager_notes || 'No notes'],
     ['Escalation', row.escalation_triggered && row.escalation_role ? `Overdue - escalate to ${row.escalation_role}` : 'Within current SLA'],
   ]
 
@@ -863,7 +832,25 @@ function DetailPanel({ row, user, mutations }) {
         </div>
       </div>
 
-      {canNecessityRecommendation(user.role) && String(row.request_type || 'ASSET').toUpperCase() !== 'RESIGNATION' ? (
+      {canDeleteRequest ? (
+        <div className="flex justify-end pt-4">
+          <button
+            type="button"
+            className="rounded-xl bg-rose-600 text-white text-sm font-semibold px-4 py-2"
+            disabled={deleteMut.isPending}
+            onClick={() => {
+              if (window.confirm('Delete this request before support review? This cannot be undone.')) {
+                deleteMut.mutate(row.request_id)
+              }
+            }}
+          >
+            {deleteMut.isPending ? 'Deleting…' : 'Delete request'}
+          </button>
+        </div>
+      ) : null}
+      {deleteMut.isError ? <p className="text-xs text-rose-600 mt-2">{err(deleteMut)}</p> : null}
+
+      {canNecessityRecommendation(user.role) ? (
         <div className="rounded-2xl border border-violet-200 bg-violet-50/60 px-4 py-4 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
@@ -925,6 +912,28 @@ function DetailPanel({ row, user, mutations }) {
               ) : null}
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {canManagerReview(user.role) ? (
+        <div className="space-y-3 border-t border-slate-100 pt-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Manager notes</p>
+          <textarea
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Add internal notes for other managers..."
+            value={managerNotes}
+            onChange={(e) => setManagerNotes(e.target.value)}
+            rows={3}
+          />
+          <button
+            type="button"
+            className="rounded-xl bg-blue-600 text-white text-sm font-medium px-4 py-2"
+            onClick={() => managerNotesMut.mutate({ id: row.request_id, notes: managerNotes.trim() })}
+            disabled={managerNotesMut.isPending}
+          >
+            {managerNotesMut.isPending ? 'Saving...' : 'Save notes'}
+          </button>
+          {managerNotesMut.isError ? <p className="text-xs text-rose-600">{err(managerNotesMut)}</p> : null}
         </div>
       ) : null}
 
@@ -1009,44 +1018,6 @@ function DetailPanel({ row, user, mutations }) {
         </div>
       ) : null}
 
-      {row.request_type === 'RESIGNATION' && row.stage === 'RESIGNATION_PENDING' && canHrReview(user.role) ? (
-        <div className="space-y-4 border-t border-slate-100 pt-5">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Resignation approval</p>
-            <p className="mt-1 text-sm text-slate-600">HR or Admin can approve or reject this resignation request.</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-900">Resignation status</p>
-            <p className="text-sm text-slate-600 mt-1">{row.resignation_status || 'Pending'}</p>
-          </div>
-          <div className="space-y-3">
-            <button
-              type="button"
-              className="rounded-xl bg-emerald-600 text-white text-sm font-medium px-4 py-2"
-              onClick={() => mutations.resignationApproveMut.mutate(row.request_id)}
-            >
-              Approve resignation
-            </button>
-            <div>
-              <textarea
-                className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
-                placeholder="Add rejection notes (optional)"
-                value={rejectNotes}
-                onChange={(e) => setRejectNotes(e.target.value)}
-              />
-              <button
-                type="button"
-                className="mt-2 rounded-xl bg-rose-600 text-white text-sm font-medium px-4 py-2"
-                onClick={() => mutations.resignationRejectMut.mutate({ requestId: row.request_id, notes: rejectNotes.trim() || undefined })}
-              >
-                Reject resignation
-              </button>
-            </div>
-          </div>
-          {mutations.resignationApproveMut.isError ? <p className="text-xs text-rose-600">{err(mutations.resignationApproveMut)}</p> : null}
-          {mutations.resignationRejectMut.isError ? <p className="text-xs text-rose-600">{err(mutations.resignationRejectMut)}</p> : null}
-        </div>
-      ) : null}
 
       {canExecuteRequest(user.role) && (stage === 'READY' || row.status === 'APPROVED_FOR_SUPPORT' || row.status === 'READY') ? (
         <div className="space-y-3 border-t border-slate-100 pt-5">
@@ -1166,9 +1137,6 @@ export default function Requests() {
   const resolveMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/resolve`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
   const transferMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/transfer-request`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
   const createMut = useMutation({ mutationFn: (body) => apiFetch('/requests/', { method: 'POST', body: JSON.stringify(body) }), onSuccess: () => invalidate() })
-  const resignMut = useMutation({ mutationFn: (body) => apiFetch('/employees/resign', { method: 'POST', body: JSON.stringify(body) }), onSuccess: () => invalidate() })
-  const resignationApproveMut = useMutation({ mutationFn: (requestId) => apiFetch(`/resignations/${requestId}/approve`, { method: 'PUT' }), onSuccess: invalidate })
-  const resignationRejectMut = useMutation({ mutationFn: ({ requestId, notes }) => apiFetch(`/resignations/${requestId}/reject`, { method: 'PUT', body: JSON.stringify({ notes }) }), onSuccess: invalidate })
 
   return (
     <div className="p-6 sm:p-8 max-w-7xl mx-auto space-y-6">
@@ -1194,21 +1162,8 @@ export default function Requests() {
           })
         }}
       />
-      {user.role === 'employee' ? (
-        <ResignationForm
-          busy={resignMut.isPending}
-          onSubmit={(body) => {
-            resignMut.mutate(body, {
-              onSuccess: (row) => {
-                if (row?.request_id) setSelectedId(row.request_id)
-              },
-            })
-          }}
-        />
-      ) : null}
       {formOptionsQuery.isError ? <p className="text-sm text-rose-600">{formOptionsQuery.error?.message}</p> : null}
       {createMut.isError ? <p className="text-sm text-rose-600">{createMut.error?.message}</p> : null}
-      {resignMut.isError ? <p className="text-sm text-rose-600">{resignMut.error?.message}</p> : null}
 
       {isLoading ? (
         <div className="py-20 text-center text-slate-400 font-medium animate-pulse">Loading requests...</div>
@@ -1288,7 +1243,7 @@ export default function Requests() {
               ×
             </button>
             <div className="p-6">
-              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut, resignationApproveMut, resignationRejectMut }} />
+              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut, invalidate }} onDelete={() => setDetailsOpen(false)} />
             </div>
           </div>
         </div>

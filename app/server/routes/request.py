@@ -10,6 +10,7 @@ from app.server.models.request import (
     RequestFormOptions,
     RequestHRVerify,
     RequestListResponse,
+    RequestManagerNotes,
     RequestNecessityRecommendationResponse,
     RequestResolve,
     RequestResponse,
@@ -119,6 +120,23 @@ def manager_review(
     current_user: Employee=Depends(require_roles(EmployeeRole.MANAGER, EmployeeRole.ADMIN))
 ):
     return RequestService.review_request_by_manager(db, request_id, payload, current_user)
+
+@router.post("/{request_id}/manager-notes", response_model=RequestResponse)
+def update_manager_notes(
+    request_id: str, 
+    payload: RequestManagerNotes, 
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.MANAGER, EmployeeRole.ADMIN))
+):
+    return RequestService.update_manager_notes(db, request_id, payload, current_user)
+
+@router.delete("/{request_id}")
+def delete_request(
+    request_id: str,
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.ADMIN))
+):
+    return RequestService.delete_request(db, request_id, current_user)
 
 @router.post("/{request_id}/review/admin", response_model=RequestResponse)
 def admin_review(

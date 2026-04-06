@@ -184,3 +184,48 @@ def create_oauth_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+def create_password_reset_token(email: str) -> str:
+    """Create a password reset token that expires in 1 hour"""
+    expire = datetime.now(timezone.utc) + timedelta(hours=1)
+    payload = {
+        "sub": email.lower(),
+        "type": "password_reset",
+        "exp": expire,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def verify_password_reset_token(token: str) -> Optional[str]:
+    """Verify password reset token and return email if valid"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "password_reset":
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+
+def generate_random_password(length: int = 12) -> str:
+    """Generate a random password with mixed characters"""
+    import secrets
+    import string
+    
+    # Ensure at least one of each required character type
+    password = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%^&*"),
+    ]
+    
+    # Fill the rest randomly
+    remaining_length = length - len(password)
+    all_chars = string.ascii_letters + string.digits + "!@#$%^&*"
+    password.extend(secrets.choice(all_chars) for _ in range(remaining_length))
+    
+    # Shuffle to avoid predictable patterns
+    secrets.SystemRandom().shuffle(password)
+    return ''.join(password)

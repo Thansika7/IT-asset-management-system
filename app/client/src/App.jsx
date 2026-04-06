@@ -4,6 +4,7 @@ import { ProtectedShell, RoleGate } from './components/AppShell'
 import { R } from './lib/roles'
 
 import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
 import Dashboard from './pages/Dashboard'
 import Tracking from './pages/Tracking'
 import Employees from './pages/Employees'
@@ -23,6 +24,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route element={<ProtectedShell anyOfRoles={APP_ROLES} />}>
         <Route element={<MainLayout />}>
           <Route index element={<Dashboard />} />

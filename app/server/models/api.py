@@ -182,6 +182,18 @@ class PasswordChangeRequest(BaseModel):
         return _validate_password_strength(v.strip())
 
 
+class ForgotPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Email must be a string")
+        return v.strip().lower()
+
+
 class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: EmailStr

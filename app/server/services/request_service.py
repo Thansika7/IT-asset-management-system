@@ -12,6 +12,7 @@ from app.server.models.request import (
     RequestFormAssetOption,
     RequestFormOptions,
     RequestHRVerify,
+    RequestManagerNotes,
     RequestResolve,
     RequestReview,
     RequestTriage,
@@ -286,8 +287,9 @@ class RequestService:
             ]
         else:
             query = db.query(Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
-            if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
+            if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
                 query = query.filter(Asset.branch == current_user.branch)
+            # Managers can see assets from all branches
             known_assets = [
                 RequestFormAssetOption(
                     asset_id=asset.asset_id,
@@ -507,8 +509,6 @@ class RequestService:
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
-        if getattr(req, "request_type", None) == "RESIGNATION":
-            raise HTTPException(status_code=400, detail="Use resignation approval endpoints for resignation requests.")
         if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="HR can review only requests from their own branch.")
 
@@ -552,8 +552,6 @@ class RequestService:
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
-        if getattr(req, "request_type", None) == "RESIGNATION":
-            raise HTTPException(status_code=400, detail="Resignation requests are not triaged as asset requests.")
         if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Support can triage only requests from their own branch.")
         
@@ -668,6 +666,45 @@ class RequestService:
         support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch)
         EmailService.notify_manager_decision(req.employee.name, req.asset_name, payload.is_approved, support_emails)
         return RequestService._serialize_request(req)
+
+    @staticmethod
+    def update_manager_notes(db: Session, request_id: str, payload: RequestManagerNotes, user: Employee):
+        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found")
+        if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
+            raise HTTPException(status_code=403, detail="Managers can update notes only for requests from their own branch.")
+
+        old_notes = req.manager_notes
+        req.manager_notes = payload.manager_notes
+        db.commit()
+        db.refresh(req)
+        AuditService.log_change(db, "requests", request_id, "UPDATE", user, {"manager_notes": old_notes}, {"manager_notes": req.manager_notes}, "MANAGER_NOTES_UPDATE")
+        return RequestService._serialize_request(req)
+
+    @staticmethod
+    def delete_request(db: Session, request_id: str, user: Employee):
+        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        if req.stage != "HR_VERIFICATION":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Requests can only be deleted before support review begins.",
+            )
+
+        if user.role == EmployeeRole.EMPLOYEE:
+            if req.emp_id != user.employee_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Employees can only delete their own requests.")
+        elif user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
+            if req.employee.branch != user.branch:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete requests from your branch.")
+
+        db.delete(req)
+        db.commit()
+        AuditService.log_change(db, "requests", request_id, "DELETE", user, {"status": req.status, "stage": req.stage}, None, "REQUEST_DELETION")
+        return {"status": "deleted", "request_id": request_id}
 
     @staticmethod
     def review_request_by_admin(db: Session, request_id: str, payload: RequestReview, user: Employee):

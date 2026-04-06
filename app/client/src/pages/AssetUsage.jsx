@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   useReactTable,
@@ -7,10 +7,13 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 import { apiFetch } from '@/lib/api'
+import Pagination from '@/components/Pagination'
 import { RefreshCw, Activity } from 'lucide-react'
 
 export default function AssetUsage() {
   const [selectedId, setSelectedId] = useState(null)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   const {
     data: analytics,
@@ -48,6 +51,14 @@ export default function AssetUsage() {
   })
 
   const items = report?.items ?? []
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
+  const pagedItems = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return items.slice(start, start + PAGE_SIZE)
+  }, [items, page])
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
 
   const columns = useMemo(
     () => [
@@ -62,7 +73,7 @@ export default function AssetUsage() {
   )
 
   const table = useReactTable({
-    data: items,
+    data: pagedItems,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -128,44 +139,47 @@ export default function AssetUsage() {
           {busy ? (
             <div className="p-16 text-center text-slate-400 animate-pulse">Loading report…</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm min-w-[640px]">
-                <thead>
-                  {table.getHeaderGroups().map((hg) => (
-                    <tr key={hg.id} className="bg-slate-50 border-b border-slate-200">
-                      {hg.headers.map((h) => (
-                        <th
-                          key={h.id}
-                          className="p-3 font-semibold text-slate-600 text-xs uppercase tracking-wider cursor-pointer"
-                          onClick={h.column.getToggleSortingHandler()}
-                        >
-                          {flexRender(h.column.columnDef.header, h.getContext())}
-                        </th>
-                      ))}
-                    </tr>
-                  ))}
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {table.getRowModel().rows.map((row) => {
-                    const id = row.original.asset_id
-                    const active = selectedId === id
-                    return (
-                      <tr
-                        key={row.id}
-                        onClick={() => setSelectedId(id)}
-                        className={`cursor-pointer hover:bg-slate-50/80 ${active ? 'bg-teal-50/80' : ''}`}
-                      >
-                        {row.getVisibleCells().map((cell) => (
-                          <td key={cell.id} className="p-3">
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
+            <div className="min-w-0 flex flex-col">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm min-w-[640px]">
+                  <thead>
+                    {table.getHeaderGroups().map((hg) => (
+                      <tr key={hg.id} className="bg-slate-50 border-b border-slate-200">
+                        {hg.headers.map((h) => (
+                          <th
+                            key={h.id}
+                            className="p-3 font-semibold text-slate-600 text-xs uppercase tracking-wider cursor-pointer"
+                            onClick={h.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(h.column.columnDef.header, h.getContext())}
+                          </th>
                         ))}
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-              {items.length === 0 ? <p className="p-6 text-sm text-slate-500 text-center">No assets in scope.</p> : null}
+                    ))}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {table.getRowModel().rows.map((row) => {
+                      const id = row.original.asset_id
+                      const active = selectedId === id
+                      return (
+                        <tr
+                          key={row.id}
+                          onClick={() => setSelectedId(id)}
+                          className={`cursor-pointer hover:bg-slate-50/80 ${active ? 'bg-teal-50/80' : ''}`}
+                        >
+                          {row.getVisibleCells().map((cell) => (
+                            <td key={cell.id} className="p-3">
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </td>
+                          ))}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+                {items.length === 0 ? <p className="p-6 text-sm text-slate-500 text-center">No assets in scope.</p> : null}
+              </div>
+              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={items.length} />
             </div>
           )}
         </div>

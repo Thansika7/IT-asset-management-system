@@ -36,6 +36,7 @@ class Request(Base):
     request_type=Column(String(20), nullable=False, default="ASSET")
     resignation_status=Column(String(20), nullable=True)
     req_date=Column(DateTime(timezone=True), server_default=func.now())
+    manager_notes=Column(Text, nullable=True)
     employee=relationship("Employee", back_populates="requests")
 
     @property

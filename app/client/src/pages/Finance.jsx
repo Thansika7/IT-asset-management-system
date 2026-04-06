@@ -129,7 +129,7 @@ export default function Finance() {
           <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Search asset, category, vendor, branch..." value={draftFilters.search} onChange={(e) => setDraftFilters((prev) => ({ ...prev, search: e.target.value }))} />
           <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Category" value={draftFilters.category} onChange={(e) => setDraftFilters((prev) => ({ ...prev, category: e.target.value }))} />
           <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Sub-category" value={draftFilters.subCategory} onChange={(e) => setDraftFilters((prev) => ({ ...prev, subCategory: e.target.value }))} />
-          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Branch" value={draftFilters.branch} onChange={(e) => setDraftFilters((prev) => ({ ...prev, branch: e.target.value }))} disabled={Boolean(user.branch && user.role === 'manager')} />
+          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Branch" value={draftFilters.branch} onChange={(e) => setDraftFilters((prev) => ({ ...prev, branch: e.target.value }))} disabled={Boolean(user.branch && user.role !== 'manager')} />
           <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.status} onChange={(e) => setDraftFilters((prev) => ({ ...prev, status: e.target.value }))}>
             <option value="">All statuses</option>
             {STATUS_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
