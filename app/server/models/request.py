@@ -1,8 +1,8 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 VALID_REQUEST_ACTIONS = {"NEW", "REPLACE", "SERVICE"}
 
@@ -184,3 +184,12 @@ class RequestFormOptions(BaseModel):
     categories: list[str]
     reasons_by_category: dict[str, list[str]]
     known_assets: list[RequestFormAssetOption]
+
+
+class RequestNecessityRecommendationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    verdict: str
+    confidence: int = Field(ge=0, le=100)
+    summary: str
+    factors: List[str] = Field(default_factory=list)
+    model_note: str = "Advisory only; HR/Admin make final decisions."

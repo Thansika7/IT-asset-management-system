@@ -11,8 +11,9 @@ import {
   canExecuteRequest,
   canResolveService,
   canTransferCrossBranch,
+  canNecessityRecommendation,
 } from '@/lib/roles'
-import { Eye, Plus, RefreshCw, Search } from 'lucide-react'
+import { Eye, Plus, RefreshCw, Search, Sparkles } from 'lucide-react'
 
 const SEVERITY_OPTIONS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
 const PRIORITY_OPTIONS = ['P1', 'P2', 'P3', 'P4']
@@ -606,6 +607,20 @@ function DetailPanel({ row, user, mutations }) {
   const [tBranch, setTBranch] = useState('')
   const [tBrand, setTBrand] = useState('')
   const [tName, setTName] = useState('')
+  const [aiRecommendation, setAiRecommendation] = useState(null)
+  const [aiError, setAiError] = useState('')
+
+  const necessityMut = useMutation({
+    mutationFn: (requestId) => apiFetch(`/requests/${requestId}/recommend-necessity`, { method: 'POST' }),
+    onSuccess: (data) => {
+      setAiError('')
+      setAiRecommendation(data)
+    },
+    onError: (err) => {
+      setAiRecommendation(null)
+      setAiError(err?.message || 'Could not get recommendation.')
+    },
+  })
 
   useEffect(() => {
     setTriageAction('NEW')
@@ -619,6 +634,8 @@ function DetailPanel({ row, user, mutations }) {
     setTBranch('')
     setTBrand('')
     setTName('')
+    setAiRecommendation(null)
+    setAiError('')
   }, [row?.request_id])
 
   if (!row) {
@@ -689,6 +706,71 @@ function DetailPanel({ row, user, mutations }) {
           ))}
         </div>
       </div>
+
+      {canNecessityRecommendation(user.role) && String(row.request_type || 'ASSET').toUpperCase() !== 'RESIGNATION' ? (
+        <div className="rounded-2xl border border-violet-200 bg-violet-50/60 px-4 py-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-violet-600" />
+                AI necessity recommendation
+              </p>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Analyzes <strong>this request</strong> using the requester&apos;s active assignments, branch stock for the category, and recent request history. This is advisory only; HR/Admin should confirm the final decision.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={necessityMut.isPending}
+              onClick={() => necessityMut.mutate(row.request_id)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-700 text-white text-sm font-semibold px-4 py-2.5 disabled:opacity-50 shrink-0"
+            >
+              <Sparkles className="w-4 h-4" />
+              {necessityMut.isPending ? 'Analyzing…' : 'Get recommendation'}
+            </button>
+          </div>
+          {aiError ? <p className="text-xs text-rose-700 whitespace-pre-wrap break-words">{aiError}</p> : null}
+          {aiRecommendation ? (
+            <div className="rounded-xl border border-violet-100 bg-white p-3 text-sm space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <span
+                  className={`text-xs font-bold uppercase tracking-wide px-2 py-0.5 rounded-lg border ${
+                    aiRecommendation.verdict === 'LIKELY_NEEDED'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : aiRecommendation.verdict === 'LIKELY_REDUNDANT'
+                        ? 'bg-rose-50 text-rose-800 border-rose-200'
+                        : 'bg-amber-50 text-amber-900 border-amber-200'
+                  }`}
+                >
+                  {String(aiRecommendation.verdict || '').replace(/_/g, ' ')}
+                </span>
+                <span className="text-xs text-slate-500">Confidence {aiRecommendation.confidence ?? '—'}%</span>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3 border border-slate-200">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 mb-2">Suggested decision</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  {aiRecommendation.verdict === 'LIKELY_NEEDED'
+                    ? 'Recommend approval and fulfillment.'
+                    : aiRecommendation.verdict === 'LIKELY_REDUNDANT'
+                      ? 'Recommend rejection or further justification.'
+                      : 'Recommend additional review before decision.'}
+                </p>
+              </div>
+              <p className="text-slate-700 leading-relaxed">{aiRecommendation.summary}</p>
+              {Array.isArray(aiRecommendation.factors) && aiRecommendation.factors.length > 0 ? (
+                <ul className="list-disc pl-5 text-xs text-slate-600 space-y-0.5">
+                  {aiRecommendation.factors.map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {aiRecommendation.model_note ? (
+                <p className="text-[11px] text-slate-400 italic">{aiRecommendation.model_note}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {stage === 'HR_VERIFICATION' && canHrReview(user.role) ? (
         <div className="flex flex-wrap gap-2">
@@ -831,6 +913,7 @@ export default function Requests() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const [selectedId, setSelectedId] = useState(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const initialFilters = { priority: '', severity: '', urgency: '' }
   const [draftFilters, setDraftFilters] = useState(initialFilters)
   const [filters, setFilters] = useState(initialFilters)
@@ -854,8 +937,10 @@ export default function Requests() {
   })
 
   useEffect(() => {
-    if (!selectedId && data.length > 0) setSelectedId(data[0].request_id)
-    if (selectedId && !data.some((row) => row.request_id === selectedId) && data.length > 0) setSelectedId(data[0].request_id)
+    if (selectedId && !data.some((row) => row.request_id === selectedId)) {
+      setSelectedId(null)
+      setDetailsOpen(false)
+    }
   }, [data, selectedId])
 
   const selected = useMemo(() => data.find((r) => r.request_id === selectedId) ?? null, [data, selectedId])
@@ -914,25 +999,45 @@ export default function Requests() {
       ) : isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-rose-800 text-sm">{error?.message}</div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6 items-start">
-          <div className="xl:col-span-2 space-y-6">
-            <RequestFilters
-              draft={draftFilters}
-              count={data.length}
-              onChange={(key, value) => setDraftFilters((prev) => ({ ...prev, [key]: value }))}
-              onApply={() => setFilters(draftFilters)}
-              onClear={() => {
-                setDraftFilters(initialFilters)
-                setFilters(initialFilters)
-              }}
-            />
-            <RequestList rows={data} selectedId={selectedId} onSelect={setSelectedId} />
-          </div>
-          <div className="xl:col-span-3">
-            <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut }} />
-          </div>
+        <div className="space-y-6">
+          <RequestFilters
+            draft={draftFilters}
+            count={data.length}
+            onChange={(key, value) => setDraftFilters((prev) => ({ ...prev, [key]: value }))}
+            onApply={() => setFilters(draftFilters)}
+            onClear={() => {
+              setDraftFilters(initialFilters)
+              setFilters(initialFilters)
+            }}
+          />
+          <RequestList
+            rows={data}
+            selectedId={selectedId}
+            onSelect={(id) => {
+              setSelectedId(id)
+              setDetailsOpen(true)
+            }}
+          />
         </div>
       )}
+
+      {detailsOpen && selected ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm" onClick={() => setDetailsOpen(false)}>
+          <div className="relative w-full max-w-6xl overflow-auto rounded-3xl bg-white shadow-2xl border border-slate-200" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
+              onClick={() => setDetailsOpen(false)}
+              aria-label="Close request details"
+            >
+              ×
+            </button>
+            <div className="p-6">
+              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut }} />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

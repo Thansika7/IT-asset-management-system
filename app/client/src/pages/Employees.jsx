@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   useReactTable,
@@ -24,9 +24,13 @@ export default function Employees() {
 
   const regMut = useMutation({
     mutationFn: (body) => apiFetch('/employees/register', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['employees'] })
       setOpen(false)
+      const pe = data?.personal_email || 'their personal email'
+      window.alert(
+        `Employee registered.\n\nCompany login: ${data?.email ?? '—'}\nA temporary password was emailed to ${pe}. They must change it on first sign-in.`,
+      )
     },
   })
 
@@ -40,7 +44,7 @@ export default function Employees() {
       setDeact(null)
       const n = res?.recovered_hardware
       if (typeof n === 'number') {
-        window.alert(`Employee deactivated. Recovered ${n} active assignment(s) to stock.`)
+        window.alert(`Employee removed from the database. Recovered ${n} active assignment(s) to stock.`)
       }
     },
   })
@@ -101,7 +105,7 @@ export default function Employees() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100"
             >
               <UserMinus className="w-3.5 h-3.5" />
-              Deactivate
+              Remove
             </button>
           )
         },
@@ -125,7 +129,7 @@ export default function Employees() {
           <h1 className="text-2xl font-bold text-slate-900">Team</h1>
           <p className="text-sm text-slate-600 mt-1">
             Active employees from <code className="text-xs bg-slate-100 px-1 rounded">GET /employees/</code>. HR and admin
-            can <strong className="font-medium text-slate-800">deactivate</strong> and recover hardware to stock.
+            can <strong className="font-medium text-slate-800">remove</strong> an employee (deleted from the database) and recover hardware to stock.
           </p>
         </div>
         <div className="flex gap-2">
@@ -217,9 +221,9 @@ function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <button type="button" className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" aria-label="Close" onClick={onCancel} />
       <div className="relative w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-xl p-6">
-        <h3 className="text-lg font-bold text-slate-900">Deactivate employee?</h3>
+        <h3 className="text-lg font-bold text-slate-900">Remove employee?</h3>
         <p className="text-sm text-slate-600 mt-2">
-          <strong>{name}</strong> <span className="font-mono text-xs text-slate-500">({empId})</span> will be marked inactive. All open assignments are returned to inventory (
+          <strong>{name}</strong> <span className="font-mono text-xs text-slate-500">({empId})</span> will be <strong>permanently deleted</strong> from the database (including their requests and tracking history). Open assignments are returned to inventory first (
           <code className="text-xs bg-slate-100 px-1 rounded">POST /employees/…/deactivate</code>).
         </p>
         {error ? <p className="text-xs text-rose-600 mt-3">{error}</p> : null}
@@ -233,7 +237,7 @@ function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
             onClick={onConfirm}
             className="flex-1 rounded-xl bg-rose-600 text-white py-2.5 text-sm font-semibold disabled:opacity-50"
           >
-            {busy ? 'Working…' : 'Deactivate'}
+            {busy ? 'Working…' : 'Remove'}
           </button>
         </div>
       </div>
@@ -253,14 +257,14 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
   })
 
   const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
+  const [personalEmail, setPersonalEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [branch, setBranch] = useState('')
   const [role, setRole] = useState(R.EMPLOYEE)
-  const [password, setPassword] = useState('')
   const [presetId, setPresetId] = useState('')
   const [picked, setPicked] = useState(() => new Set())
   const [extraIds, setExtraIds] = useState('')
+  const formRef = useRef(null)
 
   const availableStock = useMemo(() => stock.filter((a) => a.unused > 0), [stock])
 
@@ -314,29 +318,52 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
           </button>
         </div>
         <p className="text-xs text-slate-500 mb-4">
-          Password: 8+ chars, uppercase, digit, symbol. Phone: 10 digits if provided. Choose an <strong>onboarding kit</strong> (set up under{' '}
-          <strong>Onboarding kits</strong>) and/or tick lines with free stock — no need to copy IDs from inventory unless you use the optional field.
+          A <strong>company email</strong> and <strong>temporary password</strong> are generated automatically. Credentials are sent to the employee&apos;s{' '}
+          <strong>personal email</strong> (SMTP must be configured on the server). Phone: 10 digits if provided. Choose an <strong>onboarding kit</strong> (under{' '}
+          <strong>Onboarding kits</strong>) and/or tick lines with free stock — optional field for extra asset IDs.
         </p>
         <form
+          ref={formRef}
           className="space-y-3"
+          autoComplete="off"
           onSubmit={(e) => {
             e.preventDefault()
-            onSubmit({
-              name,
-              email,
-              phone: phone || null,
-              branch: branch || null,
-              role,
-              password,
-              preset_id: presetId || null,
-              onboarding_asset_ids: mergeOnboardingIds(),
-            })
           }}
         >
-          <input required className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input required type="email" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Phone (10 digits)" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Branch (required if kit is branch-specific)" value={branch} onChange={(e) => setBranch(e.target.value)} />
+          <input
+            required
+            name="reg_employee_name"
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Full name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoComplete="off"
+          />
+          <input
+            required
+            name="reg_personal_email"
+            type="email"
+            inputMode="email"
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Personal email (receives login credentials)"
+            value={personalEmail}
+            onChange={(e) => setPersonalEmail(e.target.value)}
+            autoComplete="off"
+          />
+          <input
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Phone (10 digits)"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            autoComplete="off"
+          />
+          <input
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Branch (required if kit is branch-specific)"
+            value={branch}
+            onChange={(e) => setBranch(e.target.value)}
+            autoComplete="off"
+          />
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value={R.EMPLOYEE}>Employee</option>
             <option value={R.HR}>HR</option>
@@ -387,13 +414,10 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
               placeholder="Comma-separated, only if not listed above"
               value={extraIds}
               onChange={(e) => setExtraIds(e.target.value)}
+              autoComplete="off"
             />
           </div>
 
-          <input required type="password" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Initial password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-          <p className="text-[11px] text-slate-500">
-            Example: <code className="bg-slate-100 px-1 rounded">MyPass1!</code>
-          </p>
           {error ? (
             <p className="text-xs text-rose-600 whitespace-pre-wrap break-words rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">{error}</p>
           ) : null}
@@ -401,7 +425,30 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
             <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">
               Cancel
             </button>
-            <button type="submit" disabled={busy} className="flex-1 rounded-xl bg-slate-900 text-white py-2.5 text-sm font-semibold disabled:opacity-50">
+            <button
+              type="button"
+              disabled={busy}
+              className="flex-1 rounded-xl bg-slate-900 text-white py-2.5 text-sm font-semibold disabled:opacity-50"
+              onClick={() => {
+                const form = formRef.current
+                if (!form?.checkValidity()) {
+                  form?.reportValidity()
+                  return
+                }
+                const nm = name.trim()
+                const pe = personalEmail.trim()
+                if (!nm || !pe) return
+                onSubmit({
+                  name: nm,
+                  personal_email: pe,
+                  phone: phone.trim() || null,
+                  branch: branch.trim() || null,
+                  role,
+                  preset_id: presetId || null,
+                  onboarding_asset_ids: mergeOnboardingIds(),
+                })
+              }}
+            >
               {busy ? 'Saving…' : 'Create'}
             </button>
           </div>
