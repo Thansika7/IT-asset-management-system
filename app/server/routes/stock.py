@@ -53,20 +53,23 @@ def create_asset_entry(
             db.add(sub_category)
             db.flush()
 
-    asset=Asset(
-        asset_id=payload.asset_id,
-        name=payload.name,
-        category_id=cat.category_id,
-        sub_category_id=sub_category.sub_category_id if sub_category else None,
-        branch=payload.branch,
-        purchased_date=payload.purchased_date,
-        purchase_cost=payload.purchase_cost,
-        salvage_value=payload.salvage_value,
-        useful_life_years=payload.useful_life_years,
-        total_quantity=payload.total_quantity,
-        unused=payload.unused,
-        used=max(payload.total_quantity - payload.unused, 0)
-    )
+    asset_kwargs = {
+        "name": payload.name,
+        "category_id": cat.category_id,
+        "sub_category_id": sub_category.sub_category_id if sub_category else None,
+        "branch": payload.branch,
+        "purchased_date": payload.purchased_date,
+        "purchase_cost": payload.purchase_cost,
+        "salvage_value": payload.salvage_value,
+        "useful_life_years": payload.useful_life_years,
+        "total_quantity": payload.total_quantity,
+        "unused": payload.unused,
+        "used": max(payload.total_quantity - payload.unused, 0),
+    }
+    if payload.asset_id:
+        asset_kwargs["asset_id"] = payload.asset_id
+
+    asset = Asset(**asset_kwargs)
     db.add(asset)
     db.commit()
     db.refresh(asset)

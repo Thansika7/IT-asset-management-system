@@ -231,3 +231,43 @@ class AssetNecessityRecommendationInput(BaseModel):
         if not s:
             raise ValueError("Value must not be blank")
         return s
+
+
+class AdminDirectAllocationCreate(BaseModel):
+    """Admin direct asset allocation without going through request workflow."""
+
+    model_config = ConfigDict(extra="forbid")
+    asset_id: str
+    employee_id: str
+    allocation_type: str = "PERMANENT"  # PERMANENT or TEMPORARY
+    reason: str = "Direct allocation by admin"
+
+    @field_validator("asset_id", "employee_id", "reason")
+    @classmethod
+    def validate_required_text(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Value must be a string")
+        value = v.strip()
+        if not value:
+            raise ValueError("Value must not be blank")
+        return value
+
+    @field_validator("allocation_type")
+    @classmethod
+    def validate_allocation_type(cls, v: str) -> str:
+        value = v.strip().upper()
+        if value not in ["PERMANENT", "TEMPORARY"]:
+            raise ValueError("allocation_type must be either PERMANENT or TEMPORARY")
+        return value
+
+
+class AdminDirectAllocationResponse(BaseModel):
+    """Response for direct asset allocation."""
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+    tracking_id: str
+    asset_id: str
+    employee_id: str
+    allocation_type: str
+    movement_reason: str
+    assigned_date: datetime

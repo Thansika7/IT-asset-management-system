@@ -1143,7 +1143,11 @@ export default function Requests() {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 motion-fade-up">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Requests</h1>
-          <p className="text-slate-600 text-sm mt-1">Guided request creation with known asset autofill, then full workflow review with priority-first visibility.</p>
+          <p className="text-slate-600 text-sm mt-1">
+            {user.role === R.ADMIN
+              ? 'Request management and asset tracking. Use the Stock page for direct asset allocation.'
+              : 'Guided request creation with known asset autofill, then full workflow review with priority-first visibility.'}
+          </p>
         </div>
         <button type="button" onClick={() => { refetch(); formOptionsQuery.refetch() }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
@@ -1151,19 +1155,23 @@ export default function Requests() {
         </button>
       </div>
 
-      <NewRequestForm
-        busy={createMut.isPending || formOptionsQuery.isLoading}
-        options={formOptionsQuery.data}
-        onCreate={(body) => {
-          createMut.mutate(body, {
-            onSuccess: (row) => {
-              if (row?.request_id) setSelectedId(row.request_id)
-            },
-          })
-        }}
-      />
-      {formOptionsQuery.isError ? <p className="text-sm text-rose-600">{formOptionsQuery.error?.message}</p> : null}
-      {createMut.isError ? <p className="text-sm text-rose-600">{createMut.error?.message}</p> : null}
+      {user.role !== R.ADMIN && (
+        <>
+          <NewRequestForm
+            busy={createMut.isPending || formOptionsQuery.isLoading}
+            options={formOptionsQuery.data}
+            onCreate={(body) => {
+              createMut.mutate(body, {
+                onSuccess: (row) => {
+                  if (row?.request_id) setSelectedId(row.request_id)
+                },
+              })
+            }}
+          />
+          {formOptionsQuery.isError ? <p className="text-sm text-rose-600">{formOptionsQuery.error?.message}</p> : null}
+          {createMut.isError ? <p className="text-sm text-rose-600">{createMut.error?.message}</p> : null}
+        </>
+      )}
 
       {isLoading ? (
         <div className="py-20 text-center text-slate-400 font-medium animate-pulse">Loading requests...</div>
