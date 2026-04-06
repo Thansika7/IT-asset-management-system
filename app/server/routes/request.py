@@ -9,6 +9,7 @@ from app.server.models.request import (
     RequestCrossBranchTransfer,
     RequestFormOptions,
     RequestHRVerify,
+    RequestListResponse,
     RequestNecessityRecommendationResponse,
     RequestResolve,
     RequestResponse,
@@ -32,7 +33,7 @@ def get_request_form_options(
 ):
     return RequestService.get_request_form_options(db, current_user)
 
-@router.get("/", response_model=List[RequestResponse])
+@router.get("/", response_model=RequestListResponse)
 def list_requests(
     status: Optional[str] = None,
     priority: Optional[str] = None,
@@ -41,6 +42,8 @@ def list_requests(
     branch: Optional[str] = None,
     request_type: Optional[str] = None,
     sort_by_priority: bool = False,
+    page: int = 1,
+    per_page: int = 20,
     db: Session=Depends(get_db),
     current_user: Employee=Depends(get_current_user)
 ):
@@ -53,6 +56,8 @@ def list_requests(
         urgency=urgency,
         branch=branch,
         sort_by_priority=sort_by_priority,
+        page=page,
+        per_page=per_page,
         request_type=request_type,
     )
 

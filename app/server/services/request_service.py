@@ -317,6 +317,8 @@ class RequestService:
         urgency: Optional[str] = None,
         branch: Optional[str] = None,
         sort_by_priority: bool = False,
+        page: int = 1,
+        per_page: int = 20,
         request_type: Optional[str] = None,
     ):
         query = db.query(Request).options(joinedload(Request.employee))
@@ -339,9 +341,18 @@ class RequestService:
             query = query.filter(Request.urgency == urgency.strip().upper())
         if request_type:
             query = query.filter(Request.request_type == request_type.strip().upper())
+        if branch:
+            if current_user.role == EmployeeRole.ADMIN:
+                query = query.join(Request.employee).filter(Employee.branch == branch.strip())
+            else:
+                query = query.filter(Employee.branch == branch.strip())
 
-        rows = query.all()
+        page = max(1, page)
+        per_page = max(1, min(per_page, 100))
+        offset = (page - 1) * per_page
+
         if sort_by_priority:
+            rows = query.all()
             rows = sorted(
                 rows,
                 key=lambda req: (
@@ -351,9 +362,18 @@ class RequestService:
                 ),
                 reverse=True,
             )
+            total = len(rows)
+            rows = rows[offset:offset + per_page]
         else:
-            rows = sorted(rows, key=lambda req: req.req_date, reverse=True)
-        return [RequestService._serialize_request(req) for req in rows]
+            total = query.count()
+            rows = query.order_by(Request.req_date.desc()).offset(offset).limit(per_page).all()
+
+        return {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "items": [RequestService._serialize_request(req) for req in rows],
+        }
 
     @staticmethod
     def get_inventory_across_branches(db: Session, category_name: str):

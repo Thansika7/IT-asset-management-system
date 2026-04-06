@@ -122,11 +122,18 @@ function prettyBool(value) {
 }
 
 function NewRequestForm({ onCreate, busy, options }) {
-  const categories = options?.categories?.length ? options.categories : ['Laptop', 'Monitor', 'Keyboard', 'Mouse', 'Printer', 'Phone', 'Accessory', 'Software', 'Other']
+  const fallbackCategories = useMemo(() => {
+    const raw = options?.categories?.length
+      ? options.categories
+      : ['Laptop', 'Monitor', 'Keyboard', 'Mouse', 'Printer', 'Phone', 'Accessory', 'Software', 'Other']
+    const other = raw.filter((x) => String(x).toLowerCase() === 'other')
+    const rest = raw.filter((x) => String(x).toLowerCase() !== 'other').sort((a, b) => String(a).localeCompare(String(b)))
+    return [...rest, ...other]
+  }, [options?.categories])
   const knownAssets = options?.known_assets ?? []
   const reasonsByCategory = options?.reasons_by_category ?? {}
 
-  const [assetCategory, setAssetCategory] = useState(categories[0] || 'Laptop')
+  const [assetCategory, setAssetCategory] = useState(fallbackCategories[0] || 'Laptop')
   const [selectedReason, setSelectedReason] = useState('')
   const [selectedKnownAsset, setSelectedKnownAsset] = useState('')
   const [assetName, setAssetName] = useState('')
@@ -138,22 +145,57 @@ function NewRequestForm({ onCreate, busy, options }) {
   const [selectedCategoryId, setSelectedCategoryId] = useState('')
   const [selectedSubCategoryId, setSelectedSubCategoryId] = useState('')
 
-  const reasonOptions = reasonsByCategory[assetCategory] || reasonsByCategory.Other || ['General issue', 'Other']
+  const reasonOptions = useMemo(() => {
+    const raw = reasonsByCategory[assetCategory] || reasonsByCategory.Other || ['General issue', 'Other']
+    const other = raw.filter((x) => String(x).toLowerCase() === 'other')
+    const rest = raw.filter((x) => String(x).toLowerCase() !== 'other').sort((a, b) => String(a).localeCompare(String(b)))
+    return [...rest, ...other]
+  }, [assetCategory, reasonsByCategory])
+
+  const sortedKnownAssets = useMemo(() => {
+    return [...knownAssets].sort((a, b) => String(a.asset_name || '').localeCompare(String(b.asset_name || '')))
+  }, [knownAssets])
 
   const categoriesQuery = useQuery({
     queryKey: ['discover-categories'],
     queryFn: () => apiFetch('/categories'),
   })
+
+  const sortedApiCategories = useMemo(() => {
+    const raw = categoriesQuery.data || []
+    return [...raw].sort((a, b) => String(a.category_name).localeCompare(String(b.category_name)))
+  }, [categoriesQuery.data])
+
+  const hasApiCategories = sortedApiCategories.length > 0
+
+  const effectiveCategoryId = useMemo(() => {
+    if (!sortedApiCategories.length) return ''
+    return selectedCategoryId || sortedApiCategories[0].category_id
+  }, [selectedCategoryId, sortedApiCategories])
+
   const subCategoriesQuery = useQuery({
-    queryKey: ['discover-subcategories', selectedCategoryId],
-    queryFn: () => apiFetch(`/categories/${encodeURIComponent(selectedCategoryId)}/subcategories`),
-    enabled: Boolean(selectedCategoryId),
+    queryKey: ['discover-subcategories', effectiveCategoryId],
+    queryFn: () => apiFetch(`/categories/${encodeURIComponent(effectiveCategoryId)}/subcategories`),
+    enabled: Boolean(effectiveCategoryId),
   })
+
+  const sortedSubcategories = useMemo(() => {
+    const raw = subCategoriesQuery.data || []
+    return [...raw].sort((a, b) => String(a.sub_category_name).localeCompare(String(b.sub_category_name)))
+  }, [subCategoriesQuery.data])
+
   const categoryAssetsQuery = useQuery({
     queryKey: ['discover-assets-by-subcategory', selectedSubCategoryId],
     queryFn: () => apiFetch(`/subcategories/${encodeURIComponent(selectedSubCategoryId)}/assets`),
     enabled: Boolean(selectedSubCategoryId),
   })
+
+  useEffect(() => {
+    if (!hasApiCategories || selectedCategoryId) return
+    const first = sortedApiCategories[0]
+    setSelectedCategoryId(first.category_id)
+    setAssetCategory(first.category_name)
+  }, [hasApiCategories, sortedApiCategories, selectedCategoryId])
 
   const suggestionsQuery = useQuery({
     queryKey: ['discover-suggestions', searchInput],
@@ -193,10 +235,14 @@ function NewRequestForm({ onCreate, busy, options }) {
       const match = knownAssets.find((item) => item.asset_name === selectedKnownAsset)
       if (match) {
         setAssetName(match.asset_name)
-        if (match.category) setAssetCategory(match.category)
+        if (match.category) {
+          setAssetCategory(match.category)
+          const apiCat = sortedApiCategories.find((c) => c.category_name === match.category)
+          if (apiCat) setSelectedCategoryId(apiCat.category_id)
+        }
       }
     }
-  }, [selectedKnownAsset, knownAssets])
+  }, [selectedKnownAsset, knownAssets, sortedApiCategories])
 
   useEffect(() => {
     if (!selectedKnownAsset && matchingKnownAsset?.category && assetCategory === 'Other') {
@@ -222,7 +268,13 @@ function NewRequestForm({ onCreate, busy, options }) {
     setSelectedKnownAsset('')
     setAssetName('')
     setCustomReason('')
-    setAssetCategory(categories[0] || 'Laptop')
+    if (hasApiCategories && sortedApiCategories[0]) {
+      setSelectedCategoryId(sortedApiCategories[0].category_id)
+      setAssetCategory(sortedApiCategories[0].category_name)
+    } else {
+      setAssetCategory(fallbackCategories[0] || 'Laptop')
+    }
+    setSelectedSubCategoryId('')
     setSearchInput('')
     setSubmittedSearch('')
     suggestHighlightRef.current = -1
@@ -232,7 +284,11 @@ function NewRequestForm({ onCreate, busy, options }) {
   const applySuggestedAsset = (item) => {
     if (!item) return
     setAssetName(item.asset_name || '')
-    if (item.category) setAssetCategory(item.category)
+    if (item.category) {
+      setAssetCategory(item.category)
+      const apiCat = sortedApiCategories.find((c) => c.category_name === item.category)
+      if (apiCat) setSelectedCategoryId(apiCat.category_id)
+    }
     setSelectedKnownAsset(item.asset_name || '')
   }
 
@@ -310,21 +366,78 @@ function NewRequestForm({ onCreate, busy, options }) {
         <Badge tone="cyan">For Employees</Badge>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {hasApiCategories ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</label>
+            <select
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+              value={selectedCategoryId || sortedApiCategories[0]?.category_id || ''}
+              onChange={(e) => {
+                const id = e.target.value
+                setSelectedCategoryId(id)
+                const cat = sortedApiCategories.find((c) => c.category_id === id)
+                if (cat) setAssetCategory(cat.category_name)
+              }}
+            >
+              {sortedApiCategories.map((cat) => (
+                <option key={cat.category_id} value={cat.category_id}>
+                  {cat.category_name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subcategory</label>
+            <select
+              className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+              value={selectedSubCategoryId}
+              onChange={(e) => setSelectedSubCategoryId(e.target.value)}
+              disabled={!(selectedCategoryId || sortedApiCategories[0]?.category_id)}
+            >
+              <option value="">{selectedCategoryId || sortedApiCategories[0]?.category_id ? 'Subcategory (optional)' : '—'}</option>
+              {sortedSubcategories.map((sub) => (
+                <option key={sub.sub_category_id} value={sub.sub_category_id}>
+                  {sub.sub_category_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      ) : (
         <div className="space-y-2">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</label>
-          <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={assetCategory} onChange={(e) => setAssetCategory(e.target.value)}>
-            {categories.map((item) => <option key={item} value={item}>{item}</option>)}
+          <select
+            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm max-w-xl"
+            value={assetCategory}
+            onChange={(e) => setAssetCategory(e.target.value)}
+            disabled={categoriesQuery.isLoading}
+          >
+            {fallbackCategories.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
           </select>
+          {categoriesQuery.isLoading ? (
+            <p className="text-[11px] text-slate-500">Loading catalog categories…</p>
+          ) : (
+            <p className="text-[11px] text-slate-500">Catalog categories unavailable; using guided list from the server.</p>
+          )}
         </div>
+      )}
 
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</label>
-          <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedReason} onChange={(e) => setSelectedReason(e.target.value)}>
-            {reasonOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-          </select>
-        </div>
+      <div className="space-y-2 max-w-xl">
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</label>
+        <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedReason} onChange={(e) => setSelectedReason(e.target.value)}>
+          {reasonOptions.map((item) => (
+            <option key={item} value={item}>
+              {item}
+            </option>
+          ))}
+        </select>
       </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-2">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Search assets</label>
@@ -351,7 +464,7 @@ function NewRequestForm({ onCreate, busy, options }) {
           </div>
           <p className="text-[11px] text-slate-500">Use ↑↓ to move in the list, Enter to pick a row or run search (Enter does not submit the request from this field).</p>
           {defaultSuggestions.length > 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 max-h-40 overflow-auto">
+            <div className="w-full min-w-full rounded-2xl border border-slate-200 bg-slate-50 max-h-56 overflow-auto">
               {defaultSuggestions.map((item, idx) => (
                 <button
                   key={`${item.asset_id || item.asset_name}-sg`}
@@ -392,10 +505,10 @@ function NewRequestForm({ onCreate, busy, options }) {
               ))}
             </div>
           ) : null}
-          {knownAssets.length ? (
+          {sortedKnownAssets.length ? (
             <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedKnownAsset} onChange={(e) => setSelectedKnownAsset(e.target.value)}>
               <option value="">Or pick from known assets</option>
-              {knownAssets.map((item) => (
+              {sortedKnownAssets.map((item) => (
                 <option key={`${item.asset_id || item.asset_name}`} value={item.asset_name}>
                   {item.asset_name}{item.category ? ` · ${item.category}` : ''}{item.owned_by_requester ? ' · My asset' : ''}
                 </option>
@@ -424,28 +537,8 @@ function NewRequestForm({ onCreate, busy, options }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Browse by category</label>
-          <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedCategoryId} onChange={(e) => setSelectedCategoryId(e.target.value)}>
-            <option value="">Select category</option>
-            {(categoriesQuery.data || []).map((cat) => (
-              <option key={cat.category_id} value={cat.category_id}>{cat.category_name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subcategory</label>
-          <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedSubCategoryId} onChange={(e) => setSelectedSubCategoryId(e.target.value)} disabled={!selectedCategoryId}>
-            <option value="">{selectedCategoryId ? 'Select subcategory' : 'Select category first'}</option>
-            {(subCategoriesQuery.data || []).map((sub) => (
-              <option key={sub.sub_category_id} value={sub.sub_category_id}>{sub.sub_category_name}</option>
-            ))}
-          </select>
-        </div>
-      </div>
       {selectedSubCategoryId && (categoryAssetsQuery.data || []).length > 0 ? (
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 max-h-36 overflow-auto">
+        <div className="w-full rounded-2xl border border-slate-200 bg-slate-50 max-h-52 overflow-auto">
           {(categoryAssetsQuery.data || []).slice(0, 10).map((asset) => (
             <button
               key={asset.asset_id}
@@ -490,6 +583,59 @@ function NewRequestForm({ onCreate, busy, options }) {
   )
 }
 
+function ResignationForm({ onSubmit, busy }) {
+  const [reason, setReason] = useState('')
+  const [lastWorkingDay, setLastWorkingDay] = useState('')
+
+  const submit = (event) => {
+    event.preventDefault()
+    if (!reason.trim()) return
+    onSubmit({ reason: reason.trim(), last_working_day: lastWorkingDay.trim() || undefined })
+    setReason('')
+    setLastWorkingDay('')
+  }
+
+  return (
+    <form onSubmit={submit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5 motion-fade-up surface-sheen">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Submit Resignation</h2>
+          <p className="text-sm text-slate-600 mt-1">Employees can submit a resignation request that HR or Admin may approve or reject from the requests console.</p>
+        </div>
+        <Badge tone="rose">HR Review</Badge>
+      </div>
+      <div className="space-y-2">
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Resignation reason</label>
+        <textarea
+          className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm min-h-[96px]"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          required
+          placeholder="Brief reason for resignation"
+        />
+      </div>
+      <div className="space-y-2">
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Last working day</label>
+        <input
+          type="date"
+          className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+          value={lastWorkingDay}
+          onChange={(e) => setLastWorkingDay(e.target.value)}
+        />
+      </div>
+      <div className="flex justify-end">
+        <button
+          type="submit"
+          disabled={busy}
+          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 text-white text-sm font-semibold px-5 py-3 disabled:opacity-50"
+        >
+          Submit Resignation
+        </button>
+      </div>
+    </form>
+  )
+}
+
 function RequestFilters({ draft, onChange, onApply, onClear, count }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm space-y-4 motion-fade-up motion-delay-1">
@@ -523,6 +669,14 @@ function RequestFilters({ draft, onChange, onApply, onClear, count }) {
             <option value="HIGH">HIGH</option>
             <option value="MEDIUM">MEDIUM</option>
             <option value="LOW">LOW</option>
+          </select>
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Request type</label>
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.request_type} onChange={(e) => onChange('request_type', e.target.value)}>
+            <option value="">All</option>
+            <option value="ASSET">Asset</option>
+            <option value="RESIGNATION">Resignation</option>
           </select>
         </div>
       </div>
@@ -607,6 +761,7 @@ function DetailPanel({ row, user, mutations }) {
   const [tBranch, setTBranch] = useState('')
   const [tBrand, setTBrand] = useState('')
   const [tName, setTName] = useState('')
+  const [rejectNotes, setRejectNotes] = useState('')
   const [aiRecommendation, setAiRecommendation] = useState(null)
   const [aiError, setAiError] = useState('')
 
@@ -634,6 +789,7 @@ function DetailPanel({ row, user, mutations }) {
     setTBranch('')
     setTBrand('')
     setTName('')
+    setRejectNotes('')
     setAiRecommendation(null)
     setAiError('')
   }, [row?.request_id])
@@ -853,6 +1009,45 @@ function DetailPanel({ row, user, mutations }) {
         </div>
       ) : null}
 
+      {row.request_type === 'RESIGNATION' && row.stage === 'RESIGNATION_PENDING' && canHrReview(user.role) ? (
+        <div className="space-y-4 border-t border-slate-100 pt-5">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Resignation approval</p>
+            <p className="mt-1 text-sm text-slate-600">HR or Admin can approve or reject this resignation request.</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-900">Resignation status</p>
+            <p className="text-sm text-slate-600 mt-1">{row.resignation_status || 'Pending'}</p>
+          </div>
+          <div className="space-y-3">
+            <button
+              type="button"
+              className="rounded-xl bg-emerald-600 text-white text-sm font-medium px-4 py-2"
+              onClick={() => mutations.resignationApproveMut.mutate(row.request_id)}
+            >
+              Approve resignation
+            </button>
+            <div>
+              <textarea
+                className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Add rejection notes (optional)"
+                value={rejectNotes}
+                onChange={(e) => setRejectNotes(e.target.value)}
+              />
+              <button
+                type="button"
+                className="mt-2 rounded-xl bg-rose-600 text-white text-sm font-medium px-4 py-2"
+                onClick={() => mutations.resignationRejectMut.mutate({ requestId: row.request_id, notes: rejectNotes.trim() || undefined })}
+              >
+                Reject resignation
+              </button>
+            </div>
+          </div>
+          {mutations.resignationApproveMut.isError ? <p className="text-xs text-rose-600">{err(mutations.resignationApproveMut)}</p> : null}
+          {mutations.resignationRejectMut.isError ? <p className="text-xs text-rose-600">{err(mutations.resignationRejectMut)}</p> : null}
+        </div>
+      ) : null}
+
       {canExecuteRequest(user.role) && (stage === 'READY' || row.status === 'APPROVED_FOR_SUPPORT' || row.status === 'READY') ? (
         <div className="space-y-3 border-t border-slate-100 pt-5">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Execute fulfillment</p>
@@ -914,7 +1109,9 @@ export default function Requests() {
   const qc = useQueryClient()
   const [selectedId, setSelectedId] = useState(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const initialFilters = { priority: '', severity: '', urgency: '' }
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState(10)
+  const initialFilters = { priority: '', severity: '', urgency: '', request_type: '' }
   const [draftFilters, setDraftFilters] = useState(initialFilters)
   const [filters, setFilters] = useState(initialFilters)
 
@@ -923,27 +1120,30 @@ export default function Requests() {
     queryFn: () => apiFetch('/requests/form-options'),
   })
 
-  const { data = [], isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ['requests', filters],
+  const { data = { items: [], total: 0, page: 1, per_page: perPage }, isLoading, isError, error, refetch, isFetching } = useQuery({
+    queryKey: ['requests', filters, page, perPage],
     queryFn: () => {
       const params = new URLSearchParams()
       params.set('sort_by_priority', 'true')
+      params.set('page', String(page))
+      params.set('per_page', String(perPage))
       if (filters.priority) params.set('priority', filters.priority)
       if (filters.severity) params.set('severity', filters.severity)
       if (filters.urgency) params.set('urgency', filters.urgency)
+      if (filters.request_type) params.set('request_type', filters.request_type)
       const query = params.toString()
       return apiFetch(`/requests/${query ? `?${query}` : ''}`)
     },
   })
 
   useEffect(() => {
-    if (selectedId && !data.some((row) => row.request_id === selectedId)) {
+    if (selectedId && !data.items.some((row) => row.request_id === selectedId)) {
       setSelectedId(null)
       setDetailsOpen(false)
     }
   }, [data, selectedId])
 
-  const selected = useMemo(() => data.find((r) => r.request_id === selectedId) ?? null, [data, selectedId])
+  const selected = useMemo(() => data.items.find((r) => r.request_id === selectedId) ?? null, [data, selectedId])
   const invalidate = () => qc.invalidateQueries({ queryKey: ['requests'] })
 
   const hrMut = useMutation({ mutationFn: ({ id, is_needed }) => apiFetch(`/requests/${id}/review/hr`, { method: 'POST', body: JSON.stringify({ is_needed }) }), onSuccess: invalidate })
@@ -966,6 +1166,9 @@ export default function Requests() {
   const resolveMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/resolve`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
   const transferMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/transfer-request`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
   const createMut = useMutation({ mutationFn: (body) => apiFetch('/requests/', { method: 'POST', body: JSON.stringify(body) }), onSuccess: () => invalidate() })
+  const resignMut = useMutation({ mutationFn: (body) => apiFetch('/employees/resign', { method: 'POST', body: JSON.stringify(body) }), onSuccess: () => invalidate() })
+  const resignationApproveMut = useMutation({ mutationFn: (requestId) => apiFetch(`/resignations/${requestId}/approve`, { method: 'PUT' }), onSuccess: invalidate })
+  const resignationRejectMut = useMutation({ mutationFn: ({ requestId, notes }) => apiFetch(`/resignations/${requestId}/reject`, { method: 'PUT', body: JSON.stringify({ notes }) }), onSuccess: invalidate })
 
   return (
     <div className="p-6 sm:p-8 max-w-7xl mx-auto space-y-6">
@@ -991,8 +1194,21 @@ export default function Requests() {
           })
         }}
       />
+      {user.role === 'employee' ? (
+        <ResignationForm
+          busy={resignMut.isPending}
+          onSubmit={(body) => {
+            resignMut.mutate(body, {
+              onSuccess: (row) => {
+                if (row?.request_id) setSelectedId(row.request_id)
+              },
+            })
+          }}
+        />
+      ) : null}
       {formOptionsQuery.isError ? <p className="text-sm text-rose-600">{formOptionsQuery.error?.message}</p> : null}
       {createMut.isError ? <p className="text-sm text-rose-600">{createMut.error?.message}</p> : null}
+      {resignMut.isError ? <p className="text-sm text-rose-600">{resignMut.error?.message}</p> : null}
 
       {isLoading ? (
         <div className="py-20 text-center text-slate-400 font-medium animate-pulse">Loading requests...</div>
@@ -1002,28 +1218,67 @@ export default function Requests() {
         <div className="space-y-6">
           <RequestFilters
             draft={draftFilters}
-            count={data.length}
+            count={data.total}
             onChange={(key, value) => setDraftFilters((prev) => ({ ...prev, [key]: value }))}
-            onApply={() => setFilters(draftFilters)}
+            onApply={() => {
+              setFilters(draftFilters)
+              setPage(1)
+            }}
             onClear={() => {
               setDraftFilters(initialFilters)
               setFilters(initialFilters)
+              setPage(1)
             }}
           />
           <RequestList
-            rows={data}
+            rows={data.items}
             selectedId={selectedId}
             onSelect={(id) => {
               setSelectedId(id)
               setDetailsOpen(true)
             }}
           />
+          <div className="flex flex-col gap-3 justify-between rounded-3xl border border-slate-200 bg-white p-4 text-sm text-slate-600 sm:flex-row">
+            <div>
+              Showing {(page - 1) * perPage + 1} to {Math.min(page * perPage, data.total)} of {data.total} requests
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={page <= 1}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={page >= Math.max(1, Math.ceil(data.total / perPage))}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                onClick={() => setPage((prev) => prev + 1)}
+              >
+                Next
+              </button>
+              <select
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+                value={perPage}
+                onChange={(e) => {
+                  setPerPage(Number(e.target.value) || 10)
+                  setPage(1)
+                }}
+              >
+                {[5, 10, 20, 50].map((size) => (
+                  <option key={size} value={size}>{size} per page</option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
       )}
 
       {detailsOpen && selected ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm" onClick={() => setDetailsOpen(false)}>
-          <div className="relative w-full max-w-6xl overflow-auto rounded-3xl bg-white shadow-2xl border border-slate-200" onClick={(event) => event.stopPropagation()}>
+          <div className="relative w-full max-w-6xl max-h-[90vh] overflow-auto rounded-3xl bg-white shadow-2xl border border-slate-200" onClick={(event) => event.stopPropagation()}>
             <button
               type="button"
               className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
@@ -1033,7 +1288,7 @@ export default function Requests() {
               ×
             </button>
             <div className="p-6">
-              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut }} />
+              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut, resignationApproveMut, resignationRejectMut }} />
             </div>
           </div>
         </div>

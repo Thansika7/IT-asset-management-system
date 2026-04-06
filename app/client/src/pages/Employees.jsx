@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import Pagination from '@/components/Pagination'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   useReactTable,
@@ -114,9 +115,17 @@ export default function Employees() {
     [user.role, user.employeeId],
   )
 
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
   const rows = data || []
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE)
+  const pagedRows = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return rows.slice(start, start + PAGE_SIZE)
+  }, [rows, page, PAGE_SIZE])
+
   const table = useReactTable({
-    data: rows,
+    data: pagedRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -180,38 +189,42 @@ export default function Employees() {
         ) : isError ? (
           <div className="p-6 text-rose-700 text-sm">{error?.message}</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm min-w-[900px]">
-              <thead>
-                {table.getHeaderGroups().map((hg) => (
-                  <tr key={hg.id} className="bg-slate-50 border-b border-slate-200">
-                    {hg.headers.map((h) => (
-                      <th
-                        key={h.id}
-                        className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider cursor-pointer"
-                        onClick={h.column.getToggleSortingHandler()}
-                      >
-                        {flexRender(h.column.columnDef.header, h.getContext())}
-                      </th>
-                    ))}
-                  </tr>
-                ))}
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50/80">
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="p-4">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm min-w-[900px]">
+                <thead>
+                  {table.getHeaderGroups().map((hg) => (
+                    <tr key={hg.id} className="bg-slate-50 border-b border-slate-200">
+                      {hg.headers.map((h) => (
+                        <th
+                          key={h.id}
+                          className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider cursor-pointer"
+                          onClick={h.column.getToggleSortingHandler()}
+                        >
+                          {flexRender(h.column.columnDef.header, h.getContext())}
+                        </th>
+                      ))}
+                    </tr>
+                  ))}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {table.getRowModel().rows.map((row) => (
+                    <tr key={row.id} className="hover:bg-slate-50/80">
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="p-4">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={rows.length} />
+          </>
         )}
       </div>
+
     </div>
   )
 }

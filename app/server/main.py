@@ -25,18 +25,17 @@ from app.server.schema.employee import Employee, EmployeeRole
 from app.server.auth.service import ALGORITHM, SECRET_KEY, get_password_hash
 from app.server.middlewares.cors import setup_cors
 from app.server.exceptions.base import AppBaseException
-from app.server.logging_utils import StructuredDefaultsFilter, StructuredJsonFormatter
+from app.server.logging_utils import StructuredDefaultsFilter, StructuredJsonFormatter, IST
 
 class DailyFileHandler(logging.FileHandler):
     def __init__(self, directory="logs"):
         self.directory = directory
         os.makedirs(self.directory, exist_ok=True)
-        filename = os.path.join(self.directory, f"{datetime.now().strftime('%Y-%m-%d')}.log")
-        # delay=False opens the file immediately (not on first write)
-        super().__init__(filename, delay=False)
+        filename = os.path.join(self.directory, f"{datetime.now(IST).strftime('%Y-%m-%d')}.log")
+        super().__init__(filename)
 
     def emit(self, record):
-        current_date_filename = os.path.join(self.directory, f"{datetime.now().strftime('%Y-%m-%d')}.log")
+        current_date_filename = os.path.join(self.directory, f"{datetime.now(IST).strftime('%Y-%m-%d')}.log")
         if self.baseFilename != os.path.abspath(current_date_filename):
             self.stream.close()
             self.baseFilename = os.path.abspath(current_date_filename)
