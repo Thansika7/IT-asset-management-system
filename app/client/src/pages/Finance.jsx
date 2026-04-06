@@ -1,4 +1,5 @@
-﻿import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
+import Pagination from '@/components/Pagination'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
@@ -28,6 +29,9 @@ function financeTone(item) {
 export default function Finance() {
   const { user } = useAuth()
   const [selectedAssetId, setSelectedAssetId] = useState(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 15
   const initialFilters = {
     search: '',
     category: '',
@@ -71,10 +75,16 @@ export default function Finance() {
     queryFn: () => apiFetch(`/assets/finance/report${queryString ? `?${queryString}` : ''}`),
   })
 
+  const allItems = data?.items || []
+  const totalPages = Math.ceil(allItems.length / PAGE_SIZE)
+  const pagedItems = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return allItems.slice(start, start + PAGE_SIZE)
+  }, [allItems, page, PAGE_SIZE])
+
   const selectedFinanceAsset = useMemo(() => {
-    if (!data?.items?.length) return null
-    return data.items.find((item) => item.asset_id === selectedAssetId) || data.items[0]
-  }, [data, selectedAssetId])
+    return allItems.find((item) => item.asset_id === selectedAssetId) || null
+  }, [allItems, selectedAssetId])
 
   const assetDetailQuery = useQuery({
     queryKey: ['asset-detail', selectedFinanceAsset?.asset_id],
@@ -145,13 +155,14 @@ export default function Finance() {
           <label className="inline-flex items-center gap-2"><input type="checkbox" checked={draftFilters.availableOnly} onChange={(e) => setDraftFilters((prev) => ({ ...prev, availableOnly: e.target.checked }))} /> Available only</label>
           <label className="inline-flex items-center gap-2"><input type="checkbox" checked={draftFilters.allocatedOnly} onChange={(e) => setDraftFilters((prev) => ({ ...prev, allocatedOnly: e.target.checked }))} /> Allocated only</label>
           <label className="inline-flex items-center gap-2"><input type="checkbox" checked={draftFilters.lowStockOnly} onChange={(e) => setDraftFilters((prev) => ({ ...prev, lowStockOnly: e.target.checked }))} /> Low stock only</label>
-          <button type="button" className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em]" onClick={() => setAppliedFilters(draftFilters)}>Apply filters</button>
+          <button type="button" className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em]" onClick={() => { setAppliedFilters(draftFilters); setPage(1) }}>Apply filters</button>
           <button
             type="button"
             className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em]"
             onClick={() => {
               setDraftFilters(initialFilters)
               setAppliedFilters(initialFilters)
+              setPage(1)
             }}
           >
             Clear
@@ -176,7 +187,7 @@ export default function Finance() {
             ))}
           </div>
 
-          <section className="grid gap-6 xl:grid-cols-[1.45fr_0.95fr] items-start">
+          <section className="grid gap-6">
             <div className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden motion-fade-up motion-delay-2">
               <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
                 <h2 className="text-lg font-bold text-slate-900">Per-Asset Monitoring</h2>
@@ -200,8 +211,8 @@ export default function Finance() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {data?.items?.length ? data.items.map((item) => (
-                      <tr key={item.asset_id} className={`cursor-pointer hover:bg-slate-50 ${selectedFinanceAsset?.asset_id === item.asset_id ? 'bg-cyan-50/60' : ''}`} onClick={() => setSelectedAssetId(item.asset_id)}>
+                    {pagedItems.length ? pagedItems.map((item) => (
+                      <tr key={item.asset_id} className={`cursor-pointer hover:bg-slate-50 ${selectedFinanceAsset?.asset_id === item.asset_id ? 'bg-cyan-50/60' : ''}`} onClick={() => { setSelectedAssetId(item.asset_id); setDetailsOpen(true) }}>
                         <td className="px-4 py-4 align-top">
                           <div>
                             <p className="font-semibold text-slate-900">{item.asset_name}</p>
@@ -240,13 +251,31 @@ export default function Finance() {
                   </tbody>
                 </table>
               </div>
+              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={allItems.length} />
             </div>
-            <AssetDetailPanel
-              asset={assetDetailQuery.data}
-              title="Selected Asset"
-              subtitle={assetDetailQuery.isLoading ? 'Loading selected asset details...' : 'Click any asset row to inspect full details.'}
-            />
           </section>
+
+          {detailsOpen && selectedFinanceAsset ? (
+            <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-900/70 backdrop-blur-sm" onClick={() => { setDetailsOpen(false); setSelectedAssetId(null) }}>
+              <div className="mx-auto mt-10 mb-10 w-full max-w-6xl overflow-auto rounded-3xl bg-white shadow-2xl border border-slate-200" onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  onClick={() => setDetailsOpen(false)}
+                  aria-label="Close asset details"
+                >
+                  ×
+                </button>
+                <div className="p-6">
+                  <AssetDetailPanel
+                    asset={assetDetailQuery.data}
+                    title="Selected Asset"
+                    subtitle={assetDetailQuery.isLoading ? 'Loading selected asset details...' : 'Selected asset details.'}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
         </>
       )}
     </div>

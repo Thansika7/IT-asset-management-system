@@ -169,6 +169,14 @@ class RequestResponse(BaseModel):
     req_date: datetime
 
 
+class RequestListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    page: int
+    per_page: int
+    total: int
+    items: List[RequestResponse]
+
+
 class RequestFormAssetOption(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_id: Optional[str] = None

@@ -1,4 +1,5 @@
-﻿import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
+import Pagination from '@/components/Pagination'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
@@ -18,6 +19,9 @@ export default function Stock() {
   const canWrite = canManageStockWrites(user.role)
   const canOverride = canManualStockOverride(user.role)
   const [selectedAssetId, setSelectedAssetId] = useState(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 15
 
   const { data = [], isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['stock'],
@@ -25,8 +29,7 @@ export default function Stock() {
   })
 
   const selectedStockAsset = useMemo(() => {
-    if (!data.length) return null
-    return data.find((item) => item.asset_id === selectedAssetId) || data[0]
+    return data.find((item) => item.asset_id === selectedAssetId) || null
   }, [data, selectedAssetId])
 
   const assetDetailQuery = useQuery({
@@ -89,8 +92,14 @@ export default function Stock() {
     [],
   )
 
+  const totalPages = Math.ceil(data.length / PAGE_SIZE)
+  const pagedData = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return data.slice(start, start + PAGE_SIZE)
+  }, [data, page, PAGE_SIZE])
+
   const table = useReactTable({
-    data,
+    data: pagedData,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -119,7 +128,7 @@ export default function Stock() {
       {canWrite ? <StockForms createMut={createMut} addMut={addMut} /> : null}
       {canOverride ? <AdminAllocateReturn allocateMut={allocateMut} returnMut={returnMut} /> : null}
 
-      <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr] items-start">
+      <div className="grid gap-6">
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
           {isLoading ? (
             <div className="p-16 text-center text-slate-400 animate-pulse">Loading inventory...</div>
@@ -146,7 +155,7 @@ export default function Stock() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {table.getRowModel().rows.map((row) => (
-                    <tr key={row.id} className={`cursor-pointer hover:bg-slate-50/80 ${selectedStockAsset?.asset_id === row.original.asset_id ? 'bg-cyan-50/60' : ''}`} onClick={() => setSelectedAssetId(row.original.asset_id)}>
+                    <tr key={row.id} className={`cursor-pointer hover:bg-slate-50/80 ${selectedStockAsset?.asset_id === row.original.asset_id ? 'bg-cyan-50/60' : ''}`} onClick={() => { setSelectedAssetId(row.original.asset_id); setDetailsOpen(true) }}>
                       {row.getVisibleCells().map((cell) => (
                         <td key={cell.id} className="p-4 text-slate-700">
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -158,13 +167,31 @@ export default function Stock() {
               </table>
             </div>
           )}
+          <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={data.length} />
         </div>
-        <AssetDetailPanel
-          asset={assetDetailQuery.data}
-          title="Inventory Asset"
-          subtitle={assetDetailQuery.isLoading ? 'Loading selected asset details...' : 'Click any asset row to inspect full details.'}
-        />
       </div>
+
+      {detailsOpen && selectedStockAsset ? (
+        <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-900/70 backdrop-blur-sm" onClick={() => { setDetailsOpen(false); setSelectedAssetId(null) }}>
+          <div className="mx-auto mt-10 mb-10 w-full max-w-6xl overflow-auto rounded-3xl bg-white shadow-2xl border border-slate-200" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
+              onClick={() => setDetailsOpen(false)}
+              aria-label="Close asset details"
+            >
+              ×
+            </button>
+            <div className="p-6">
+              <AssetDetailPanel
+                asset={assetDetailQuery.data}
+                title="Inventory Asset"
+                subtitle={assetDetailQuery.isLoading ? 'Loading selected asset details...' : 'Selected asset details.'}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

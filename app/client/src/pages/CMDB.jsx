@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import Pagination from '@/components/Pagination'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
 import CmdbDependencyMap from '@/components/CmdbDependencyMap'
@@ -36,6 +37,22 @@ export default function CMDB() {
   const items = itemsQuery.data || []
   const relationships = relQuery.data || []
   const allRelationships = relAllQuery.data || []
+
+  const [ciPage, setCiPage] = useState(1)
+  const [relPage, setRelPage] = useState(1)
+  const PAGE_SIZE = 10
+
+  const ciTotalPages = Math.ceil(items.length / PAGE_SIZE)
+  const pagedItems = useMemo(() => {
+    const s = (ciPage - 1) * PAGE_SIZE
+    return items.slice(s, s + PAGE_SIZE)
+  }, [items, ciPage, PAGE_SIZE])
+
+  const relTotalPages = Math.ceil(relationships.length / PAGE_SIZE)
+  const pagedRels = useMemo(() => {
+    const s = (relPage - 1) * PAGE_SIZE
+    return relationships.slice(s, s + PAGE_SIZE)
+  }, [relationships, relPage, PAGE_SIZE])
 
   const idToItem = useMemo(() => {
     const m = new Map()
@@ -108,30 +125,33 @@ export default function CMDB() {
         ) : items.length === 0 ? (
           <p className="text-sm text-slate-500">No configuration items yet. Seed data or create via API / admin tools.</p>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-slate-100">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">CI ID</th>
-                  <th className="px-4 py-3">Asset link</th>
-                  <th className="px-4 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((it) => (
-                  <tr key={it.ci_id} className="border-t border-slate-100 hover:bg-slate-50/80">
-                    <td className="px-4 py-3 font-medium text-slate-900">{it.name}</td>
-                    <td className="px-4 py-3 text-slate-600">{it.ci_type}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{it.ci_id}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500">{it.asset_id || '—'}</td>
-                    <td className="px-4 py-3 text-slate-600">{it.status}</td>
+          <>
+            <div className="overflow-x-auto rounded-2xl border border-slate-100">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <th className="px-4 py-3">Name</th>
+                    <th className="px-4 py-3">Type</th>
+                    <th className="px-4 py-3">CI ID</th>
+                    <th className="px-4 py-3">Asset link</th>
+                    <th className="px-4 py-3">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {pagedItems.map((it) => (
+                    <tr key={it.ci_id} className="border-t border-slate-100 hover:bg-slate-50/80">
+                      <td className="px-4 py-3 font-medium text-slate-900">{it.name}</td>
+                      <td className="px-4 py-3 text-slate-600">{it.ci_type}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-600">{it.ci_id}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-500">{it.asset_id || '—'}</td>
+                      <td className="px-4 py-3 text-slate-600">{it.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={ciPage} totalPages={ciTotalPages} onPageChange={setCiPage} pageSize={PAGE_SIZE} total={items.length} />
+          </>
         )}
       </section>
 
@@ -161,45 +181,48 @@ export default function CMDB() {
         ) : relationships.length === 0 ? (
           <p className="text-sm text-slate-500">No relationships for this filter.</p>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-slate-100">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-3">Relationship</th>
-                  <th className="px-4 py-3">Source</th>
-                  <th className="px-4 py-3 w-8" />
-                  <th className="px-4 py-3">Target</th>
-                  <th className="px-4 py-3">Rel. ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                {relationships.map((rel) => {
-                  const src = formatEnd(rel.source_ci)
-                  const tgt = formatEnd(rel.target_ci)
-                  const label = REL_LABELS[rel.relationship_type] || rel.relationship_type
-                  return (
-                    <tr key={rel.relationship_id} className="border-t border-slate-100 hover:bg-teal-50/40">
-                      <td className="px-4 py-3">
-                        <span className="inline-flex rounded-lg bg-teal-50 text-teal-800 px-2 py-0.5 text-xs font-semibold">
-                          {label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-slate-900">{src.title}</div>
-                        <div className="text-xs text-slate-500 font-mono">{rel.source_ci}</div>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400 text-center">→</td>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-slate-900">{tgt.title}</div>
-                        <div className="text-xs text-slate-500 font-mono">{rel.target_ci}</div>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-slate-400">{rel.relationship_id}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="overflow-x-auto rounded-2xl border border-slate-100">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <th className="px-4 py-3">Relationship</th>
+                    <th className="px-4 py-3">Source</th>
+                    <th className="px-4 py-3 w-8" />
+                    <th className="px-4 py-3">Target</th>
+                    <th className="px-4 py-3">Rel. ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedRels.map((rel) => {
+                    const src = formatEnd(rel.source_ci)
+                    const tgt = formatEnd(rel.target_ci)
+                    const label = REL_LABELS[rel.relationship_type] || rel.relationship_type
+                    return (
+                      <tr key={rel.relationship_id} className="border-t border-slate-100 hover:bg-teal-50/40">
+                        <td className="px-4 py-3">
+                          <span className="inline-flex rounded-lg bg-teal-50 text-teal-800 px-2 py-0.5 text-xs font-semibold">
+                            {label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-slate-900">{src.title}</div>
+                          <div className="text-xs text-slate-500 font-mono">{rel.source_ci}</div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 text-center">→</td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-slate-900">{tgt.title}</div>
+                          <div className="text-xs text-slate-500 font-mono">{rel.target_ci}</div>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-400">{rel.relationship_id}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={relPage} totalPages={relTotalPages} onPageChange={setRelPage} pageSize={PAGE_SIZE} total={relationships.length} />
+          </>
         )}
       </section>
     </div>

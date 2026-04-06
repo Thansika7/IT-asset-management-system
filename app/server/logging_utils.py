@@ -1,16 +1,17 @@
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 LOG_SERVICE = "asset-management-service"
 LOG_ENVIRONMENT = "production"
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 class StructuredJsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
-            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "timestamp": datetime.now(IST).isoformat(timespec="milliseconds"),
             "level": record.levelname,
             "service": LOG_SERVICE,
             "environment": LOG_ENVIRONMENT,

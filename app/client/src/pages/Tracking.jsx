@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import Pagination from '@/components/Pagination'
 import { useQuery } from '@tanstack/react-query'
 import {
   useReactTable,
@@ -65,6 +66,8 @@ function DetailItem({ label, value }) {
 
 export default function Tracking() {
   const [selectedTrackingId, setSelectedTrackingId] = useState(null)
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 12
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['tracking'],
@@ -169,8 +172,14 @@ export default function Tracking() {
     [],
   )
 
+  const totalPages = Math.ceil(trackingData.length / PAGE_SIZE)
+  const pagedRows = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return trackingData.slice(start, start + PAGE_SIZE)
+  }, [trackingData, page, PAGE_SIZE])
+
   const table = useReactTable({
-    data: trackingData,
+    data: pagedRows,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -203,46 +212,49 @@ export default function Tracking() {
         ) : trackingData.length === 0 ? (
           <div className="p-16 text-center text-slate-500 text-sm">No records in your scope.</div>
         ) : (
-          <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm min-w-[1040px]">
-                <thead>
-                  {table.getHeaderGroups().map((headerGroup) => (
-                    <tr key={headerGroup.id} className="bg-slate-50 border-b border-slate-200">
-                      {headerGroup.headers.map((header) => (
-                        <th
-                          key={header.id}
-                          className="p-4 text-xs font-semibold text-slate-600 uppercase tracking-wider cursor-pointer"
-                          onClick={header.column.getToggleSortingHandler()}
-                        >
-                          {flexRender(header.column.columnDef.header, header.getContext())}
-                        </th>
-                      ))}
-                    </tr>
-                  ))}
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {table.getRowModel().rows.map((row) => {
-                    const isSelected = selectedRecord?.tracking_id === row.original.tracking_id
-                    return (
-                      <tr
-                        key={row.id}
-                        onClick={() => setSelectedTrackingId(row.original.tracking_id)}
-                        className={`cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50/70' : 'hover:bg-slate-50/80'}`}
-                      >
-                        {row.getVisibleCells().map((cell) => (
-                          <td key={cell.id} className="p-4 text-slate-700">
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.95fr)] xl:items-start">
+            <div className="min-w-0 flex flex-col">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm min-w-[1040px]">
+                  <thead>
+                    {table.getHeaderGroups().map((headerGroup) => (
+                      <tr key={headerGroup.id} className="bg-slate-50 border-b border-slate-200">
+                        {headerGroup.headers.map((header) => (
+                          <th
+                            key={header.id}
+                            className="p-4 text-xs font-semibold text-slate-600 uppercase tracking-wider cursor-pointer"
+                            onClick={header.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                          </th>
                         ))}
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                    ))}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {table.getRowModel().rows.map((row) => {
+                      const isSelected = selectedRecord?.tracking_id === row.original.tracking_id
+                      return (
+                        <tr
+                          key={row.id}
+                          onClick={() => setSelectedTrackingId(row.original.tracking_id)}
+                          className={`cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50/70' : 'hover:bg-slate-50/80'}`}
+                        >
+                          {row.getVisibleCells().map((cell) => (
+                            <td key={cell.id} className="p-4 text-slate-700">
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </td>
+                          ))}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={trackingData.length} />
             </div>
 
-            <aside className="border-l border-slate-200 p-6 bg-slate-50/70">
+            <aside className="border-t xl:border-t-0 xl:border-l border-slate-200 p-6 bg-slate-50/70 min-h-[200px] xl:min-h-0">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Tracking Detail</p>
