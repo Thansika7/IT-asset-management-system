@@ -149,7 +149,9 @@ def init_admin():
     admin_password=os.getenv("ADMIN_PASSWORD") or str(uuid.uuid4())
     if admin_email_env:
         admin_email = admin_email_env.lower()
-        admin_emp=db.query(Employee).filter(Employee.email==admin_email).first()
+        admin_emp = db.query(Employee).filter(
+            (Employee.email == admin_email) | (Employee.employee_id == "ADMIN-001")
+        ).first()
         if not admin_emp:
             admin_emp = Employee(
                 employee_id="ADMIN-001",

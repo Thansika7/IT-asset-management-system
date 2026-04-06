@@ -39,7 +39,6 @@ class StockService:
         
         AuditService.log_change(db, "assets", asset_id, "UPDATE", user, old_val, new_val, reason)
 
-        # Integration: Record procurement if financial data provided
         if cost is not None:
             from app.server.services.account_service import AccountService
             AccountService.update_procurement(
@@ -75,7 +74,7 @@ class StockService:
             movement_reason=reason
         )
         db.add(trk)
-        db.flush() # Get the tracking ID
+        db.flush() 
         AuditService.log_change(
             db,
             "tracking",
@@ -95,8 +94,7 @@ class StockService:
             },
             reason
         )
-        # Low stock alert fires whenever inventory is at or below threshold and
-        # the allocation moved stock further into the low-stock zone.
+    
         actual_threshold = asset.low_stock_threshold if asset.low_stock_threshold else 10
         previous_unused = old_asset_val["unused"]
         normalized_branch = (asset.branch or "").strip()
