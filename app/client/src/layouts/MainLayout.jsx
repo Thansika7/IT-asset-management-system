@@ -1,5 +1,5 @@
 ﻿import React, { useMemo, useState } from 'react'
-import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   PackageSearch,
@@ -10,6 +10,7 @@ import {
   Laptop,
   Layers,
   GitBranch,
+  Activity,
   LogOut,
   Menu,
   X,
@@ -23,6 +24,7 @@ const navDef = [
   { to: '/my-assets', label: 'My assets', icon: Laptop, show: NAV.myAssets },
   { to: '/requests', label: 'Requests', icon: FileStack, show: NAV.requests },
   { to: '/stock', label: 'Inventory', icon: PackageSearch, show: NAV.stock },
+  { to: '/asset-usage', label: 'Asset usage', icon: Activity, show: NAV.assetUsage },
   { to: '/tracking', label: 'Tracking', icon: MapPinned, show: NAV.tracking },
   { to: '/finance', label: 'Finance', icon: Wallet, show: NAV.finance },
   { to: '/employees', label: 'Team', icon: Users, show: NAV.employees },
@@ -99,17 +101,28 @@ export default function MainLayout() {
             <p className="text-[11px] text-slate-500 mt-1 truncate">Branch · {user.branch}</p>
           ) : null}
         </div>
-        <button
-          type="button"
-          onClick={logout}
-          className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
-        >
-          <LogOut className="w-4 h-4" />
-          Sign out
-        </button>
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => navigate('/change-password')}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 transition-all duration-200"
+          >
+            Change password
+          </button>
+          <button
+            type="button"
+            onClick={logout}
+            className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium text-rose-300 hover:bg-rose-500/10 hover:text-rose-200 hover:scale-[1.02] active:scale-95 transition-all duration-200 cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </button>
+        </div>
       </div>
     </>
   )
+
+  const navigate = useNavigate()
 
   return (
     <div className="flex h-[100dvh] bg-transparent text-slate-900 font-sans antialiased motion-fade-in">

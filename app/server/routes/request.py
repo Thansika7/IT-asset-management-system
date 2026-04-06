@@ -4,11 +4,22 @@ from sqlalchemy.orm import joinedload
 from typing import List, Optional
 
 from app.server.database.database import get_db
-from app.server.models.request import RequestCreate, RequestTriage, RequestReview, RequestResolve, RequestResponse, RequestHRVerify, RequestCrossBranchTransfer, RequestFormOptions
+from app.server.models.request import (
+    RequestCreate,
+    RequestCrossBranchTransfer,
+    RequestFormOptions,
+    RequestHRVerify,
+    RequestNecessityRecommendationResponse,
+    RequestResolve,
+    RequestResponse,
+    RequestReview,
+    RequestTriage,
+)
 from app.server.schema.request import Request
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.middlewares.auth import require_roles
 from app.server.auth.service import get_current_user
+from app.server.services.request_necessity_ai_service import recommend_necessity_for_request
 from app.server.services.request_service import RequestService
 
 router=APIRouter(prefix="/requests", tags=["requests"])
@@ -52,6 +63,30 @@ def create_request(
     current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
 ):
     return RequestService.create_asset_request(db, payload, current_user)
+
+
+@router.post("/{request_id}/recommend-necessity", response_model=RequestNecessityRecommendationResponse)
+def recommend_necessity_for_request_route(
+    request_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.HR, EmployeeRole.ADMIN)),
+):
+    """
+    Gemini (gemini-2.5-flash) advisory for this ticket: whether the asset is likely needed,
+    using the requester's assignments, branch stock, and recent requests. HR: same branch only.
+    Requires GEMINI_API_KEY.
+    """
+    try:
+        out = recommend_necessity_for_request(db, current_user, request_id)
+        return RequestNecessityRecommendationResponse(**out)
+    except ValueError as e:
+        msg = str(e)
+        if "GEMINI_API_KEY" in msg:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=msg) from e
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
 
 @router.post("/{request_id}/triage", response_model=RequestResponse)
 def triage_request(

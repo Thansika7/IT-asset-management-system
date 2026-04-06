@@ -50,7 +50,9 @@ class EmployeeBase(BaseModel):
 
     @field_validator("email", mode="before")
     @classmethod
-    def normalize_email(cls, v: str) -> str:
+    def normalize_email(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
         if not isinstance(v, str):
             raise ValueError("Email must be a string")
         return v.strip().lower()

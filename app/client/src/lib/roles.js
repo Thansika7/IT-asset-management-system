@@ -34,6 +34,8 @@ export const NAV = {
   /** View kits for registration / allocation planning */
   onboardingKits: (r) => [R.ADMIN, R.MANAGER, R.HR].includes(r),
   stock: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
+  /** Allocation / repair / movement metrics — GET /assets/usage/* */
+  assetUsage: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   finance: (r) => [R.ADMIN, R.MANAGER].includes(r),
   /** CMDB items & relationships — matches backend GET /cmdb/* */
   cmdb: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
@@ -66,6 +68,11 @@ export function canTriage(r) {
 }
 
 export function canHrReview(r) {
+  return [R.ADMIN, R.HR].includes(r)
+}
+
+/** Gemini necessity recommendation for a specific request — backend POST /requests/:id/recommend-necessity */
+export function canNecessityRecommendation(r) {
   return [R.ADMIN, R.HR].includes(r)
 }
 
