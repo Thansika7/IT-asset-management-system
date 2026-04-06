@@ -146,6 +146,8 @@ class RequestResponse(BaseModel):
     requester_name: Optional[str] = None
     requester_branch: Optional[str] = None
     requester_role: Optional[str] = None
+    request_type: str = "ASSET"
+    resignation_status: Optional[str] = None
     asset_name: str
     asset_category: str
     reason: str

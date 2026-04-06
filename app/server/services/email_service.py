@@ -3,10 +3,14 @@ import os
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import List
+from typing import List, Optional, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from app.server.schema.employee import Employee
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SMTP_FROM = "Kovan IT <no-reply@kovan.com>"
 
 class EmailService:
     @staticmethod
@@ -49,7 +53,7 @@ class EmailService:
         smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else 587
         smtp_user = os.getenv("SMTP_USER", "").strip()
         smtp_pass = os.getenv("SMTP_PASSWORD", "").strip()
-        smtp_from = os.getenv("SMTP_FROM", "IT Asset System").strip()
+        smtp_from = os.getenv("SMTP_FROM", DEFAULT_SMTP_FROM).strip()
 
         if not all([smtp_host, smtp_user, smtp_pass]):
             logger.warning(
@@ -519,6 +523,81 @@ class EmailService:
         for email in set(recipients):
             if email:
                 cls._send_email(email, subject, body)
+
+    @staticmethod
+    def delivery_email(employee: "Employee") -> str:
+        """Route notifications to personal inbox; company email remains the account identity."""
+        pe = getattr(employee, "personal_email", None)
+        if pe and str(pe).strip():
+            return str(pe).strip().lower()
+        return (employee.email or "").strip().lower()
+
+    @staticmethod
+    def collect_hr_admin_emails(db, branch: Optional[str] = None) -> List[str]:
+        from app.server.schema.employee import Employee, EmployeeRole
+
+        out: List[str] = []
+        rows = (
+            db.query(Employee)
+            .filter(
+                Employee.is_active == True,  # noqa: E712
+                Employee.role.in_([EmployeeRole.HR, EmployeeRole.ADMIN]),
+            )
+            .all()
+        )
+        for e in rows:
+            if e.role == EmployeeRole.ADMIN:
+                out.append(EmailService.delivery_email(e))
+            elif branch is None or (e.branch or "") == (branch or ""):
+                out.append(EmailService.delivery_email(e))
+        return list({x for x in out if x})
+
+    @classmethod
+    def notify_resignation_request(cls, employee_name: str, company_email: str, reason: str, recipients: List[str]):
+        if not recipients:
+            return
+        subject = f"Resignation request: {employee_name}"
+        identity = f"<span style='color:#64748b'>Company identity (login):</span> <strong>{company_email}</strong>"
+        body = cls._wrap_email(
+            "Employee resignation",
+            "Pending HR / Admin review",
+            f"""
+            <p>{employee_name} has submitted a resignation request.</p>
+            <p>{identity}</p>
+            <div style="background-color:#f1f5f9;border-radius:8px;padding:16px;margin:16px 0;">
+                <p style="margin:0;white-space:pre-wrap;">{reason}</p>
+            </div>
+            <p style="font-size:14px;color:#64748b;">Approve or reject from the HR console (Resignations).</p>
+            """,
+            accent_color="#0f766e",
+        )
+        for email in set(recipients):
+            if email:
+                cls._send_email(email, subject, body)
+
+    @classmethod
+    def send_provisioning_credentials(cls, personal_email: str, employee_name: str, company_email: str, temp_password: str):
+        if not personal_email:
+            return
+        subject = "Your Kovan account is ready"
+        body = cls._wrap_email(
+            "Welcome to Kovan",
+            "Sign-in details",
+            f"""
+            <p>Hello <strong>{employee_name}</strong>,</p>
+            <p>Your company account has been created. Use the credentials below to sign in; you will be prompted to change your password after first login.</p>
+            <div style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:20px 0;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <tr><td style="padding:6px 0;color:#64748b;width:40%;">Company email (username)</td><td style="font-family:monospace;font-weight:600;">{company_email}</td></tr>
+                    <tr><td style="padding:6px 0;color:#64748b;">Temporary password</td><td style="font-family:monospace;font-weight:600;">{temp_password}</td></tr>
+                </table>
+            </div>
+            <p style="font-size:13px;color:#64748b;">This message was sent to your personal email on file. All system notifications will be delivered here.</p>
+            """,
+            accent_color="#6366f1",
+            footer_note="Automated message from Kovan IT — do not reply.",
+        )
+        cls._send_email(personal_email, subject, body)
 
 
 

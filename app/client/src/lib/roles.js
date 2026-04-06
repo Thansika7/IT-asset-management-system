@@ -35,6 +35,8 @@ export const NAV = {
   onboardingKits: (r) => [R.ADMIN, R.MANAGER, R.HR].includes(r),
   stock: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   finance: (r) => [R.ADMIN, R.MANAGER].includes(r),
+  /** CMDB items & relationships — matches backend GET /cmdb/* */
+  cmdb: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
 }
 
 export function canManageStockWrites(r) {

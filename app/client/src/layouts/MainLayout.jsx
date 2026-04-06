@@ -9,6 +9,7 @@ import {
   Wallet,
   Laptop,
   Layers,
+  GitBranch,
   LogOut,
   Menu,
   X,
@@ -26,6 +27,7 @@ const navDef = [
   { to: '/finance', label: 'Finance', icon: Wallet, show: NAV.finance },
   { to: '/employees', label: 'Team', icon: Users, show: NAV.employees },
   { to: '/onboarding-kits', label: 'Onboarding kits', icon: Layers, show: NAV.onboardingKits },
+  { to: '/cmdb', label: 'CMDB', icon: GitBranch, show: NAV.cmdb },
 ]
 
 export default function MainLayout() {

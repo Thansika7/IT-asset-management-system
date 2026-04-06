@@ -1,10 +1,17 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from app.server.auth.service import authenticate_user, create_access_token, get_current_user, update_last_login
+from app.server.auth.service import (
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+    update_last_login,
+    verify_password,
+    get_password_hash,
+)
 from app.server.database.database import get_db
-from app.server.models.api import EmployeeRead, Token, LoginRequest
+from app.server.models.api import EmployeeRead, Token, LoginRequest, PasswordChangeRequest
 from app.server.schema.employee import Employee
 from app.server.exceptions.base import UnauthorizedActionError
 
@@ -75,3 +82,18 @@ def logout(response: Response):
 @router.get("/me", response_model=EmployeeRead)
 def get_me(current_user: Employee = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/change-password")
+def change_password(
+    payload: PasswordChangeRequest,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    if not current_user.password_hash or not verify_password(payload.current_password, current_user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect.")
+    current_user.password_hash = get_password_hash(payload.new_password)
+    current_user.password_reset_required = False
+    db.add(current_user)
+    db.commit()
+    return {"status": "ok", "password_reset_required": False}

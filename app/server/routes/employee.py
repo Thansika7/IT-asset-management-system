@@ -1,11 +1,16 @@
-import uuid
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.server.auth.service import get_password_hash
 from app.server.database.database import get_db
 from app.server.models.api import EmployeeCreate, EmployeeRead
+from app.server.models.request import RequestResponse
+from app.server.services.email_service import EmailService
+from app.server.services.provisioning_service import generate_company_email, generate_temp_password
+from app.server.services.employee_lifecycle_service import EmployeeLifecycleService
+from app.server.services.resignation_service import ResignationService
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.schema.tracking import Tracking
 from app.server.middlewares.auth import require_roles
@@ -15,21 +20,45 @@ from app.server.schema.onboarding_preset import OnboardingPreset
 
 router=APIRouter(prefix="/employees", tags=["employees"])
 
+
+class EmployeeResignBody(BaseModel):
+    reason: str = Field(..., min_length=1)
+    last_working_day: Optional[str] = None
+
+
+@router.post("/resign", response_model=RequestResponse)
+def submit_resignation(
+    body: EmployeeResignBody,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.EMPLOYEE)),
+):
+    return ResignationService.submit(db, current_user, body.reason, body.last_working_day)
+
+
 @router.post("/register", response_model=EmployeeRead, status_code=201)
 def register_employee(
     payload: EmployeeCreate,
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.ADMIN))
 ):
-    email_lower=payload.email.lower()
-    existing=db.query(Employee).filter(Employee.email==email_lower).first()
-    if existing:
-        raise InvalidStateError("The provided email address is already associated with an existing account.")
-        
+    if payload.password:
+        email_lower = payload.email.lower()
+        existing = db.query(Employee).filter(Employee.email == email_lower).first()
+        if existing:
+            raise InvalidStateError("The provided company email is already associated with an existing account.")
+    else:
+        email_lower = None
+
     if payload.phone:
         existing_phone = db.query(Employee).filter(Employee.phone == payload.phone).first()
         if existing_phone:
             raise InvalidStateError("The provided phone number is already associated with an existing account.")
+
+    if payload.personal_email:
+        pe = payload.personal_email.strip().lower()
+        taken = db.query(Employee).filter(Employee.personal_email == pe).first()
+        if taken:
+            raise InvalidStateError("The provided personal email is already associated with an existing account.")
 
     # Role Population Constraints
     # 1. Global Admin Limit
@@ -63,17 +92,38 @@ def register_employee(
         if existing_manager:
             raise InvalidStateError(f"A manager already exists for branch: {payload.branch or 'General'}")
 
-    user=Employee(
-        name=payload.name,
-        email=email_lower,
-        phone=payload.phone,
-        branch=payload.branch,
-        role=payload.role,
-        password_hash=get_password_hash(payload.password),
-        is_active=True,
-    )
+    temp_pw_for_mail: str | None = None
+    if payload.password:
+        user = Employee(
+            name=payload.name,
+            email=email_lower,
+            personal_email=(payload.personal_email.strip().lower() if payload.personal_email else None),
+            phone=payload.phone,
+            branch=payload.branch,
+            role=payload.role,
+            password_hash=get_password_hash(payload.password),
+            password_reset_required=False,
+            is_active=True,
+        )
+    else:
+        company_email = generate_company_email(payload.name, db)
+        temp_pw_for_mail = generate_temp_password()
+        user = Employee(
+            name=payload.name,
+            email=company_email,
+            personal_email=payload.personal_email.strip().lower(),
+            phone=payload.phone,
+            branch=payload.branch,
+            role=payload.role,
+            password_hash=get_password_hash(temp_pw_for_mail),
+            password_reset_required=True,
+            is_active=True,
+        )
     db.add(user)
     db.flush()
+
+    if temp_pw_for_mail:
+        EmailService.send_provisioning_credentials(user.personal_email, user.name, user.email, temp_pw_for_mail)
 
     asset_ids = list(payload.onboarding_asset_ids)
     if payload.preset_id:
@@ -150,13 +200,7 @@ def deactivate_employee(
     if target.role == EmployeeRole.ADMIN:
         raise HTTPException(status_code=403, detail="The Global System Administrator is a singleton and cannot be deactivated.")
 
-    target.is_active=False
-    active=db.query(Tracking).filter(Tracking.emp_id==emp_id, Tracking.returned_at==None).all()
-    for trk in active:
-        StockService.return_asset(db, trk.tracking_id, current_user, "OFFBOARDING_RECOVERY")
-
-    db.commit()
-    return {"status": "deactivated", "employee_id": emp_id, "recovered_hardware": len(active)}
+    return EmployeeLifecycleService.deactivate_and_recover_assets(db, emp_id, current_user, "OFFBOARDING_RECOVERY")
 
 @router.get("/{emp_id}/assets")
 def get_employee_assets(

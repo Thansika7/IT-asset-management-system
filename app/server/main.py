@@ -17,7 +17,11 @@ from app.server.routes.account import router as account_router
 from app.server.routes.tracking import router as tracking_router
 from app.server.routes.onboarding_preset import router as onboarding_preset_router
 from app.server.routes.discovery import router as discovery_router
+from app.server.routes.resignation import router as resignation_router
+from app.server.routes.cmdb import router as cmdb_router
+from app.server.routes.asset_usage import router as asset_usage_router
 from app.server.schema import asset, employee, category, attribute, request, tracking, audit, onboarding_preset
+import app.server.schema.cmdb  # noqa: F401 — register CMDB tables
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.auth.service import ALGORITHM, SECRET_KEY, get_password_hash
 from app.server.middlewares.cors import setup_cors
@@ -87,13 +91,10 @@ def _extract_user_id(request: Request) -> str:
     email = str(payload.get("sub", "")).lower()
     if not email:
         return "anonymous"
-
-    db = SessionLocal()
-    try:
-        user = db.query(Employee).filter(Employee.email == email).first()
-        return user.employee_id if user else email
-    finally:
-        db.close()
+    emp_id = payload.get("emp_id")
+    if emp_id:
+        return str(emp_id)
+    return email
 
 
 @app.middleware("http")
@@ -144,6 +145,7 @@ async def structured_request_logging(request: Request, call_next):
 def init_admin():
     db=SessionLocal()
     admin_email_env=os.getenv("ADMIN_EMAIL")
+    admin_personal_env=os.getenv("ADMIN_PERSONAL_EMAIL")
     admin_password=os.getenv("ADMIN_PASSWORD") or str(uuid.uuid4())
     if admin_email_env:
         admin_email = admin_email_env.lower()
@@ -153,6 +155,7 @@ def init_admin():
                 employee_id="ADMIN-001",
                 name="System Administrator",
                 email=admin_email,
+                personal_email=admin_personal_env,
                 role=EmployeeRole.ADMIN,
                 password_hash=get_password_hash(admin_password),
                 is_active=True
@@ -183,6 +186,9 @@ app.include_router(account_router)
 app.include_router(tracking_router)
 app.include_router(onboarding_preset_router)
 app.include_router(discovery_router)
+app.include_router(resignation_router)
+app.include_router(cmdb_router)
+app.include_router(asset_usage_router)
 
 @app.get("/health")
 def health_check():

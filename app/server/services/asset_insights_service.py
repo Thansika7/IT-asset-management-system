@@ -683,28 +683,46 @@ class AssetInsightsService:
         if not needle:
             return SearchResultsRead(query="", total=0, did_you_mean=[], items=[])
 
-        ranked: list[SearchSuggestionItem] = []
+        # Sort tiers: 0 = category/subcategory substring match (highest), 1 = asset name substring,
+        # 2 = fuzzy / similarity only. Keeps e.g. "laptop" matches in Laptop category above weak fuzzy hits on names.
+        ranked_rows: list[tuple[int, float, SearchSuggestionItem]] = []
         names_for_spell = []
         for asset in assets:
             cat = asset.category.category_name if asset.category else ""
             sub = asset.sub_category.sub_category_name if asset.sub_category else ""
             names_for_spell.extend([asset.name or "", cat, sub])
 
-            fields = [asset.name or "", cat, sub]
+            cat_l = cat.lower()
+            sub_l = sub.lower()
+            name_l = (asset.name or "").lower()
+            tier = 2
             best = 0.0
-            for field in fields:
-                low = field.lower()
-                if not low:
-                    continue
-                if needle in low:
-                    score = 1.0 if low.startswith(needle) else 0.9
-                else:
-                    score = SequenceMatcher(None, needle, low).ratio()
-                if score > best:
-                    best = score
 
-            if best >= 0.45:
-                ranked.append(
+            if needle in cat_l or needle in sub_l:
+                tier = 0
+                best = 1.0 if (cat_l.startswith(needle) or sub_l.startswith(needle)) else 0.95
+            elif needle in name_l:
+                tier = 1
+                best = 1.0 if name_l.startswith(needle) else 0.9
+            else:
+                fields = [asset.name or "", cat, sub]
+                for field in fields:
+                    low = field.lower()
+                    if not low:
+                        continue
+                    if needle in low:
+                        score = 1.0 if low.startswith(needle) else 0.9
+                    else:
+                        score = SequenceMatcher(None, needle, low).ratio()
+                    if score > best:
+                        best = score
+                if best < 0.45:
+                    continue
+
+            ranked_rows.append(
+                (
+                    tier,
+                    -best,
                     SearchSuggestionItem(
                         asset_id=asset.asset_id,
                         asset_name=asset.name,
@@ -712,10 +730,12 @@ class AssetInsightsService:
                         sub_category=sub or None,
                         branch=asset.branch,
                         score=round(best, 3),
-                    )
+                    ),
                 )
+            )
 
-        ranked.sort(key=lambda x: (-x.score, x.asset_name.lower()))
+        ranked_rows.sort(key=lambda t: (t[0], t[1], (t[2].asset_name or "").lower()))
+        ranked = [t[2] for t in ranked_rows]
         did_you_mean = []
         if not ranked:
             did_you_mean = get_close_matches(needle, [n.lower() for n in names_for_spell if n], n=5, cutoff=0.6)

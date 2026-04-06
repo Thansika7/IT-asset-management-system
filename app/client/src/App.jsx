@@ -12,6 +12,7 @@ import Stock from './pages/Stock'
 import Finance from './pages/Finance'
 import MyAssets from './pages/MyAssets'
 import OnboardingKits from './pages/OnboardingKits'
+import CMDB from './pages/CMDB'
 import MainLayout from './layouts/MainLayout'
 
 const APP_ROLES = [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM, R.EMPLOYEE]
@@ -34,6 +35,14 @@ export default function App() {
             element={
               <RoleGate roles={[R.ADMIN, R.MANAGER, R.HR]}>
                 <OnboardingKits />
+              </RoleGate>
+            }
+          />
+          <Route
+            path="cmdb"
+            element={
+              <RoleGate roles={[R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM]}>
+                <CMDB />
               </RoleGate>
             }
           />

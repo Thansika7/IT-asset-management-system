@@ -28,6 +28,7 @@ def list_requests(
     severity: Optional[str] = None,
     urgency: Optional[str] = None,
     branch: Optional[str] = None,
+    request_type: Optional[str] = None,
     sort_by_priority: bool = False,
     db: Session=Depends(get_db),
     current_user: Employee=Depends(get_current_user)
@@ -41,6 +42,7 @@ def list_requests(
         urgency=urgency,
         branch=branch,
         sort_by_priority=sort_by_priority,
+        request_type=request_type,
     )
 
 @router.post("/", response_model=RequestResponse)

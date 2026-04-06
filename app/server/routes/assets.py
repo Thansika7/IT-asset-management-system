@@ -16,6 +16,7 @@ from app.server.models.asset_insights import (
 )
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.services.asset_insights_service import AssetInsightsService
+from app.server.services.asset_usage_service import AssetUsageService
 
 router = APIRouter(prefix="/assets", tags=["assets"])
 
@@ -144,6 +145,32 @@ def get_asset_health_classification(
         effective_branch = current_user.branch
     # Report includes this branch filter as per health report semantics
     return AssetInsightsService.get_health_classification(db)
+
+
+@router.get("/usage/report")
+def asset_usage_report(
+    branch: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return AssetUsageService.usage_report(db, current_user, branch=branch)
+
+
+@router.get("/usage/analytics")
+def asset_usage_analytics(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return AssetUsageService.usage_analytics(db, current_user)
+
+
+@router.get("/{asset_id}/usage")
+def asset_usage_detail(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return AssetUsageService.get_asset_usage(db, asset_id, current_user)
 
 
 @router.get("/{asset_id}/health", response_model=AssetHealthRead)

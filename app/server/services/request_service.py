@@ -317,6 +317,7 @@ class RequestService:
         urgency: Optional[str] = None,
         branch: Optional[str] = None,
         sort_by_priority: bool = False,
+        request_type: Optional[str] = None,
     ):
         query = db.query(Request).options(joinedload(Request.employee))
 
@@ -336,6 +337,8 @@ class RequestService:
             query = query.filter(Request.severity == severity.strip().upper())
         if urgency:
             query = query.filter(Request.urgency == urgency.strip().upper())
+        if request_type:
+            query = query.filter(Request.request_type == request_type.strip().upper())
 
         rows = query.all()
         if sort_by_priority:
@@ -374,7 +377,7 @@ class RequestService:
             Employee.role == EmployeeRole.MANAGER,
             Employee.is_active == True,
         ).first()
-        return manager.email if manager else None
+        return EmailService.delivery_email(manager) if manager else None
 
     @staticmethod
     def create_asset_request(db: Session, payload: RequestCreate, current_user: Employee):
@@ -415,6 +418,7 @@ class RequestService:
             asset_category=payload.asset_category,
             reason=payload.reason,
             action_type=None,
+            request_type="ASSET",
             priority="P3",
             severity="MEDIUM",
             urgency="MEDIUM",
@@ -469,7 +473,7 @@ class RequestService:
         
         # B. Notify Requester (Confirmation)
         EmailService.notify_requester_confirmation(
-            current_user.email, current_user.name, payload.asset_name, current_user.branch
+            EmailService.delivery_email(current_user), current_user.name, payload.asset_name, current_user.branch
         )
 
         db.refresh(req)
@@ -483,6 +487,8 @@ class RequestService:
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
+        if getattr(req, "request_type", None) == "RESIGNATION":
+            raise HTTPException(status_code=400, detail="Use resignation approval endpoints for resignation requests.")
         if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="HR can review only requests from their own branch.")
 
@@ -526,6 +532,8 @@ class RequestService:
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
+        if getattr(req, "request_type", None) == "RESIGNATION":
+            raise HTTPException(status_code=400, detail="Resignation requests are not triaged as asset requests.")
         if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Support can triage only requests from their own branch.")
         
@@ -570,6 +578,7 @@ class RequestService:
                     req.status += f" (Selected: {selected_target})"
 
         req.action_type = requested_action
+        req.request_type = "SERVICE" if requested_action == "SERVICE" else "ASSET"
         req.severity = payload.severity.value
         req.urgency = RequestService._derive_urgency(req, req.severity, payload.affected_users, requested_action)
         req.priority = RequestService._derive_priority(req, req.severity, req.urgency, payload.affected_users)
@@ -885,17 +894,17 @@ class RequestService:
 
     @staticmethod
     def get_emails_by_roles_in_branch(db: Session, roles: List[EmployeeRole], branch: str) -> List[str]:
-        stakeholders = db.query(Employee.email).filter(
+        stakeholders = db.query(Employee).filter(
             Employee.branch == branch,
             Employee.role.in_(roles),
-            Employee.is_active == True
+            Employee.is_active == True,  # noqa: E712
         ).all()
-        return [s.email for s in stakeholders]
+        return [EmailService.delivery_email(s) for s in stakeholders if EmailService.delivery_email(s)]
 
     @staticmethod
     def get_admin_emails(db: Session) -> List[str]:
-        admins = db.query(Employee.email).filter(
+        admins = db.query(Employee).filter(
             Employee.role == EmployeeRole.ADMIN,
-            Employee.is_active == True
+            Employee.is_active == True,  # noqa: E712
         ).all()
-        return [a.email for a in admins]
+        return [EmailService.delivery_email(a) for a in admins if EmailService.delivery_email(a)]

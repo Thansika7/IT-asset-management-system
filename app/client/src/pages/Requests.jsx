@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
@@ -132,6 +132,8 @@ function NewRequestForm({ onCreate, busy, options }) {
   const [customReason, setCustomReason] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
+  const [suggestHighlight, setSuggestHighlight] = useState(-1)
+  const suggestHighlightRef = useRef(-1)
   const [selectedCategoryId, setSelectedCategoryId] = useState('')
   const [selectedSubCategoryId, setSelectedSubCategoryId] = useState('')
 
@@ -222,6 +224,8 @@ function NewRequestForm({ onCreate, busy, options }) {
     setAssetCategory(categories[0] || 'Laptop')
     setSearchInput('')
     setSubmittedSearch('')
+    suggestHighlightRef.current = -1
+    setSuggestHighlight(-1)
   }
 
   const applySuggestedAsset = (item) => {
@@ -246,6 +250,54 @@ function NewRequestForm({ onCreate, busy, options }) {
     }
     return merged.slice(0, 10)
   }, [searchInput, suggestionsQuery.data, popularQuery.data, recentQuery.data])
+
+  useEffect(() => {
+    suggestHighlightRef.current = -1
+    setSuggestHighlight(-1)
+  }, [searchInput])
+
+  const onSearchKeyDown = (e) => {
+    const list = defaultSuggestions
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (!list.length) return
+      setSuggestHighlight((i) => {
+        const next = i < 0 ? 0 : Math.min(list.length - 1, i + 1)
+        suggestHighlightRef.current = next
+        return next
+      })
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!list.length) return
+      setSuggestHighlight((i) => {
+        const next = Math.max(-1, i - 1)
+        suggestHighlightRef.current = next
+        return next
+      })
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      suggestHighlightRef.current = -1
+      setSuggestHighlight(-1)
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const idx = suggestHighlightRef.current
+      if (idx >= 0 && list[idx]) {
+        applySuggestedAsset(list[idx])
+        suggestHighlightRef.current = -1
+        setSuggestHighlight(-1)
+        return
+      }
+      if (searchInput.trim().length >= 2) {
+        setSubmittedSearch(searchInput.trim())
+      }
+    }
+  }
 
   return (
     <form onSubmit={submit} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm space-y-5 motion-fade-up surface-sheen">
@@ -281,6 +333,10 @@ function NewRequestForm({ onCreate, busy, options }) {
               placeholder="Type at least 2 chars (e.g. laptop, laptp)"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={onSearchKeyDown}
+              autoComplete="off"
+              aria-autocomplete="list"
+              aria-expanded={defaultSuggestions.length > 0}
             />
             <button
               type="button"
@@ -292,14 +348,23 @@ function NewRequestForm({ onCreate, busy, options }) {
               Search
             </button>
           </div>
+          <p className="text-[11px] text-slate-500">Use ↑↓ to move in the list, Enter to pick a row or run search (Enter does not submit the request from this field).</p>
           {defaultSuggestions.length > 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 max-h-40 overflow-auto">
-              {defaultSuggestions.map((item) => (
+              {defaultSuggestions.map((item, idx) => (
                 <button
                   key={`${item.asset_id || item.asset_name}-sg`}
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-100"
-                  onClick={() => applySuggestedAsset(item)}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-100 ${idx === suggestHighlight ? 'bg-slate-200' : ''}`}
+                  onMouseEnter={() => {
+                    suggestHighlightRef.current = idx
+                    setSuggestHighlight(idx)
+                  }}
+                  onClick={() => {
+                    suggestHighlightRef.current = -1
+                    setSuggestHighlight(-1)
+                    applySuggestedAsset(item)
+                  }}
                 >
                   <span className="font-medium text-slate-900">{item.asset_name}</span>
                   <span className="text-xs text-slate-500"> · {item.category || 'Unknown'} {item.sub_category ? `· ${item.sub_category}` : ''}</span>
