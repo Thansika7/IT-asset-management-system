@@ -1,4 +1,4 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 @theme {
   --color-border: hsl(214 32% 91%);
@@ -33,6 +33,118 @@
   --radius-sm: calc(0.5rem - 4px);
 }
 
+:root {
+  color-scheme: light;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(45, 212, 191, 0.12), transparent 28%),
+    radial-gradient(circle at top right, rgba(14, 165, 233, 0.08), transparent 24%),
+    linear-gradient(180deg, #f8fbfd 0%, #eef4f8 100%);
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -10px, 0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(45, 212, 191, 0);
+  }
+  50% {
+    box-shadow: 0 12px 40px rgba(45, 212, 191, 0.16);
+  }
+}
+
+.motion-fade-up {
+  animation: fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.motion-fade-in {
+  animation: fade-in 0.45s ease both;
+}
+
+.motion-float-soft {
+  animation: float-soft 7s ease-in-out infinite;
+}
+
+.motion-glow {
+  animation: pulse-glow 5s ease-in-out infinite;
+}
+
+.motion-delay-1 {
+  animation-delay: 0.08s;
+}
+
+.motion-delay-2 {
+  animation-delay: 0.16s;
+}
+
+.motion-delay-3 {
+  animation-delay: 0.24s;
+}
+
+.motion-delay-4 {
+  animation-delay: 0.32s;
+}
+
+.hover-lift {
+  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease, background-color 220ms ease;
+  will-change: transform;
+}
+
+.hover-lift:hover {
+  transform: translateY(-4px);
+}
+
+.surface-sheen {
+  position: relative;
+  overflow: hidden;
+}
+
+.surface-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 25%, rgba(255, 255, 255, 0.22) 50%, transparent 75%);
+  transform: translateX(-140%);
+  transition: transform 700ms ease;
+  pointer-events: none;
+}
+
+.surface-sheen:hover::after {
+  transform: translateX(140%);
+}
+
 /* Ensure all buttons and clickable elements explicitly use the pointer cursor */
 button,
 [role="button"],
@@ -46,4 +158,14 @@ button:disabled,
 a:disabled,
 input:disabled {
   cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

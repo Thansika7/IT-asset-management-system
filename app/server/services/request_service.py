@@ -1,3 +1,5 @@
+from datetime import date
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
@@ -5,11 +7,20 @@ from sqlalchemy.sql import func as sql_func
 from fastapi import HTTPException, status
 from typing import List, Optional
 
-from app.server.models.request import RequestCreate, RequestTriage, RequestReview, RequestResolve, RequestHRVerify
+from app.server.models.request import (
+    RequestCreate,
+    RequestFormAssetOption,
+    RequestFormOptions,
+    RequestHRVerify,
+    RequestResolve,
+    RequestReview,
+    RequestTriage,
+)
 from app.server.schema.request import Request
 from app.server.schema.asset import Asset, AssetStatus
 from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee, EmployeeRole
+from app.server.schema.category import Category
 from app.server.services.email_service import EmailService
 from app.server.services.stock_service import StockService
 from app.server.services.account_service import AccountService
@@ -17,8 +28,137 @@ from app.server.services.audit_service import AuditService
 
 
 class RequestService:
-    PRIORITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
-    SLA_HOURS = {"CRITICAL": 4, "HIGH": 8, "MEDIUM": 24, "LOW": 48}
+    FORM_CATEGORIES = ["Laptop", "Monitor", "Keyboard", "Mouse", "Printer", "Phone", "Accessory", "Software", "Other"]
+    REASON_TEMPLATES = {
+        "Laptop": [
+            "Not powering on",
+            "Battery issue",
+            "Performance issue",
+            "Damaged screen or body",
+            "Need device for onboarding",
+            "Other",
+        ],
+        "Monitor": [
+            "Display not working",
+            "Screen damaged",
+            "Need monitor for workstation",
+            "Other",
+        ],
+        "Keyboard": [
+            "Keys not working",
+            "Device physically damaged",
+            "Need replacement keyboard",
+            "Other",
+        ],
+        "Mouse": [
+            "Pointer not working",
+            "Buttons not working",
+            "Need replacement mouse",
+            "Other",
+        ],
+        "Printer": [
+            "Printer not responding",
+            "Print quality issue",
+            "Need printer for team",
+            "Other",
+        ],
+        "Phone": [
+            "Not powering on",
+            "Battery issue",
+            "Call or network issue",
+            "Need mobile device",
+            "Other",
+        ],
+        "Accessory": [
+            "Damaged accessory",
+            "Need additional accessory",
+            "Other",
+        ],
+        "Software": [
+            "License access issue",
+            "License expired or about to expire",
+            "Need new software access",
+            "Other",
+        ],
+        "Other": [
+            "General issue",
+            "Need review from support",
+            "Other",
+        ],
+    }
+    PRIORITY_ORDER = {"P1": 4, "P2": 3, "P3": 2, "P4": 1}
+    SLA_HOURS = {"P1": 1, "P2": 4, "P3": 24, "P4": 72}
+    URGENCY_SLA_HOURS = {"HIGH": 1, "MEDIUM": 4, "LOW": 24}
+    SEVERITY_DESCRIPTIONS = {
+        "CRITICAL": "Complete system failure",
+        "HIGH": "Major functionality affected",
+        "MEDIUM": "Partial impact",
+        "LOW": "Minor issue",
+    }
+    PRIORITY_DESCRIPTIONS = {
+        "P1": "Immediate action required",
+        "P2": "High urgency",
+        "P3": "Normal",
+        "P4": "Low",
+    }
+    PRIORITY_RESPONSE_TIME = {
+        "P1": "< 1 hour",
+        "P2": "< 4 hours",
+        "P3": "< 24 hours",
+        "P4": "2-3 days",
+    }
+    URGENCY_RESPONSE_TIME = {
+        "HIGH": "< 1 hour",
+        "MEDIUM": "< 4 hours",
+        "LOW": "< 24 hours",
+    }
+    PRIORITY_MATRIX = {
+        ("CRITICAL", "HIGH"): "P1",
+        ("CRITICAL", "MEDIUM"): "P1",
+        ("CRITICAL", "LOW"): "P2",
+        ("HIGH", "HIGH"): "P1",
+        ("HIGH", "MEDIUM"): "P2",
+        ("HIGH", "LOW"): "P3",
+        ("MEDIUM", "HIGH"): "P2",
+        ("MEDIUM", "MEDIUM"): "P3",
+        ("MEDIUM", "LOW"): "P4",
+        ("LOW", "HIGH"): "P3",
+        ("LOW", "MEDIUM"): "P4",
+        ("LOW", "LOW"): "P4",
+    }
+
+    @staticmethod
+    def _urgency_sla_hours(urgency: str | None) -> int:
+        return RequestService.URGENCY_SLA_HOURS.get((urgency or "MEDIUM").upper(), 4)
+
+    @staticmethod
+    def _get_escalation_role(req: Request) -> str | None:
+        stage = (req.stage or "").upper()
+        if stage == "HR_VERIFICATION":
+            return "Manager"
+        if stage in {"HELPDESK_TRIAGE", "READY", "IN_REPAIR"}:
+            return "Manager"
+        if stage == "MANAGER_APPROVAL":
+            return "Admin"
+        if stage == "ADMIN_APPROVAL":
+            return "Admin"
+        return None
+
+    @staticmethod
+    def _compute_escalation_state(req: Request):
+        from datetime import datetime, timedelta, timezone
+
+        req_date = req.req_date
+        escalation_role = RequestService._get_escalation_role(req)
+        if not req_date or not escalation_role:
+            return False, None
+
+        urgency = (req.urgency or "MEDIUM").upper()
+        limit = req_date + timedelta(hours=RequestService._urgency_sla_hours(urgency))
+        now = datetime.now(req_date.tzinfo) if req_date.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
+        if req.stage in {"COMPLETED", "REJECTED"}:
+            return False, None
+        return limit < now, escalation_role if limit < now else None
 
     @staticmethod
     def _serialize_request(req: Request):
@@ -26,14 +166,145 @@ class RequestService:
         from datetime import datetime, timedelta, timezone
 
         data = RequestResponse.model_validate(req)
-        priority = (req.priority or "MEDIUM").upper()
+        priority = (req.priority or "P3").upper()
         req_date = req.req_date
         if req_date:
             sla_target = req_date + timedelta(hours=RequestService.SLA_HOURS.get(priority, 24))
             data.sla_target_at = sla_target
             now = datetime.now(req_date.tzinfo) if req_date.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
             data.sla_breached = req.stage not in {"COMPLETED", "REJECTED"} and sla_target < now
+        severity = (req.severity or "MEDIUM").upper()
+        data.severity_description = RequestService.SEVERITY_DESCRIPTIONS.get(severity)
+        data.priority_description = RequestService.PRIORITY_DESCRIPTIONS.get(priority)
+        data.priority_response_time = RequestService.PRIORITY_RESPONSE_TIME.get(priority)
+        urgency = (req.urgency or "MEDIUM").upper()
+        data.urgency_response_time = RequestService.URGENCY_RESPONSE_TIME.get(urgency)
+        data.escalation_triggered, data.escalation_role = RequestService._compute_escalation_state(req)
         return data
+
+    @staticmethod
+    def _bump_priority(priority: str) -> str:
+        if priority == "P4":
+            return "P3"
+        if priority == "P3":
+            return "P2"
+        if priority == "P2":
+            return "P1"
+        return "P1"
+
+    @staticmethod
+    def _decrease_priority(priority: str) -> str:
+        if priority == "P1":
+            return "P2"
+        if priority == "P2":
+            return "P3"
+        if priority == "P3":
+            return "P4"
+        return "P4"
+
+    @staticmethod
+    def _derive_priority(req: Request, severity: str, urgency: str, affected_users: int) -> str:
+        priority = RequestService.PRIORITY_MATRIX.get((severity, urgency), "P3")
+
+        category = (req.asset_category or "").strip().lower()
+        requester_role = (req.employee.role.value if req.employee and req.employee.role else "").strip().lower()
+        branch = ((req.employee.branch if req.employee else "") or "").strip().lower()
+        issue_text = f"{req.asset_name or ''} {req.reason or ''}".lower()
+
+        if "server" in category or "server" in issue_text:
+            priority = RequestService._bump_priority(priority)
+        elif "network" in category or "switch" in issue_text or "router" in issue_text:
+            priority = RequestService._bump_priority(priority)
+        elif any(term in category for term in ["mouse", "keyboard", "accessory"]):
+            priority = RequestService._decrease_priority(priority)
+
+        if requester_role in {"admin", "ceo"}:
+            priority = RequestService._bump_priority(priority)
+
+        if branch in {"hq", "headquarters"}:
+            priority = RequestService._bump_priority(priority)
+
+        if affected_users >= 10:
+            priority = RequestService._bump_priority(priority)
+
+        if "down" in issue_text and ("server" in issue_text or "production" in issue_text):
+            priority = "P1"
+
+        return priority
+
+    @staticmethod
+    def _derive_urgency(req: Request, severity: str, affected_users: int, requested_action: str) -> str:
+        severity = (severity or "MEDIUM").upper()
+        issue_text = f"{req.asset_name or ''} {req.reason or ''}".lower()
+        category = (req.asset_category or "").strip().lower()
+        action = (requested_action or "").strip().upper()
+
+        if severity == "CRITICAL":
+            return "HIGH"
+        if affected_users >= 10:
+            return "HIGH"
+        if any(term in issue_text for term in ["production down", "not powering on", "not turning on", "network outage", "cannot login", "service disruption"]):
+            return "HIGH"
+        if any(term in category for term in ["server", "network", "security"]):
+            return "HIGH"
+        if action == "SERVICE" and severity == "HIGH":
+            return "HIGH"
+        if severity == "HIGH":
+            return "MEDIUM"
+        if action == "NEW" and any(term in issue_text for term in ["onboarding", "new joiner", "starter kit"]):
+            return "MEDIUM"
+        if any(term in category for term in ["mouse", "keyboard", "accessory"]):
+            return "LOW"
+        return "MEDIUM" if severity == "MEDIUM" else "LOW"
+
+    @staticmethod
+    def get_request_form_options(db: Session, current_user: Employee) -> RequestFormOptions:
+        categories = sorted(set(RequestService.FORM_CATEGORIES + [row[0] for row in db.query(Category.category_name).all() if row[0]]))
+
+        known_assets: list[RequestFormAssetOption] = []
+        if current_user.role == EmployeeRole.EMPLOYEE:
+            rows = (
+                db.query(Tracking, Asset, Category)
+                .join(Asset, Tracking.asset_id == Asset.asset_id)
+                .outerjoin(Category, Asset.category_id == Category.category_id)
+                .filter(
+                    Tracking.emp_id == current_user.employee_id,
+                    Tracking.returned_at == None,
+                )
+                .all()
+            )
+            known_assets = [
+                RequestFormAssetOption(
+                    asset_id=asset.asset_id,
+                    asset_name=asset.name,
+                    category=category.category_name if category else None,
+                    sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                    branch=asset.branch,
+                    owned_by_requester=True,
+                )
+                for _, asset, category in rows
+            ]
+        else:
+            query = db.query(Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
+            if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
+                query = query.filter(Asset.branch == current_user.branch)
+            known_assets = [
+                RequestFormAssetOption(
+                    asset_id=asset.asset_id,
+                    asset_name=asset.name,
+                    category=asset.category.category_name if asset.category else None,
+                    sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                    branch=asset.branch,
+                    owned_by_requester=False,
+                )
+                for asset in query.order_by(Asset.name.asc()).limit(50).all()
+            ]
+
+        return RequestFormOptions(
+            categories=categories,
+            reasons_by_category=RequestService.REASON_TEMPLATES,
+            known_assets=known_assets,
+        )
 
     @staticmethod
     def list_requests(
@@ -43,8 +314,10 @@ class RequestService:
         status: Optional[str] = None,
         priority: Optional[str] = None,
         severity: Optional[str] = None,
+        urgency: Optional[str] = None,
         branch: Optional[str] = None,
         sort_by_priority: bool = False,
+        request_type: Optional[str] = None,
     ):
         query = db.query(Request).options(joinedload(Request.employee))
 
@@ -62,10 +335,22 @@ class RequestService:
             query = query.filter(Request.priority == priority.strip().upper())
         if severity:
             query = query.filter(Request.severity == severity.strip().upper())
+        if urgency:
+            query = query.filter(Request.urgency == urgency.strip().upper())
+        if request_type:
+            query = query.filter(Request.request_type == request_type.strip().upper())
 
         rows = query.all()
         if sort_by_priority:
-            rows = sorted(rows, key=lambda req: RequestService.PRIORITY_ORDER.get((req.priority or "MEDIUM").upper(), 0), reverse=True)
+            rows = sorted(
+                rows,
+                key=lambda req: (
+                    RequestService._compute_escalation_state(req)[0],
+                    RequestService.PRIORITY_ORDER.get((req.priority or "P3").upper(), 0),
+                    req.req_date,
+                ),
+                reverse=True,
+            )
         else:
             rows = sorted(rows, key=lambda req: req.req_date, reverse=True)
         return [RequestService._serialize_request(req) for req in rows]
@@ -92,7 +377,7 @@ class RequestService:
             Employee.role == EmployeeRole.MANAGER,
             Employee.is_active == True,
         ).first()
-        return manager.email if manager else None
+        return EmailService.delivery_email(manager) if manager else None
 
     @staticmethod
     def create_asset_request(db: Session, payload: RequestCreate, current_user: Employee):
@@ -113,26 +398,30 @@ class RequestService:
             if payload.action_type is not None:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Employees cannot categorize requests. HR must set NEW, SERVICE, or REPLACE.",
+                    detail="Employees cannot categorize requests. Support must set NEW, SERVICE, or REPLACE during triage.",
                 )
-            if payload.priority is not None or payload.severity is not None:
+            if payload.priority is not None or payload.severity is not None or payload.urgency is not None:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Employees cannot set priority or severity. HR must set those values.",
+                    detail="Employees cannot set severity, urgency, or priority. Support assigns those during triage.",
                 )
+        if payload.priority is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Priority is system-derived from severity, urgency, and asset impact rules.",
+            )
 
         # 2. Initialize Request: Start at HR Verification as planned
-        requested_action = payload.action_type if current_user.role in [EmployeeRole.HR, EmployeeRole.ADMIN] else None
-        requested_priority = payload.priority.value if current_user.role in [EmployeeRole.HR, EmployeeRole.ADMIN] and payload.priority else "MEDIUM"
-        requested_severity = payload.severity.value if current_user.role in [EmployeeRole.HR, EmployeeRole.ADMIN] and payload.severity else "MEDIUM"
         req = Request(
             emp_id=current_user.employee_id,
             asset_name=payload.asset_name,
             asset_category=payload.asset_category,
             reason=payload.reason,
-            action_type=requested_action,
-            priority=requested_priority,
-            severity=requested_severity,
+            action_type=None,
+            request_type="ASSET",
+            priority="P3",
+            severity="MEDIUM",
+            urgency="MEDIUM",
             status="PENDING_SUPPORT",
             stage="HR_VERIFICATION",
         )
@@ -184,7 +473,7 @@ class RequestService:
         
         # B. Notify Requester (Confirmation)
         EmailService.notify_requester_confirmation(
-            current_user.email, current_user.name, payload.asset_name, current_user.branch
+            EmailService.delivery_email(current_user), current_user.name, payload.asset_name, current_user.branch
         )
 
         db.refresh(req)
@@ -198,19 +487,23 @@ class RequestService:
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
+        if getattr(req, "request_type", None) == "RESIGNATION":
+            raise HTTPException(status_code=400, detail="Use resignation approval endpoints for resignation requests.")
         if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="HR can review only requests from their own branch.")
 
         old_status = req.status
         req.hr_verified = payload.is_needed
-        if payload.is_needed and not payload.action_type:
-            raise HTTPException(status_code=400, detail="HR must categorize the request as NEW, SERVICE, or REPLACE.")
-        if payload.action_type:
-            req.action_type = payload.action_type
-        req.priority = payload.priority.value
-        req.severity = payload.severity.value
-        req.stage = "HELPDESK_TRIAGE"
-        req.status = "PENDING_SUPPORT_TRIAGE"
+        if payload.is_needed:
+            req.stage = "HELPDESK_TRIAGE"
+            req.status = "PENDING_SUPPORT_TRIAGE"
+        else:
+            req.stage = "REJECTED"
+            req.status = "REJECTED"
+            req.action_type = None
+            req.priority = "P3"
+            req.severity = "MEDIUM"
+            req.urgency = "MEDIUM"
         
         db.commit()
         db.refresh(req)
@@ -222,13 +515,13 @@ class RequestService:
             "UPDATE",
             user,
             {"status": old_status},
-            {"status": req.status, "hr_verified": req.hr_verified},
+            {"status": req.status, "hr_verified": req.hr_verified, "stage": req.stage},
             "HR_VERIFICATION",
         )
 
-        # Fetch branch support emails from DB
-        support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch)
-        EmailService.notify_hr_verified(req.employee.name, req.asset_name, payload.is_needed, support_emails)
+        if payload.is_needed:
+            support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch)
+            EmailService.notify_hr_verified(req.employee.name, req.asset_name, payload.is_needed, support_emails)
         return RequestService._serialize_request(req)
 
     @staticmethod
@@ -239,19 +532,19 @@ class RequestService:
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
+        if getattr(req, "request_type", None) == "RESIGNATION":
+            raise HTTPException(status_code=400, detail="Resignation requests are not triaged as asset requests.")
         if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Support can triage only requests from their own branch.")
         
-        from app.server.schema.category import Category
-
-        requested_action = (req.action_type or payload.action_type or "").strip()
+        requested_action = (payload.action_type or "").strip()
         selected_target = None
         if ":" in requested_action:
             requested_action, selected_target = requested_action.split(":", 1)
             requested_action = requested_action.strip()
             selected_target = selected_target.strip()
         if not requested_action:
-            raise HTTPException(status_code=400, detail="Request must be categorized by HR before support triage.")
+            raise HTTPException(status_code=400, detail="Support must categorize the request before triage.")
 
         local_stock = db.query(sql_func.sum(Asset.unused)).join(Category).filter(
             Asset.branch == req.employee.branch,
@@ -285,6 +578,10 @@ class RequestService:
                     req.status += f" (Selected: {selected_target})"
 
         req.action_type = requested_action
+        req.request_type = "SERVICE" if requested_action == "SERVICE" else "ASSET"
+        req.severity = payload.severity.value
+        req.urgency = RequestService._derive_urgency(req, req.severity, payload.affected_users, requested_action)
+        req.priority = RequestService._derive_priority(req, req.severity, req.urgency, payload.affected_users)
 
         requester = req.employee
         if requester.role == EmployeeRole.MANAGER:
@@ -466,9 +763,37 @@ class RequestService:
         if not req:
             return None
 
+        candidate_assets = (
+            db.query(Asset)
+            .options(joinedload(Asset.category))
+            .filter(
+                Asset.branch == asset.branch,
+                Asset.unused > 0,
+            )
+            .all()
+        )
+        candidate_assets = [
+            candidate
+            for candidate in candidate_assets
+            if candidate.category and asset.category and candidate.category.category_name == asset.category.category_name
+        ]
+        if not candidate_assets:
+            return None
+
+        from app.server.services.asset_insights_service import AssetInsightsService
+
+        best_asset = max(
+            candidate_assets,
+            key=lambda candidate: (
+                AssetInsightsService.get_asset_health(db, candidate.asset_id).health_score,
+                -(candidate.repair_count or 0),
+                candidate.purchased_date or date.min,
+            ),
+        )
+
         StockService.allocate_asset(
             db,
-            asset.asset_id,
+            best_asset.asset_id,
             req.emp_id,
             AllocationType.PERMANENT,
             user,
@@ -483,7 +808,7 @@ class RequestService:
             "UPDATE",
             user,
             {"status": "APPROVED_FOR_SUPPORT", "stage": "READY"},
-            {"status": req.status, "stage": req.stage, "asset_id": asset.asset_id},
+            {"status": req.status, "stage": req.stage, "asset_id": best_asset.asset_id},
             trigger_reason,
         )
         return req
@@ -569,17 +894,17 @@ class RequestService:
 
     @staticmethod
     def get_emails_by_roles_in_branch(db: Session, roles: List[EmployeeRole], branch: str) -> List[str]:
-        stakeholders = db.query(Employee.email).filter(
+        stakeholders = db.query(Employee).filter(
             Employee.branch == branch,
             Employee.role.in_(roles),
-            Employee.is_active == True
+            Employee.is_active == True,  # noqa: E712
         ).all()
-        return [s.email for s in stakeholders]
+        return [EmailService.delivery_email(s) for s in stakeholders if EmailService.delivery_email(s)]
 
     @staticmethod
     def get_admin_emails(db: Session) -> List[str]:
-        admins = db.query(Employee.email).filter(
+        admins = db.query(Employee).filter(
             Employee.role == EmployeeRole.ADMIN,
-            Employee.is_active == True
+            Employee.is_active == True,  # noqa: E712
         ).all()
-        return [a.email for a in admins]
+        return [EmailService.delivery_email(a) for a in admins if EmailService.delivery_email(a)]

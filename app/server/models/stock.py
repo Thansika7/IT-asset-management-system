@@ -9,7 +9,7 @@ class AssetCreate(BaseModel):
     asset_id: str
     name: str
     category_name: str
-    sub_category_name: str
+    sub_category_name: Optional[str] = None
     branch: str = "Headquarters"
     total_quantity: int = 1
     unused: int = 1
@@ -18,9 +18,21 @@ class AssetCreate(BaseModel):
     purchased_date: Optional[date] = None
     useful_life_years: int = 5
 
-    @field_validator("asset_id", "name", "category_name", "sub_category_name", "branch")
+    @field_validator("asset_id", "name", "category_name", "branch")
     @classmethod
     def validate_text_fields(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Value must be a string")
+        value = v.strip()
+        if not value:
+            raise ValueError("Value must not be blank")
+        return value
+
+    @field_validator("sub_category_name")
+    @classmethod
+    def validate_optional_subcategory(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         if not isinstance(v, str):
             raise ValueError("Value must be a string")
         value = v.strip()
