@@ -698,9 +698,8 @@ function RequestList({ rows, selectedId, onSelect }) {
 }
 
 function DetailPanel({ row, user, mutations, onDelete }) {
-  const [triageAction, setTriageAction] = useState('NEW')
+  const [triagePriority, setTriagePriority] = useState('P3')
   const [triageSeverity, setTriageSeverity] = useState('MEDIUM')
-  const [affectedUsers, setAffectedUsers] = useState('1')
   const [providedId, setProvidedId] = useState('')
   const [brokenId, setBrokenId] = useState('')
   const [resolveNotes, setResolveNotes] = useState('')
@@ -740,9 +739,8 @@ function DetailPanel({ row, user, mutations, onDelete }) {
   })
 
   useEffect(() => {
-    setTriageAction('NEW')
+    setTriagePriority('P3')
     setTriageSeverity('MEDIUM')
-    setAffectedUsers('1')
     setProvidedId('')
     setBrokenId('')
     setResolveNotes('')
@@ -773,13 +771,12 @@ function DetailPanel({ row, user, mutations, onDelete }) {
   )
   const autoUrgencyPreview = deriveUrgencyPreview({
     severity: triageSeverity,
-    affectedUsers: parseInt(affectedUsers || '1', 10) || 1,
-    actionType: triageAction,
+    affectedUsers: 1,
+    actionType: row.action_type || 'NEW',
     reason: row.reason,
     assetCategory: row.asset_category,
     assetName: row.asset_name,
   })
-  const priorityPreview = computePriorityPreview(triageSeverity, autoUrgencyPreview)
   const err = (m) => m.error?.message || m.error?.data?.message
   const detailRows = [
     ['Request ID', row.request_id],
@@ -949,16 +946,17 @@ function DetailPanel({ row, user, mutations, onDelete }) {
         <div className="space-y-4 border-t border-slate-100 pt-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Support triage</p>
-            <p className="mt-1 text-sm text-slate-600">Support decides whether this should be fulfilled as NEW, handled as SERVICE, or processed as REPLACE. Urgency is derived automatically from the issue and impact.</p>
+            <p className="mt-1 text-sm text-slate-600">Support sets only severity and priority. Urgency is derived automatically from issue context and severity.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Action type</label>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={triageAction} onChange={(e) => setTriageAction(e.target.value)}>
-                <option value="NEW">NEW</option>
-                <option value="REPLACE">REPLACE</option>
-                <option value="SERVICE">SERVICE</option>
+              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Priority</label>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={triagePriority} onChange={(e) => setTriagePriority(e.target.value)}>
+                {PRIORITY_OPTIONS.map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
               </select>
+              <p className="text-xs text-slate-500">{PRIORITY_RESPONSE_TIME[triagePriority]} response target.</p>
             </div>
             <div className="space-y-2">
               <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Severity</label>
@@ -969,20 +967,11 @@ function DetailPanel({ row, user, mutations, onDelete }) {
               </select>
               <p className="text-xs text-slate-500">{SEVERITY_HELP[triageSeverity]}</p>
             </div>
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Affected users</label>
-              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" type="number" min="1" value={affectedUsers} onChange={(e) => setAffectedUsers(e.target.value)} />
-            </div>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-3">
             <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Auto urgency</span>
             <Badge tone={autoUrgencyPreview === 'HIGH' ? 'rose' : autoUrgencyPreview === 'MEDIUM' ? 'amber' : 'emerald'}>{autoUrgencyPreview}</Badge>
             <span className="text-sm text-slate-600">{URGENCY_RESPONSE_TIME[autoUrgencyPreview]} escalation limit from system rules.</span>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-3">
-            <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Priority preview</span>
-            <Badge tone={priorityTone(priorityPreview)}>{priorityPreview}</Badge>
-            <span className="text-sm text-slate-600">{PRIORITY_RESPONSE_TIME[priorityPreview]} response target. Final priority is derived from severity plus auto urgency and asset impact rules.</span>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -990,9 +979,8 @@ function DetailPanel({ row, user, mutations, onDelete }) {
               className="rounded-xl bg-indigo-600 text-white text-sm font-medium px-4 py-2"
               onClick={() => mutations.triageMut.mutate({
                 id: row.request_id,
-                action_type: triageAction,
+                priority: triagePriority,
                 severity: triageSeverity,
-                affected_users: parseInt(affectedUsers || '1', 10) || 1,
               })}
             >
               Apply triage
@@ -1119,7 +1107,7 @@ export default function Requests() {
 
   const hrMut = useMutation({ mutationFn: ({ id, is_needed }) => apiFetch(`/requests/${id}/review/hr`, { method: 'POST', body: JSON.stringify({ is_needed }) }), onSuccess: invalidate })
   const triageMut = useMutation({
-    mutationFn: ({ id, action_type, severity, affected_users }) => apiFetch(`/requests/${id}/triage`, { method: 'POST', body: JSON.stringify({ action_type, severity, affected_users }) }),
+    mutationFn: ({ id, priority, severity }) => apiFetch(`/requests/${id}/triage`, { method: 'POST', body: JSON.stringify({ priority, severity }) }),
     onSuccess: invalidate,
   })
   const mgrMut = useMutation({ mutationFn: ({ id, is_approved }) => apiFetch(`/requests/${id}/review/manager`, { method: 'POST', body: JSON.stringify({ is_approved }) }), onSuccess: invalidate })

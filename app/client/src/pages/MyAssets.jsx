@@ -1,12 +1,130 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
+import { R } from '@/lib/roles'
+import { Plus, AlertCircle } from 'lucide-react'
+
+function AdminAllocationForm({ onSuccess, adminId }) {
+  const qc = useQueryClient()
+  const [selectedAssetId, setSelectedAssetId] = useState('')
+  const [allocationType, setAllocationType] = useState('PERMANENT')
+  const [reason, setReason] = useState('')
+
+  const stockQuery = useQuery({
+    queryKey: ['stock-for-allocation'],
+    queryFn: () => apiFetch('/stock/'),
+  })
+
+  const allocateMut = useMutation({
+    mutationFn: (body) =>
+      apiFetch('/requests/allocate/direct', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      setSelectedAssetId('')
+      setAllocationType('PERMANENT')
+      setReason('')
+      qc.invalidateQueries({ queryKey: ['my-assets'] })
+      onSuccess()
+    },
+  })
+
+  const availableAssets = (stockQuery.data || []).filter((a) => a.unused > 0)
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!selectedAssetId) {
+      alert('Please select an asset')
+      return
+    }
+    allocateMut.mutate({
+      asset_id: selectedAssetId,
+      employee_id: adminId,
+      allocation_type: allocationType,
+      reason: reason || 'Allocated to self by admin',
+    })
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+      <div>
+        <h3 className="text-lg font-bold text-slate-900 mb-1 flex items-center gap-2">
+          <Plus className="w-5 h-5 text-teal-600" />
+          Allocate Asset to Myself
+        </h3>
+        <p className="text-sm text-slate-600">Quickly allocate an asset directly to yourself</p>
+      </div>
+
+      {allocateMut.isError && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 flex gap-2 text-sm text-rose-800">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div>{allocateMut.error?.message || 'Failed to allocate asset'}</div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-2">Asset</label>
+          <select
+            value={selectedAssetId}
+            onChange={(e) => setSelectedAssetId(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            disabled={stockQuery.isLoading}
+          >
+            <option value="">Select an asset…</option>
+            {availableAssets.map((asset) => (
+              <option key={asset.asset_id} value={asset.asset_id}>
+                {asset.name} ({asset.unused} available)
+              </option>
+            ))}
+          </select>
+          {stockQuery.isError && <p className="text-xs text-rose-600 mt-1">{stockQuery.error?.message}</p>}
+        </div>
+
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-2">Allocation Type</label>
+          <select
+            value={allocationType}
+            onChange={(e) => setAllocationType(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+          >
+            <option value="PERMANENT">Permanent</option>
+            <option value="TEMPORARY">Temporary</option>
+          </select>
+        </div>
+
+        <div className="sm:col-span-2">
+          <label className="block text-sm font-semibold text-slate-700 mb-2">Reason (optional)</label>
+          <input
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g., Personal use, Backup device"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+          />
+        </div>
+      </div>
+
+      <div className="flex justify-end pt-2">
+        <button
+          type="submit"
+          disabled={allocateMut.isPending || !selectedAssetId}
+          className="rounded-lg bg-teal-600 text-white font-semibold px-4 py-2 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {allocateMut.isPending ? 'Allocating…' : 'Allocate to Myself'}
+        </button>
+      </div>
+    </form>
+  )
+}
 
 export default function MyAssets() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const empId = user.employeeId
+  const [allocationSuccess, setAllocationSuccess] = useState(false)
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['my-assets', empId],
@@ -36,11 +154,30 @@ export default function MyAssets() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">My assets</h1>
         <p className="text-sm text-slate-600 mt-1">
-          Confirm receipt of each assignment. This records your acknowledgment in the system (
-          <code className="text-xs bg-slate-100 px-1 rounded">POST /accounts/acknowledge/…</code>
-          ).
+          {user.role === R.ADMIN
+            ? 'Quickly allocate assets to yourself without creating a request.'
+            : 'Confirm receipt of each assignment. This records your acknowledgment in the system ('}
+          {user.role !== R.ADMIN && <code className="text-xs bg-slate-100 px-1 rounded">POST /accounts/acknowledge/…</code>}
+          {user.role !== R.ADMIN && ').'}
         </p>
       </div>
+
+      {user.role === R.ADMIN && (
+        <>
+          <AdminAllocationForm
+            adminId={empId}
+            onSuccess={() => {
+              setAllocationSuccess(true)
+              setTimeout(() => setAllocationSuccess(false), 3000)
+            }}
+          />
+          {allocationSuccess && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+              ✓ Asset allocated successfully!
+            </div>
+          )}
+        </>
+      )}
 
       {isLoading ? (
         <div className="py-16 text-center text-slate-400 animate-pulse">Loading…</div>

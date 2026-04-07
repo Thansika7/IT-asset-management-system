@@ -22,7 +22,7 @@ class EmailService:
         return text.title() if text else "User"
 
     @staticmethod
-    def _wrap_email(title: str, subtitle: str, body_html: str, accent_color: str = "#6366f1", footer_note: str = "Automated message from IT Asset Management System.") -> str:
+    def _wrap_email(title: str, subtitle: str, body_html: str, accent_color: str = "#6366f1", footer_note: str = "Automated message from IT Asset Control System.") -> str:
         return f"""
         <html>
             <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
@@ -136,10 +136,10 @@ class EmailService:
                         <div style="border-left: 4px solid {urgency_color}; background-color: #f8fafc; padding: 15px; margin: 25px 0; font-size: 14px;">
                             <strong>Recommended Action:</strong><br>{action_note}
                         </div>
-                        <p style="font-size: 14px; color: #64748b;">Manage stock levels from the Inventory section of the IT Asset Management portal.</p>
+                        <p style="font-size: 14px; color: #64748b;">Manage stock levels from the Inventory section of the IT Asset Control portal.</p>
                     </div>
                     <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
-                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated alert from IT Asset Management System.</p>
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated alert from IT Asset Control System.</p>
                     </div>
                 </div>
             </body>
@@ -319,7 +319,7 @@ class EmailService:
             <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
                 <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
                     <div style="background-color: #6366f1; padding: 30px; text-align: center;">
-                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">IT Asset Management</h1>
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">IT Asset Control</h1>
                         <p style="color: #e0e7ff; margin: 10px 0 0 0; font-size: 14px;">Incoming Resource Request</p>
                     </div>
                     <div style="padding: 40px;">
@@ -580,7 +580,7 @@ class EmailService:
     def send_password_reset_email(cls, email: str, new_password: str, employee_name: str):
         """Send new password via email"""
         
-        subject = "Password Reset - IT Asset Management System"
+        subject = "Password Reset - IT Asset Control System"
         body = cls._wrap_email(
             "Password Reset",
             "Your new password",
@@ -595,7 +595,7 @@ class EmailService:
             <p style="font-size: 14px; color: #64748b;">For security reasons, please change this password after signing in.</p>
             """,
             accent_color="#6366f1",
-            footer_note="Automated message from IT Asset Management System — do not reply.",
+            footer_note="Automated message from IT Asset Control System — do not reply.",
         )
         cls._send_email(email, subject, body)
 

@@ -55,7 +55,7 @@ for handler in logging.getLogger().handlers:
     handler.setFormatter(StructuredJsonFormatter())
     handler.addFilter(StructuredDefaultsFilter())
 
-app=FastAPI(title="IT Asset Management System")
+app=FastAPI(title="IT Asset Control System")
 
 # Setup CORS
 setup_cors(app)

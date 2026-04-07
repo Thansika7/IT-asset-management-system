@@ -12,7 +12,7 @@ from app.server.schema.employee import Employee, EmployeeRole
 
 class CMDBService:
     VALID_CI_TYPES = {"ASSET", "SOFTWARE", "SERVICE", "USER", "NETWORK_DEVICE", "FURNITURE", "CLOUD", "OTHER"}
-    VALID_REL_TYPES = {"depends_on", "connected_to", "assigned_to", "hosted_on"}
+    VALID_REL_TYPES = {"depends_on", "connected_to", "assigned_to", "hosted_on", "supports"}
 
     @staticmethod
     def list_items(db: Session, current_user: Employee, ci_type: Optional[str] = None) -> List[ConfigurationItem]:

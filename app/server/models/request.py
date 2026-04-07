@@ -57,37 +57,8 @@ class RequestCreate(BaseModel):
 
 class RequestTriage(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action_type: str
+    priority: PriorityLevel = PriorityLevel.P3
     severity: SeverityLevel = SeverityLevel.MEDIUM
-    urgency: Optional[UrgencyLevel] = None
-    affected_users: int = 1
-
-    @field_validator("affected_users")
-    @classmethod
-    def validate_affected_users(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("affected_users must be at least 1")
-        return v
-
-    @field_validator("action_type")
-    @classmethod
-    def validate_triage_action_type(cls, v: str) -> str:
-        if not isinstance(v, str):
-            raise ValueError("action_type must be a string")
-        value = v.strip()
-        if not value:
-            raise ValueError("action_type must not be blank")
-
-        base_action = value.split(":", 1)[0].strip().upper()
-        if base_action not in VALID_REQUEST_ACTIONS:
-            raise ValueError(f"action_type must start with one of: {', '.join(sorted(VALID_REQUEST_ACTIONS))}")
-
-        if ":" in value:
-            _, branch = value.split(":", 1)
-            if not branch.strip():
-                raise ValueError("Selected target branch must not be blank")
-            return f"{base_action}:{branch.strip()}"
-        return base_action
 
 class RequestReview(BaseModel):
     model_config = ConfigDict(extra="forbid")

@@ -1,4 +1,4 @@
-# IT Asset Management System
+# IT Asset Control System
 
 A full-stack, enterprise-grade application for managing corporate IT hardware and software assets. Features role-based access control, realtime audit tracking, comprehensive inventory limits, Branch/Department encapsulation, and a unified React interface.
 

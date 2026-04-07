@@ -1,16 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.server.auth.service import get_password_hash
 from app.server.database.database import get_db
 from app.server.models.api import EmployeeCreate, EmployeeRead
-from app.server.models.request import RequestResponse
 from app.server.services.email_service import EmailService
 from app.server.services.provisioning_service import generate_company_email, generate_temp_password
 from app.server.services.employee_lifecycle_service import EmployeeLifecycleService
-from app.server.services.resignation_service import ResignationService
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.schema.tracking import Tracking
 from app.server.middlewares.auth import require_roles
@@ -19,20 +16,6 @@ from app.server.exceptions.base import InvalidStateError, ResourceNotFoundError
 from app.server.schema.onboarding_preset import OnboardingPreset
 
 router=APIRouter(prefix="/employees", tags=["employees"])
-
-
-class EmployeeResignBody(BaseModel):
-    reason: str = Field(..., min_length=1)
-    last_working_day: Optional[str] = None
-
-
-@router.post("/resign", response_model=RequestResponse)
-def submit_resignation(
-    body: EmployeeResignBody,
-    db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.EMPLOYEE)),
-):
-    return ResignationService.submit(db, current_user, body.reason, body.last_working_day)
 
 
 @router.post("/register", response_model=EmployeeRead, status_code=201)

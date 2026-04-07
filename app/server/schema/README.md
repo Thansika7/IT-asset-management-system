@@ -1,6 +1,6 @@
 # Database Tables and Dependencies
 
-This document outlines the tables in the dynamic EAV IT Asset Management System schema, outlining the overarching zero-race-condition paradigm.
+This document outlines the tables in the dynamic EAV IT Asset Control System schema, outlining the overarching zero-race-condition paradigm.
 
 ### `categories` & `sub_categories`
 * Contains robust dynamic taxonomy fields assigning explicit names, foreign key cascading loops, and description models dynamically organizing standard groupings.

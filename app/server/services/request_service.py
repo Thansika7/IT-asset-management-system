@@ -9,6 +9,7 @@ from typing import List, Optional
 
 from app.server.models.request import (
     RequestCreate,
+    RequestCrossBranchTransfer,
     RequestFormAssetOption,
     RequestFormOptions,
     RequestHRVerify,
@@ -422,21 +423,10 @@ class RequestService:
                 detail=f"Role {current_user.role} is not authorized to create requests.",
             )
 
-        if current_user.role == EmployeeRole.EMPLOYEE:
-            if payload.action_type is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Employees cannot categorize requests. Support must set NEW, SERVICE, or REPLACE during triage.",
-                )
-            if payload.priority is not None or payload.severity is not None or payload.urgency is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Employees cannot set severity, urgency, or priority. Support assigns those during triage.",
-                )
-        if payload.priority is not None:
+        if payload.action_type is not None or payload.priority is not None or payload.severity is not None or payload.urgency is not None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Priority is system-derived from severity, urgency, and asset impact rules.",
+                detail="action_type, priority, severity, and urgency are set automatically during request creation.",
             )
 
         # 2. Initialize Request: Start at HR Verification as planned, unless admin
@@ -447,7 +437,7 @@ class RequestService:
             asset_name=payload.asset_name,
             asset_category=payload.asset_category,
             reason=payload.reason,
-            action_type=None,
+            action_type="NEW",
             request_type="ASSET",
             priority="P3",
             severity="MEDIUM",
@@ -564,14 +554,8 @@ class RequestService:
         if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Support can triage only requests from their own branch.")
         
-        requested_action = (payload.action_type or "").strip()
-        selected_target = None
-        if ":" in requested_action:
-            requested_action, selected_target = requested_action.split(":", 1)
-            requested_action = requested_action.strip()
-            selected_target = selected_target.strip()
-        if not requested_action:
-            raise HTTPException(status_code=400, detail="Support must categorize the request before triage.")
+        requested_action = (req.action_type or "NEW").strip().upper()
+        base_action = requested_action.split(":", 1)[0].strip() or "NEW"
 
         local_stock = db.query(sql_func.sum(Asset.unused)).join(Category).filter(
             Asset.branch == req.employee.branch,
@@ -601,22 +585,14 @@ class RequestService:
                 branches_info = ", ".join([f"{b} [{', '.join(details)}]" for b, details in branch_details.items()])
                 req.status = f"Unavailable locally. Available in: {branches_info}"
                 stock_msg = req.status
-                if selected_target:
-                    req.status += f" (Selected: {selected_target})"
 
-        req.action_type = requested_action
-        req.request_type = "SERVICE" if requested_action == "SERVICE" else "ASSET"
+        req.action_type = base_action
+        req.request_type = "SERVICE" if base_action == "SERVICE" else "ASSET"
         req.severity = payload.severity.value
-        req.urgency = RequestService._derive_urgency(req, req.severity, payload.affected_users, requested_action)
-        req.priority = RequestService._derive_priority(req, req.severity, req.urgency, payload.affected_users)
+        req.priority = payload.priority.value
+        req.urgency = RequestService._derive_urgency(req, req.severity, 1, base_action)
 
-        requester = req.employee
-        if requester.role == EmployeeRole.MANAGER:
-            req.status = "PENDING_ADMIN"
-            req.stage = "ADMIN_APPROVAL"
-            admin_emails = RequestService.get_admin_emails(db)
-            EmailService.notify_admin_of_manager_request(requester.name, req.asset_name, admin_emails)
-        elif user.role == EmployeeRole.ADMIN:
+        if user.role == EmployeeRole.ADMIN:
             req.status = "APPROVED_FOR_SUPPORT"
             req.stage = "READY"
         else:
@@ -657,15 +633,8 @@ class RequestService:
             req.status = "REJECTED"
             req.stage = "REJECTED"
         else:
-            if user.role == EmployeeRole.ADMIN:
-                req.status = "APPROVED_FOR_SUPPORT"
-                req.stage = "READY"
-            elif req.action_type in ["NEW", "REPLACE"]:
-                req.status = "PENDING_ADMIN"
-                req.stage = "ADMIN_APPROVAL"
-            else:
-                req.status = "APPROVED_FOR_SUPPORT"
-                req.stage = "READY"
+            req.status = "APPROVED_FOR_SUPPORT"
+            req.stage = "READY"
 
         db.commit()
         db.refresh(req)
