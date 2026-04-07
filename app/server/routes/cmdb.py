@@ -49,7 +49,7 @@ class RelCreate(BaseModel):
 def list_ci(
     ci_type: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     """
     List Configuration Items (CIs).
@@ -77,7 +77,7 @@ def list_ci(
 def create_ci(
     payload: CICreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER)),
 ):
     """
     Create a new Configuration Item (CI).
@@ -111,7 +111,7 @@ def create_ci(
 def list_rels(
     ci_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     """
     List CI Relationships.
@@ -134,7 +134,7 @@ def list_rels(
 def create_rel(
     payload: RelCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER)),
 ):
     """
     Create a CI Relationship.

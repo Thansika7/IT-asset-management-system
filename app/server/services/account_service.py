@@ -5,6 +5,7 @@ from app.server.schema.employee import Employee
 from app.server.exceptions.base import InvalidStateError, ResourceNotFoundError
 from app.server.services.audit_service import AuditService
 from sqlalchemy.sql import func
+from app.server.database.tenant import apply_tenant_filter
 
 class AccountService:
     @staticmethod
@@ -13,7 +14,7 @@ class AccountService:
         vendor_contact: str | None = None, invoice: str | None = None, 
         user: Employee | None = None, reason: str = "PROCUREMENT_UPDATE"
     ):
-        asset=db.query(Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
+        asset=apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
         if not asset: raise ResourceNotFoundError("Asset", asset_id)
         
         old_val={
@@ -41,7 +42,7 @@ class AccountService:
 
     @staticmethod
     def add_maintenance_cost(db: Session, asset_id: str, cost: float, user: Employee, reason: str = "MAINTENANCE_LOG"):
-        asset=db.query(Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
+        asset=apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
         if not asset: raise ResourceNotFoundError("Asset", asset_id)
         
         if cost < 0: raise InvalidStateError("Maintenance cost cannot be negative.")
@@ -66,8 +67,8 @@ class AccountService:
         return asset
 
     @staticmethod
-    def get_financial_dashboard(db: Session, branch: str | None = None):
-        query = db.query(Asset)
+    def get_financial_dashboard(db: Session, current_user: Employee, branch: str | None = None):
+        query = apply_tenant_filter(db.query(Asset), current_user, Asset)
         if branch:
             query = query.filter(Asset.branch == branch)
         
@@ -91,8 +92,8 @@ class AccountService:
         return summary
 
     @staticmethod
-    def get_asset_tco(db: Session, asset_id: str):
-        asset=db.query(Asset).filter(Asset.asset_id==asset_id).first()
+    def get_asset_tco(db: Session, asset_id: str, current_user: Employee):
+        asset=apply_tenant_filter(db.query(Asset), current_user, Asset).filter(Asset.asset_id==asset_id).first()
         if not asset: raise ResourceNotFoundError("Asset", asset_id)
         purchase_cost=asset.purchase_cost or 0.0
         maintenance_cost=asset.maintenance_total_cost or 0.0
@@ -102,7 +103,7 @@ class AccountService:
 
     @staticmethod
     def acknowledge_asset(db: Session, tracking_id: str, user: Employee):
-        trk=db.query(Tracking).filter(Tracking.tracking_id==tracking_id, Tracking.emp_id==user.employee_id).with_for_update().first()
+        trk=apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.tracking_id==tracking_id, Tracking.emp_id==user.employee_id).with_for_update().first()
         if not trk: raise ResourceNotFoundError("Tracking Record", tracking_id)
         if trk.is_acknowledged:
             raise InvalidStateError("This asset handoff has already been acknowledged.")

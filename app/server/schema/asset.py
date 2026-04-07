@@ -30,9 +30,11 @@ class Asset(Base):
     asset_id=Column(String(50), primary_key=True, index=True, default=lambda: f"AST-{uuid.uuid4().hex[:8].upper()}")
     name=Column(String(150), nullable=False, index=True)
     category_id=Column(String(50), ForeignKey("categories.category_id"), nullable=False)
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True)
     sub_category_id=Column(String(50), ForeignKey("sub_categories.sub_category_id"), nullable=True)
     brand=Column(String(100), nullable=True)
-    branch=Column(String(100), nullable=True, index=True)
+    # branch=Column(String(100), nullable=True, index=True) # DELETED LEGACY STRING COLUMN - SUPERCEDED BY branch_id
     purchased_date=Column(Date, nullable=True)
     purchase_cost=Column(Float, nullable=True)
     salvage_value=Column(Float, nullable=True)
@@ -51,7 +53,13 @@ class Asset(Base):
     unused=Column(Integer, nullable=False, default=0)
     asset_status=Column(Enum(AssetStatus, name="asset_status"), nullable=False, default=AssetStatus.ACTIVE)
     created_at=Column(DateTime(timezone=True), server_default=func.now())
+    organization=relationship("Organization", back_populates="assets")
+    branch_rel=relationship("Branch", back_populates="assets")
     category=relationship("Category", back_populates="assets")
+
+    @property
+    def branch(self) -> str | None:
+        return self.branch_rel.branch_name if self.branch_rel else None
     sub_category=relationship("SubCategory", back_populates="assets")
     tracking_records=relationship("Tracking", back_populates="asset")
     attribute_values=relationship("AssetAttributeValue", back_populates="asset", cascade="all, delete-orphan")

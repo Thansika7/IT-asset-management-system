@@ -6,6 +6,8 @@ from app.server.database.database import Base
 
 class Category(Base):
     __tablename__="categories"
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
     category_id=Column(String(50), primary_key=True, index=True, default=lambda: f"CAT-{uuid.uuid4().hex[:8].upper()}")
     category_name=Column(String(100), nullable=False, unique=True)
     description=Column(Text, nullable=True)
@@ -15,6 +17,8 @@ class Category(Base):
 
 class SubCategory(Base):
     __tablename__="sub_categories"
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
     sub_category_id=Column(String(50), primary_key=True, index=True, default=lambda: f"SUBCAT-{uuid.uuid4().hex[:8].upper()}")
     category_id=Column(String(50), ForeignKey("categories.category_id"), nullable=False)
     sub_category_name=Column(String(100), nullable=False)

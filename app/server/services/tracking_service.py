@@ -5,6 +5,8 @@ from app.server.schema.tracking import Tracking
 from app.server.schema.asset import Asset
 from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
 from app.server.models.tracking import TrackingRead
+from app.server.schema.employee import Employee, EmployeeRole
+from app.server.database.tenant import apply_tenant_filter
 
 class TrackingService:
     @staticmethod
@@ -67,8 +69,8 @@ class TrackingService:
         return data
 
     @staticmethod
-    def get_all_tracking(db: Session, emp_id: Optional[str] = None, branch: Optional[str] = None) -> List[TrackingRead]:
-        query = db.query(Tracking)
+    def get_all_tracking(db: Session, current_user: Employee, emp_id: Optional[str] = None, branch: Optional[str] = None) -> List[TrackingRead]:
+        query = apply_tenant_filter(db.query(Tracking), current_user, Tracking)
         if emp_id:
             query = query.filter(Tracking.emp_id == emp_id)
         if branch:
@@ -81,15 +83,15 @@ class TrackingService:
         return [TrackingService._map_tracking_record(db, rec, attr_map) for rec in records]
 
     @staticmethod
-    def get_asset_history(db: Session, asset_id: str) -> List[TrackingRead]:
-        records = db.query(Tracking).filter(Tracking.asset_id == asset_id).order_by(Tracking.assigned_date.desc()).all()
+    def get_asset_history(db: Session, asset_id: str, current_user: Employee) -> List[TrackingRead]:
+        records = apply_tenant_filter(db.query(Tracking), current_user, Tracking).filter(Tracking.asset_id == asset_id).order_by(Tracking.assigned_date.desc()).all()
         
         attr_map = TrackingService._get_expiry_attr_map(db)
 
         return [TrackingService._map_tracking_record(db, r, attr_map) for r in records]
 
     @staticmethod
-    def check_expirations_and_notify_support(db: Session):
+    def check_expirations_and_notify_support(db: Session, current_user: Employee):
         from app.server.services.email_service import EmailService
 
         attr_map = TrackingService._get_expiry_attr_map(db)
@@ -98,7 +100,7 @@ class TrackingService:
         if not attribute_ids:
             return []
 
-        all_values = db.query(AssetAttributeValue).filter(
+        all_values = apply_tenant_filter(db.query(AssetAttributeValue), current_user, AssetAttributeValue).filter(
             AssetAttributeValue.attribute_id.in_(attribute_ids)
         ).all()
 
@@ -119,7 +121,7 @@ class TrackingService:
                     if not expiry_type:
                         continue
                     attr_name = "License" if expiry_type == "license" else "Warranty"
-                    asset = db.query(Asset).filter(Asset.asset_id == val.asset_id).first()
+                    asset = apply_tenant_filter(db.query(Asset), current_user, Asset).filter(Asset.asset_id == val.asset_id).first()
                     expiring_assets.append({
                         "asset_id": val.asset_id,
                         "asset_name": asset.name if asset else "Unknown",

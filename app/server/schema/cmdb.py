@@ -10,6 +10,8 @@ class ConfigurationItem(Base):
     """CMDB configuration item (CI)."""
 
     __tablename__ = "configuration_items"
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
 
     ci_id = Column(String(50), primary_key=True, index=True, default=lambda: f"CI-{uuid.uuid4().hex[:10].upper()}")
     ci_type = Column(String(50), nullable=False, index=True)
@@ -21,6 +23,8 @@ class ConfigurationItem(Base):
 
 class CIRelationship(Base):
     __tablename__ = "ci_relationships"
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
 
     relationship_id = Column(String(50), primary_key=True, index=True, default=lambda: f"REL-{uuid.uuid4().hex[:10].upper()}")
     source_ci = Column(String(50), ForeignKey("configuration_items.ci_id"), nullable=False, index=True)

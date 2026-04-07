@@ -18,6 +18,7 @@ class TokenPayload(BaseModel):
     exp: int
     emp_id: Optional[str] = None
     branch: Optional[str] = None
+    organization_id: Optional[str] = None
 
 class EmployeeBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -26,6 +27,8 @@ class EmployeeBase(BaseModel):
     personal_email: Optional[EmailStr] = None
     phone: Optional[str] = None
     branch: Optional[str] = None
+    organization_id: Optional[str] = None
+    branch_id: Optional[str] = None
     role: EmployeeRole = EmployeeRole.EMPLOYEE
 
     @field_validator("name", mode="before")
@@ -158,9 +161,45 @@ class EmployeeRead(EmployeeBase):
     model_config=ConfigDict(from_attributes=True)
     employee_id: str
     is_active: bool
+    branch_id: Optional[str] = None
+    organization_id: Optional[str] = None
     password_reset_required: bool = False
     created_at: datetime
-    last_login_at: Optional[datetime]=None
+    last_login_at: Optional[datetime] = None
+
+class EmployeePermissionBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    can_view_assets: bool = False
+    can_create_assets: bool = False
+    can_update_assets: bool = False
+    can_delete_assets: bool = False
+    
+    can_create_request: bool = False
+    can_approve_request: bool = False
+    can_reject_request: bool = False
+    
+    can_view_finance: bool = False
+    can_manage_finance: bool = False
+    
+    can_view_tracking: bool = False
+    can_allocate_asset: bool = False
+    can_transfer_asset: bool = False
+    
+    can_view_branch: bool = False
+    can_create_branch: bool = False
+    can_update_branch: bool = False
+    
+    can_view_reports: bool = False
+    
+    can_manage_users: bool = False
+    can_manage_permissions: bool = False
+
+class EmployeePermissionUpdate(EmployeePermissionBase):
+    pass
+
+class EmployeePermissionRead(EmployeePermissionBase):
+    model_config = ConfigDict(from_attributes=True)
+    employee_id: str
 
 class PasswordChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

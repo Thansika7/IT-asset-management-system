@@ -34,7 +34,7 @@ def list_assets(
     allocated_only: bool = False,
     low_stock_only: bool = False,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     effective_branch = branch
     if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
@@ -42,6 +42,7 @@ def list_assets(
 
     return AssetInsightsService.search_assets(
         db,
+        current_user,
         search=search,
         category=category,
         sub_category=sub_category,
@@ -57,18 +58,18 @@ def list_assets(
 def get_asset_finance(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
-    return AssetInsightsService.get_asset_finance(db, asset_id)
+    return AssetInsightsService.get_asset_finance(db, asset_id, current_user)
 
 
 @router.get("/{asset_id}/detail", response_model=AssetDetailRead)
 def get_asset_detail(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
-    return AssetInsightsService.get_asset_detail(db, asset_id)
+    return AssetInsightsService.get_asset_detail(db, asset_id, current_user)
 
 
 @router.get("/finance/report", response_model=AssetFinanceReportRead)
@@ -88,13 +89,14 @@ def get_asset_finance_report(
     max_health_score: Optional[int] = None,
     sort_by: str = "priority_cost",
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER)),
 ):
     effective_branch = branch
     if current_user.role == EmployeeRole.MANAGER:
         effective_branch = current_user.branch
     return AssetInsightsService.get_finance_report(
         db,
+        current_user,
         effective_branch,
         search=search,
         category=category,
@@ -116,44 +118,44 @@ def get_asset_finance_report(
 def get_asset_health_report(
     branch: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
 ):
     effective_branch = branch
     if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM]:
         effective_branch = current_user.branch
-    return AssetInsightsService.get_health_report(db, branch=effective_branch)
+    return AssetInsightsService.get_health_report(db, current_user, branch=effective_branch)
 
 
 @router.get("/health/critical", response_model=AssetHealthReportRead)
 def get_critical_asset_health_report(
     branch: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
 ):
     effective_branch = branch
     if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM]:
         effective_branch = current_user.branch
-    return AssetInsightsService.get_health_report(db, branch=effective_branch, critical_only=True)
+    return AssetInsightsService.get_health_report(db, current_user, branch=effective_branch, critical_only=True)
 
 
 @router.get("/health/classification")
 def get_asset_health_classification(
     branch: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
 ):
     effective_branch = branch
     if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM]:
         effective_branch = current_user.branch
     # Report includes this branch filter as per health report semantics
-    return AssetInsightsService.get_health_classification(db)
+    return AssetInsightsService.get_health_classification(db, current_user)
 
 
 @router.get("/usage/report")
 def asset_usage_report(
     branch: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     return AssetUsageService.usage_report(db, current_user, branch=branch)
 
@@ -161,7 +163,7 @@ def asset_usage_report(
 @router.get("/usage/analytics")
 def asset_usage_analytics(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     return AssetUsageService.usage_analytics(db, current_user)
 
@@ -170,7 +172,7 @@ def asset_usage_analytics(
 def asset_usage_detail(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     return AssetUsageService.get_asset_usage(db, asset_id, current_user)
 
@@ -179,18 +181,18 @@ def asset_usage_detail(
 def get_asset_health(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
 ):
-    return AssetInsightsService.get_asset_health(db, asset_id)
+    return AssetInsightsService.get_asset_health(db, asset_id, current_user)
 
 
 @router.get("/{asset_id}/recommendation", response_model=AssetRecommendationRead)
 def get_asset_recommendation(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM)),
 ):
-    return AssetInsightsService.get_replacement_recommendation(db, asset_id)
+    return AssetInsightsService.get_replacement_recommendation(db, asset_id, current_user)
 
 
 @router.post("/{asset_id}/recommend-necessity", response_model=RequestNecessityRecommendationResponse)
@@ -198,7 +200,7 @@ def recommend_necessity_for_asset(
     asset_id: str,
     payload: AssetNecessityRecommendationInput,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.HR, EmployeeRole.ADMIN)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN)),
 ):
     """
     Gemini necessity recommendation for HR/Admin while reviewing inventory:

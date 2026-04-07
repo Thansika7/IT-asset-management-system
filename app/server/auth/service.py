@@ -25,9 +25,19 @@ pwd_context=CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme=OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 ROLE_PERMISSIONS={
-    EmployeeRole.ADMIN: {
+    EmployeeRole.SUPER_ADMIN: {
         "system:full_access",
         "requests:override",
+        "requests:approve",
+        "assets:allocate",
+        "assets:track",
+        "assets:transfer",
+        "stock:manage",
+        "employees:manage",
+        "licenses:track",
+        "warranty:track",
+    },
+    EmployeeRole.ORG_ADMIN: {
         "requests:approve",
         "assets:allocate",
         "assets:track",
@@ -66,6 +76,39 @@ ROLE_PERMISSIONS={
     },
 }
 
+DEFAULT_ROLE_PERMISSIONS = {
+    EmployeeRole.SUPER_ADMIN: {
+        "can_view_assets": True, "can_create_assets": True, "can_update_assets": True, "can_delete_assets": True,
+        "can_create_request": True, "can_approve_request": True, "can_reject_request": True,
+        "can_view_finance": True, "can_manage_finance": True,
+        "can_view_tracking": True, "can_allocate_asset": True, "can_transfer_asset": True,
+        "can_view_branch": True, "can_create_branch": True, "can_update_branch": True,
+        "can_view_reports": True,
+        "can_manage_users": True, "can_manage_permissions": True
+    },
+    EmployeeRole.ORG_ADMIN: {
+        "can_view_assets": True, "can_create_assets": True, "can_update_assets": True, "can_delete_assets": True,
+        "can_create_request": True, "can_approve_request": True, "can_reject_request": True,
+        "can_view_finance": True, "can_manage_finance": True,
+        "can_view_tracking": True, "can_allocate_asset": True, "can_transfer_asset": True,
+        "can_view_branch": True, "can_create_branch": True, "can_update_branch": True,
+        "can_view_reports": True,
+        "can_manage_users": True, "can_manage_permissions": True
+    },
+    EmployeeRole.HR: {
+        "can_view_assets": True, "can_view_branch": True, "can_manage_users": True, "can_view_reports": True
+    },
+    EmployeeRole.MANAGER: {
+        "can_approve_request": True, "can_reject_request": True, "can_view_tracking": True, "can_view_reports": True
+    },
+    EmployeeRole.SUPPORT_TEAM: {
+        "can_view_assets": True, "can_view_tracking": True, "can_allocate_asset": True, "can_transfer_asset": True, "can_update_assets": True
+    },
+    EmployeeRole.EMPLOYEE: {
+        "can_create_request": True
+    }
+}
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
@@ -91,6 +134,7 @@ def create_access_token(
     *,
     employee_id: Optional[str] = None,
     branch: Optional[str] = None,
+    organization_id: Optional[str] = None,
 ) -> str:
     expire=datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload={
@@ -102,6 +146,8 @@ def create_access_token(
         payload["emp_id"] = employee_id
     if branch:
         payload["branch"] = branch
+    if organization_id:
+        payload["organization_id"] = organization_id
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -147,6 +193,15 @@ def get_current_user(token: str=Depends(get_token_from_header_or_cookie), db: Se
     user=db.query(Employee).filter(Employee.email==token_data.sub.lower()).first()
     if not user or not user.is_active:
         raise credentials_exception
+        
+    if user.organization and user.role.value != "super_admin":
+        from app.server.schema.organization import SubscriptionStatus
+        if user.organization.subscription_status == SubscriptionStatus.INACTIVE:
+            raise HTTPException(
+                status_code=403,
+                detail="Organization subscription is inactive. Contact support."
+            )
+            
     return user
 
 

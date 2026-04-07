@@ -36,6 +36,7 @@ def login(
         role=user.role,
         employee_id=user.employee_id,
         branch=user.branch,
+        organization_id=user.organization_id,
     )
     
     # Set the cookie for automatic authorization in Swagger UI
@@ -66,6 +67,7 @@ def login_json(
         role=user.role,
         employee_id=user.employee_id,
         branch=user.branch,
+        organization_id=user.organization_id,
     )
     
     # Also set a cookie for convenience, though frontend uses the token directly.

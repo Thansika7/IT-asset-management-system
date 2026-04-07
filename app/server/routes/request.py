@@ -68,7 +68,7 @@ def list_requests(
 def create_request(
     payload: RequestCreate, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
+    current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
 ):
     return RequestService.create_asset_request(db, payload, current_user)
 
@@ -77,7 +77,7 @@ def create_request(
 def recommend_necessity_for_request_route(
     request_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.HR, EmployeeRole.ADMIN)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN)),
 ):
     """
     Gemini (gemini-2.5-flash) advisory for this ticket: whether the asset is likely needed,
@@ -101,7 +101,7 @@ def triage_request(
     request_id: str, 
     payload: RequestTriage, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     return RequestService.triage_asset_request(db, request_id, payload, current_user)
 
@@ -110,7 +110,7 @@ def hr_review(
     request_id: str, 
     payload: RequestHRVerify, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     return RequestService.review_request_by_hr(db, request_id, payload, current_user)
 
@@ -119,7 +119,7 @@ def manager_review(
     request_id: str, 
     payload: RequestReview, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.MANAGER, EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.MANAGER, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     return RequestService.review_request_by_manager(db, request_id, payload, current_user)
 
@@ -128,7 +128,7 @@ def update_manager_notes(
     request_id: str, 
     payload: RequestManagerNotes, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.MANAGER, EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.MANAGER, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     return RequestService.update_manager_notes(db, request_id, payload, current_user)
 
@@ -136,7 +136,7 @@ def update_manager_notes(
 def delete_request(
     request_id: str,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     return RequestService.delete_request(db, request_id, current_user)
 
@@ -145,7 +145,7 @@ def admin_review(
     request_id: str, 
     payload: RequestReview, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     return RequestService.review_request_by_admin(db, request_id, payload, current_user)
 
@@ -155,7 +155,7 @@ def execute_request(
     provided_asset_id: Optional[str] = None, 
     broken_asset_id: Optional[str] = None, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     req=RequestService.execute_asset_request(db, request_id, provided_asset_id, broken_asset_id, current_user)
     return {"status": "success", "executed_action": req.action_type, "new_status": req.status}
@@ -174,7 +174,7 @@ def resolve_request(
     request_id: str,
     payload: RequestResolve,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     req=RequestService.resolve_service_request(db, request_id, payload, current_user)
     return {"status": "resolved", "final_action": "REPAIRED_AND_RETURNED", "new_status": req.status}
@@ -184,18 +184,19 @@ def resolve_request(
 def direct_allocate_asset(
     payload: AdminDirectAllocationCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN))
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     """
     Allows admin to directly allocate an asset to an employee without going through the request workflow.
     This bypasses all request approval stages and directly creates an allocation record.
     """
+    from app.server.database.tenant import apply_tenant_filter
     from app.server.services.stock_service import StockService
     from app.server.schema.tracking import AllocationType
     from app.server.exceptions.base import ResourceNotFoundError, InsufficientStockError
     
     # Validate that the employee exists
-    employee = db.query(Employee).filter(Employee.employee_id == payload.employee_id).first()
+    employee = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(Employee.employee_id == payload.employee_id).first()
     if not employee:
         raise ResourceNotFoundError("Employee", payload.employee_id)
     
