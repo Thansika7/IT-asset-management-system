@@ -3,7 +3,7 @@ import Pagination from '@/components/Pagination'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
-import { canManageStockWrites, canManualStockOverride } from '@/lib/roles'
+import { canManageStockWrites } from '@/lib/roles'
 import {
   useReactTable,
   getCoreRowModel,
@@ -18,7 +18,6 @@ export default function Stock() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const canWrite = canManageStockWrites(user.role)
-  const canOverride = canManualStockOverride(user.role)
   const [selectedAssetId, setSelectedAssetId] = useState(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [page, setPage] = useState(1)
@@ -70,26 +69,6 @@ export default function Stock() {
     onSuccess: invalidateStockRelated,
   })
 
-  const allocateMut = useMutation({
-    mutationFn: (body) => apiFetch('/stock/allocate_manual_override', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: (payload) => {
-      invalidateStockRelated()
-      if (payload?.tracking_id) {
-        window.alert(`Assigned. Tracking ID: ${payload.tracking_id}`)
-      }
-    },
-  })
-
-  const returnMut = useMutation({
-    mutationFn: (body) => apiFetch('/stock/return_manual_override', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: (payload) => {
-      invalidateStockRelated()
-      if (payload?.recovered_asset) {
-        window.alert(`Returned to stock. Asset: ${payload.recovered_asset}`)
-      }
-    },
-  })
-
   const columns = useMemo(
     () => [
       { header: 'Asset ID', accessorKey: 'asset_id', cell: (c) => <span className="font-mono text-xs">{c.getValue()}</span> },
@@ -127,8 +106,7 @@ export default function Stock() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
           <p className="text-sm text-slate-600 mt-1">
-            Catalog and quantities. Register and restock require admin or support. Manual assign and return are{' '}
-            <strong className="font-semibold text-slate-800">admin only</strong> (bypasses the request workflow).
+            Catalog and quantities. Register and restock require admin or support.
           </p>
         </div>
         <button
@@ -142,7 +120,6 @@ export default function Stock() {
       </div>
 
       {canWrite ? <StockForms createMut={createMut} addMut={addMut} /> : null}
-      {canOverride ? <AdminAllocateReturn allocateMut={allocateMut} returnMut={returnMut} /> : null}
 
       <div className="grid gap-6">
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
@@ -295,66 +272,3 @@ function StockForms({ createMut, addMut }) {
   )
 }
 
-function AdminAllocateReturn({ allocateMut, returnMut }) {
-  const [aAsset, setAAsset] = useState('')
-  const [aEmp, setAEmp] = useState('')
-  const [aType, setAType] = useState('PERMANENT')
-  const [aReason, setAReason] = useState('MANUAL_ALLOCATE')
-  const [rTrk, setRTrk] = useState('')
-  const [rReason, setRReason] = useState('MANUAL_RETURN')
-
-  return (
-    <div className="rounded-2xl border border-amber-200/80 bg-amber-50/40 p-5 space-y-4">
-      <h2 className="text-sm font-bold text-amber-900 uppercase tracking-wide">Admin · Manual allocation and return</h2>
-      <p className="text-xs text-amber-900/80">
-        Uses <code className="bg-white/80 px-1 rounded">allocate_manual_override</code> and <code className="bg-white/80 px-1 rounded">return_manual_override</code>. Tracking IDs appear on <strong>Tracking</strong> and <strong>My assets</strong>. Returning increments available quantity for that catalog asset.
-      </p>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <form
-          className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm"
-          onSubmit={(e) => {
-            e.preventDefault()
-            const body = {
-              asset_id: aAsset.trim(),
-              emp_id: aEmp.trim(),
-              allocation_type: aType,
-            }
-            if (aReason.trim()) body.movement_reason = aReason.trim()
-            allocateMut.mutate(body)
-          }}
-        >
-          <h3 className="font-bold text-slate-900 text-sm">Assign unit to employee</h3>
-          <input required className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Catalog asset id" value={aAsset} onChange={(e) => setAAsset(e.target.value)} />
-          <input required className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Employee id (e.g. EMP-...)" value={aEmp} onChange={(e) => setAEmp(e.target.value)} />
-          <select className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={aType} onChange={(e) => setAType(e.target.value)}>
-            <option value="PERMANENT">Permanent</option>
-            <option value="TEMPORARY">Temporary (loaner)</option>
-          </select>
-          <input className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Movement reason" value={aReason} onChange={(e) => setAReason(e.target.value)} />
-          <button type="submit" disabled={allocateMut.isPending} className="w-full rounded-xl bg-amber-700 text-white text-sm font-semibold py-2.5 disabled:opacity-50">
-            Allocate
-          </button>
-          {allocateMut.isError ? <p className="text-xs text-rose-600">{allocateMut.error?.message}</p> : null}
-        </form>
-
-        <form
-          className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm"
-          onSubmit={(e) => {
-            e.preventDefault()
-            const body = { tracking_id: rTrk.trim() }
-            if (rReason.trim()) body.movement_reason = rReason.trim()
-            returnMut.mutate(body)
-          }}
-        >
-          <h3 className="font-bold text-slate-900 text-sm">Return assignment to stock</h3>
-          <input required className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono text-xs" placeholder="Tracking id (TRK-...)" value={rTrk} onChange={(e) => setRTrk(e.target.value)} />
-          <input className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Reason" value={rReason} onChange={(e) => setRReason(e.target.value)} />
-          <button type="submit" disabled={returnMut.isPending} className="w-full rounded-xl border-2 border-amber-700 text-amber-900 text-sm font-semibold py-2.5 disabled:opacity-50 bg-white">
-            Return / recover
-          </button>
-          {returnMut.isError ? <p className="text-xs text-rose-600">{returnMut.error?.message}</p> : null}
-        </form>
-      </div>
-    </div>
-  )
-}
