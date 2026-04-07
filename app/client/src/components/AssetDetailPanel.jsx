@@ -1,5 +1,17 @@
 import React from 'react'
 
+function getHealthClass(asset) {
+  const raw = asset?.health_classification || asset?.classification || asset?.health_class
+  if (raw) return String(raw).replace(/_/g, ' ')
+
+  const score = Number(asset?.health_score)
+  if (Number.isNaN(score)) return '-'
+  if (score >= 85) return 'HEALTHY'
+  if (score >= 70) return 'GOOD'
+  if (score >= 50) return 'WARNING'
+  return 'CRITICAL'
+}
+
 function DetailItem({ label, value }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -22,6 +34,10 @@ export default function AssetDetailPanel({ asset, title = 'Asset Details', subti
     )
   }
 
+  const healthScore = Number(asset.health_score)
+  const safeHealthScore = Number.isNaN(healthScore) ? 0 : healthScore
+  const healthClass = getHealthClass(asset)
+
   return (
     <aside className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
       <div className="border-b border-slate-100 pb-4">
@@ -36,8 +52,8 @@ export default function AssetDetailPanel({ asset, title = 'Asset Details', subti
         <DetailItem label="Brand" value={asset.brand} />
         <DetailItem label="Branch" value={asset.branch} />
         <DetailItem label="Status" value={asset.status} />
-        <DetailItem label="Health Score" value={asset.health_score ? `${asset.health_score}/100` : '0/100'} />
-        <DetailItem label="Health Class" value={asset.health_classification || '-'} />
+        <DetailItem label="Health Score" value={`${safeHealthScore}/100`} />
+        <DetailItem label="Health Class" value={healthClass} />
         <DetailItem label="Total Quantity" value={asset.total_quantity} />
         <DetailItem label="Used / Available" value={`${asset.used} / ${asset.unused}`} />
         <DetailItem label="Low Stock" value={asset.low_stock ? `Yes (threshold ${asset.low_stock_threshold})` : 'No'} />

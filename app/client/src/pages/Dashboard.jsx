@@ -39,15 +39,27 @@ export default function Dashboard() {
   const stock = stockQ.data ?? []
   const finance = finQ.data
 
-  const openRequests = Array.isArray(requests)
-    ? requests.filter((r) => !['COMPLETED', 'REJECTED'].includes(String(r.status))).length
-    : 0
+  const requestItems = Array.isArray(requests)
+    ? requests
+    : Array.isArray(requests?.items)
+      ? requests.items
+      : []
+  const requestTotal = Array.isArray(requests)
+    ? requests.length
+    : Number.isFinite(requests?.total)
+      ? requests.total
+      : requestItems.length
+
+  const openRequests = requestItems.filter((r) => {
+    const lifeCycle = String(r?.stage || r?.status || '').toUpperCase()
+    return !['COMPLETED', 'REJECTED'].includes(lifeCycle)
+  }).length
 
   const stats = [
     {
       label: 'Active requests',
       value: reqQ.isLoading ? '-' : openRequests,
-      sub: `${Array.isArray(requests) ? requests.length : 0} total`,
+      sub: `${requestTotal} total`,
       icon: FileStack,
       onClick: () => navigate('/requests'),
       show: true,

@@ -51,6 +51,14 @@ def list_ci(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
+    """
+    List Configuration Items (CIs).
+    
+    Valid CI types: ASSET, SOFTWARE, SERVICE, USER, NETWORK_DEVICE, FURNITURE, CLOUD, OTHER
+    
+    Query Parameters:
+    - ci_type: Filter by CI type (e.g., "ASSET", "SOFTWARE", "SERVICE")
+    """
     rows = CMDBService.list_items(db, current_user, ci_type=ci_type)
     return [
         CIRead(
@@ -71,6 +79,16 @@ def create_ci(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER)),
 ):
+    """
+    Create a new Configuration Item (CI).
+    
+    Requires ADMIN or MANAGER role.
+    
+    Valid CI types: ASSET, SOFTWARE, SERVICE, USER, NETWORK_DEVICE, FURNITURE, CLOUD, OTHER
+    Invalid types default to "OTHER".
+    
+    An optional asset_id can link this CI to a physical or digital asset.
+    """
     r = CMDBService.create_item(
         db,
         current_user,
@@ -95,6 +113,19 @@ def list_rels(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
+    """
+    List CI Relationships.
+    
+    Query Parameters:
+    - ci_id: Filter relationships involving this CI (as source or target)
+    
+    Valid relationship types:
+    - depends_on: Source depends on target (e.g., software depends on service)
+    - connected_to: Bidirectional connection (e.g., device connected to network)
+    - assigned_to: Source assigned/allocated to target (e.g., software to device, user to device)
+    - hosted_on: Source is hosted/running on target (e.g., service hosted on server)
+    - supports: Source physically/logically supports target (e.g., furniture supports monitor)
+    """
     rows = CMDBService.list_relationships(db, current_user, ci_id=ci_id)
     return [CIRelRead.model_validate(r) for r in rows]
 
@@ -105,6 +136,20 @@ def create_rel(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER)),
 ):
+    """
+    Create a CI Relationship.
+    
+    Requires ADMIN or MANAGER role.
+    
+    Valid relationship types:
+    - depends_on: Source depends on target (e.g., software depends on service)
+    - connected_to: Bidirectional connection (e.g., device connected to network)
+    - assigned_to: Source assigned/allocated to target (e.g., software to device, user to device)
+    - hosted_on: Source is hosted/running on target (e.g., service hosted on server)
+    - supports: Source physically/logically supports target (e.g., furniture supports monitor)
+    
+    Both source_ci and target_ci must exist as Configuration Items.
+    """
     try:
         r = CMDBService.create_relationship(
             db,

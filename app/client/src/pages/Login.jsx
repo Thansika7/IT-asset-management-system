@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { FullPageLoader } from '@/components/AppShell'
@@ -50,7 +50,7 @@ export default function Login() {
         <div className="relative z-10 flex w-full items-center px-12 py-16 text-white motion-fade-up">
           <div className="max-w-lg">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300 mb-4">Asset Workspace</p>
-            <h1 className="text-4xl font-bold tracking-tight mb-4 leading-tight">IT asset management</h1>
+            <h1 className="text-4xl font-bold tracking-tight mb-4 leading-tight">IT asset control</h1>
             <p className="text-slate-300 text-base leading-relaxed max-w-md">
               Track inventory, approvals, and assignments with a workspace tailored to each role from employees to support and finance.
             </p>
