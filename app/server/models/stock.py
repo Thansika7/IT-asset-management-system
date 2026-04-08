@@ -3,6 +3,7 @@ from typing import Optional, List
 from app.server.schema.asset import AssetStatus
 from app.server.schema.tracking import MovementType, AllocationType
 from datetime import date, datetime
+from app.server.schema.employee import EmployeeRole
 
 class AssetCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -198,3 +199,60 @@ class OnboardRequest(BaseModel):
             seen.add(normalized)
             cleaned.append(normalized)
         return cleaned
+
+
+class OnboardingPresetCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    target_role: Optional[EmployeeRole] = None
+    branch: Optional[str] = None
+    asset_ids: List[str]
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        if not isinstance(v, str):
+            raise ValueError("name must be a string")
+        value = v.strip()
+        if not value:
+            raise ValueError("name must not be blank")
+        return value
+
+    @field_validator("branch")
+    @classmethod
+    def validate_branch(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("branch must be a string")
+        value = v.strip()
+        return value or None
+
+    @field_validator("asset_ids")
+    @classmethod
+    def validate_asset_ids(cls, values: List[str]) -> List[str]:
+        if not values:
+            raise ValueError("asset_ids must contain at least one asset id")
+        cleaned: List[str] = []
+        seen = set()
+        for value in values:
+            if not isinstance(value, str):
+                raise ValueError("Each asset id must be a string")
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError("Asset ids must not be blank")
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            cleaned.append(normalized)
+        return cleaned
+
+
+class OnboardingPresetRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    preset_id: str
+    name: str
+    target_role: Optional[EmployeeRole] = None
+    branch: Optional[str] = None
+    asset_ids: List[str]
+    created_at: datetime

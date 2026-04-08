@@ -7,3 +7,4 @@ from .category import Category, SubCategory
 from .attribute import AssetAttribute, AssetAttributeValue
 from .audit import AuditLog
 from .cmdb import ConfigurationItem, CIRelationship
+from .onboarding import OnboardingPreset

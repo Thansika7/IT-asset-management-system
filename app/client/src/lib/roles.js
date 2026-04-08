@@ -36,7 +36,9 @@ export const NAV = {
   requests: (r) => r !== R.SUPER_ADMIN,
   tracking: (r) => r !== R.SUPER_ADMIN,
   organizations: (r) => [R.SUPER_ADMIN, R.ORG_ADMIN].includes(r),
-  employees: (r) => [R.ADMIN, R.ORG_ADMIN, R.HR, R.MANAGER].includes(r),
+  employees: (r, p) =>
+    [R.ADMIN, R.ORG_ADMIN, R.HR, R.MANAGER].includes(r) ||
+    Boolean(p?.can_manage_users || p?.can_manage_permissions),
   /** View kits for registration / allocation planning */
   onboardingKits: (r) => [R.ADMIN, R.MANAGER, R.HR].includes(r),
   stock: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
@@ -104,6 +106,6 @@ export function canTransferCrossBranch(r) {
   return r === R.MANAGER
 }
 
-export function canManagePermissions(r) {
-  return [R.ADMIN, R.ORG_ADMIN].includes(r)
+export function canManagePermissions(r, p) {
+  return [R.ADMIN, R.ORG_ADMIN].includes(r) || Boolean(p?.can_manage_permissions)
 }

@@ -77,38 +77,57 @@ ROLE_PERMISSIONS={
     },
 }
 
-DEFAULT_ROLE_PERMISSIONS = {
-    EmployeeRole.SUPER_ADMIN: {
-        "can_view_assets": True, "can_create_assets": True, "can_update_assets": True, "can_delete_assets": True,
-        "can_create_request": True, "can_approve_request": True, "can_reject_request": True,
-        "can_view_finance": True, "can_manage_finance": True,
-        "can_view_tracking": True, "can_allocate_asset": True, "can_transfer_asset": True,
-        "can_view_branch": True, "can_create_branch": True, "can_update_branch": True,
-        "can_view_reports": True,
-        "can_manage_users": True, "can_manage_permissions": True
+ROLE_PERMISSION_TO_FLAGS = {
+    "system:full_access": {
+        "can_view_assets",
+        "can_create_assets",
+        "can_update_assets",
+        "can_delete_assets",
+        "can_create_request",
+        "can_approve_request",
+        "can_reject_request",
+        "can_view_finance",
+        "can_manage_finance",
+        "can_view_tracking",
+        "can_allocate_asset",
+        "can_transfer_asset",
+        "can_view_branch",
+        "can_create_branch",
+        "can_update_branch",
+        "can_view_reports",
+        "can_manage_users",
+        "can_manage_permissions",
     },
-    EmployeeRole.ORG_ADMIN: {
-        "can_view_assets": True, "can_create_assets": True, "can_update_assets": True, "can_delete_assets": True,
-        "can_create_request": True, "can_approve_request": True, "can_reject_request": True,
-        "can_view_finance": True, "can_manage_finance": True,
-        "can_view_tracking": True, "can_allocate_asset": True, "can_transfer_asset": True,
-        "can_view_branch": True, "can_create_branch": True, "can_update_branch": True,
-        "can_view_reports": True,
-        "can_manage_users": True, "can_manage_permissions": True
-    },
-    EmployeeRole.HR: {
-        "can_view_assets": True, "can_view_branch": True, "can_manage_users": True, "can_view_reports": True
-    },
-    EmployeeRole.MANAGER: {
-        "can_approve_request": True, "can_reject_request": True, "can_view_tracking": True, "can_view_reports": True
-    },
-    EmployeeRole.SUPPORT_TEAM: {
-        "can_view_assets": True, "can_view_tracking": True, "can_allocate_asset": True, "can_transfer_asset": True, "can_update_assets": True
-    },
-    EmployeeRole.EMPLOYEE: {
-        "can_create_request": True
-    }
+    "requests:create": {"can_create_request"},
+    "requests:approve": {"can_approve_request", "can_reject_request"},
+    "requests:review": {"can_approve_request", "can_reject_request"},
+    "requests:override": {"can_approve_request", "can_reject_request"},
+    "assets:allocate": {"can_allocate_asset", "can_view_assets"},
+    "assets:track": {"can_view_tracking", "can_view_assets"},
+    "assets:transfer": {"can_transfer_asset", "can_view_tracking"},
+    "assets:branch_view": {"can_view_assets", "can_view_branch"},
+    "assets:view_assigned": {"can_view_assets"},
+    "stock:manage": {"can_view_assets", "can_create_assets", "can_update_assets"},
+    "employees:manage": {"can_manage_users"},
+    "licenses:track": {"can_view_reports"},
+    "warranty:track": {"can_view_reports"},
+    "team_assets:view": {"can_view_assets"},
+    "history:view_own": {"can_view_tracking"},
 }
+
+
+def _build_default_role_permissions() -> dict[EmployeeRole, dict[str, bool]]:
+    defaults: dict[EmployeeRole, dict[str, bool]] = {}
+    for role, permissions in ROLE_PERMISSIONS.items():
+        role_flags: dict[str, bool] = {}
+        for permission in permissions:
+            for flag in ROLE_PERMISSION_TO_FLAGS.get(permission, set()):
+                role_flags[flag] = True
+        defaults[role] = role_flags
+    return defaults
+
+
+DEFAULT_ROLE_PERMISSIONS = _build_default_role_permissions()
 
 PERMISSION_FLAG_FIELDS = [
     "can_view_assets",

@@ -196,7 +196,7 @@ class EmployeePermissionBase(BaseModel):
     can_manage_permissions: bool = False
 
 class EmployeePermissionUpdate(EmployeePermissionBase):
-    pass
+    model_config = ConfigDict(extra="ignore")
 
 class EmployeePermissionRead(EmployeePermissionBase):
     model_config = ConfigDict(from_attributes=True)

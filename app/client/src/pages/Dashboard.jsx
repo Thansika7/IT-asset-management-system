@@ -103,7 +103,7 @@ export default function Dashboard() {
     { title: 'Live tracking', desc: 'Movement history you are allowed to see.', to: '/tracking', show: true, icon: MapPinned },
     { title: 'Inventory', desc: 'On-hand stock by catalog asset.', to: '/stock', show: NAV.stock(user.role), icon: PackageSearch },
     { title: 'Finance snapshot', desc: 'Totals and overhead.', to: '/finance', show: NAV.finance(user.role, user.permissions), icon: Wallet },
-    { title: 'Team directory', desc: 'People in your org scope.', to: '/employees', show: NAV.employees(user.role), icon: Users },
+    { title: 'Team directory', desc: 'People in your org scope.', to: '/employees', show: NAV.employees(user.role, user.permissions), icon: Users },
     {
       title: 'Onboarding kits',
       desc: 'Preset bundles for new hires; use when registering employees.',

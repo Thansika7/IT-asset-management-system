@@ -105,7 +105,7 @@ export default function Employees() {
           
           return (
             <div className="flex gap-2 items-center">
-              {canManagePermissions(user.role) && (user.employeeId !== emp.employee_id) && (
+              {canManagePermissions(user.role, user.permissions) && (user.employeeId !== emp.employee_id) && (
                 <button
                   type="button"
                   onClick={() => setPermsUser({ id: emp.employee_id, name: emp.name })}
@@ -125,7 +125,7 @@ export default function Employees() {
                   Remove
                 </button>
               )}
-              {(!canDeactivateEmployees(user.role) && !canManagePermissions(user.role)) && (
+              {(!canDeactivateEmployees(user.role) && !canManagePermissions(user.role, user.permissions)) && (
                 <span className="text-slate-400 text-xs">—</span>
               )}
             </div>
@@ -436,7 +436,7 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
           >
-            <option value="">Select branch (optional for employee/admin)</option>
+            <option value="">Select branch</option>
             {branches.map((b) => (
               <option key={b.branch_id} value={b.branch_id}>
                 {b.branch_name}
@@ -521,7 +521,6 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
                   name: nm,
                   personal_email: pe,
                   phone: phone.trim() || null,
-                  branch: branch.trim() || null,
                   role,
                   branch_id: branchId || null,
                   preset_id: presetId || null,
@@ -549,8 +548,8 @@ function PermissionsModal({ empId, name, onClose, onSaved }) {
     mutationFn: (body) => apiFetch(`/employees/${empId}/permissions`, { method: 'PUT', body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['employee-permissions', empId] })
-      onSaved?.(`Permissions for ${name} updated successfully.`)
       onClose()
+      onSaved?.(`Permissions for ${name} updated successfully.`)
     },
   })
 
@@ -622,6 +621,15 @@ function PermissionsModal({ empId, name, onClose, onSaved }) {
     }
   ]
 
+  const permissionKeys = groups.flatMap((g) => g.fields.map((f) => f.key))
+
+  const buildPermissionPayload = () => {
+    return permissionKeys.reduce((acc, key) => {
+      acc[key] = perms[key] === true
+      return acc
+    }, {})
+  }
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
       <button type="button" className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" aria-label="Close" onClick={onClose} />
@@ -661,6 +669,11 @@ function PermissionsModal({ empId, name, onClose, onSaved }) {
             </div>
             
             <div className="pt-4 border-t border-slate-100 flex gap-2 shrink-0">
+              {updateMut.error ? (
+                <p className="w-full text-xs text-rose-600 whitespace-pre-wrap rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">
+                  {updateMut.error.message}
+                </p>
+              ) : null}
               <button 
                 type="button" 
                 onClick={onClose} 
@@ -672,7 +685,7 @@ function PermissionsModal({ empId, name, onClose, onSaved }) {
                 type="button"
                 disabled={updateMut.isPending}
                 className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-700 text-white py-2.5 text-sm font-semibold transition-colors disabled:opacity-50"
-                onClick={() => updateMut.mutate(perms)}
+                onClick={() => updateMut.mutate(buildPermissionPayload())}
               >
                 {updateMut.isPending ? 'Saving...' : 'Save Permissions'}
               </button>
