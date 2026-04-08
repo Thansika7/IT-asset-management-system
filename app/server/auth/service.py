@@ -109,6 +109,33 @@ DEFAULT_ROLE_PERMISSIONS = {
     }
 }
 
+PERMISSION_FLAG_FIELDS = [
+    "can_view_assets",
+    "can_create_assets",
+    "can_update_assets",
+    "can_delete_assets",
+    "can_create_request",
+    "can_approve_request",
+    "can_reject_request",
+    "can_view_finance",
+    "can_manage_finance",
+    "can_view_tracking",
+    "can_allocate_asset",
+    "can_transfer_asset",
+    "can_view_branch",
+    "can_create_branch",
+    "can_update_branch",
+    "can_view_reports",
+    "can_manage_users",
+    "can_manage_permissions",
+]
+
+
+def get_default_permission_flags(role: EmployeeRole) -> dict[str, bool]:
+    """Return a full permission map for the given role with explicit True/False values."""
+    role_defaults = DEFAULT_ROLE_PERMISSIONS.get(role, {})
+    return {flag: bool(role_defaults.get(flag, False)) for flag in PERMISSION_FLAG_FIELDS}
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from app.server.auth.service import get_password_hash, DEFAULT_ROLE_PERMISSIONS
+from app.server.auth.service import get_password_hash, get_default_permission_flags
 from app.server.database.database import get_db
 from app.server.models.api import EmployeeCreate, EmployeeRead, EmployeePermissionUpdate, EmployeePermissionRead
 from app.server.services.email_service import EmailService
@@ -107,10 +107,12 @@ def register_employee(
     db.add(user)
     db.flush()
 
-    # Assign default role permissions
-    default_perms = DEFAULT_ROLE_PERMISSIONS.get(user.role, {})
+    # Assign default role permissions for all permission flags.
+    default_perms = get_default_permission_flags(user.role)
     user.permissions = EmployeePermission(
         employee_id=user.employee_id,
+        organization_id=user.organization_id,
+        branch_id=user.branch_id,
         **default_perms
     )
     db.add(user.permissions)
@@ -221,10 +223,12 @@ def get_employee_permissions(
         raise ResourceNotFoundError("Employee", emp_id)
 
     if not target.permissions:
+        default_perms = get_default_permission_flags(target.role)
         target.permissions = EmployeePermission(
             employee_id=target.employee_id,
             organization_id=target.organization_id,
-            branch_id=target.branch_id
+            branch_id=target.branch_id,
+            **default_perms,
         )
         db.add(target.permissions)
         db.commit()
@@ -248,10 +252,12 @@ def update_employee_permissions(
             raise HTTPException(status_code=403, detail="Organization Admin cannot modify permissions of a Global Admin.")
 
     if not target.permissions:
+        default_perms = get_default_permission_flags(target.role)
         target.permissions = EmployeePermission(
             employee_id=target.employee_id,
             organization_id=target.organization_id,
-            branch_id=target.branch_id
+            branch_id=target.branch_id,
+            **default_perms,
         )
         db.add(target.permissions)
         

@@ -18,7 +18,15 @@ class Employee(Base):
     __tablename__="employees"
     employee_id=Column(String(50), primary_key=True, index=True, default=lambda: f"EMP-{uuid.uuid4().hex[:8].upper()}")
     name=Column(String(150), nullable=False)
-    role=Column(Enum(EmployeeRole, name="employee_role"), nullable=False, default=EmployeeRole.EMPLOYEE)
+    role=Column(
+        Enum(
+            EmployeeRole,
+            name="employee_role",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=EmployeeRole.EMPLOYEE,
+    )
     organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True)
     branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True)
     

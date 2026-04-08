@@ -1,6 +1,7 @@
 /** Matches backend `EmployeeRole` string values */
 export const R = {
-  ADMIN: 'admin',
+  SUPER_ADMIN: 'super_admin',
+  ADMIN: 'super_admin',
   ORG_ADMIN: 'org_admin',
   MANAGER: 'manager',
   HR: 'hr',
@@ -9,7 +10,7 @@ export const R = {
 }
 
 export const ROLE_LABEL = {
-  [R.ADMIN]: 'Administrator',
+  [R.SUPER_ADMIN]: 'Super Admin',
   [R.ORG_ADMIN]: 'Org Admin',
   [R.MANAGER]: 'Manager',
   [R.HR]: 'HR',
@@ -19,7 +20,9 @@ export const ROLE_LABEL = {
 
 export function normalizeRole(value) {
   if (!value) return R.EMPLOYEE
-  return String(value).toLowerCase()
+  const normalized = String(value).toLowerCase()
+  if (normalized === 'admin') return R.SUPER_ADMIN
+  return normalized
 }
 
 export function labelForRole(role) {
