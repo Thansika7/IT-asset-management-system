@@ -671,7 +671,7 @@ function RequestList({ rows, selectedId, onSelect }) {
   )
 }
 
-function DetailPanel({ row, user, mutations, onDelete }) {
+function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [triagePriority, setTriagePriority] = useState('P3')
   const [triageSeverity, setTriageSeverity] = useState('MEDIUM')
@@ -681,8 +681,6 @@ function DetailPanel({ row, user, mutations, onDelete }) {
   const [repairCost, setRepairCost] = useState('0')
   const [disposable, setDisposable] = useState(false)
   const [tBranch, setTBranch] = useState('')
-  const [tBrand, setTBrand] = useState('')
-  const [tName, setTName] = useState('')
   const [rejectNotes, setRejectNotes] = useState('')
   const [aiRecommendation, setAiRecommendation] = useState(null)
   const [aiError, setAiError] = useState('')
@@ -723,14 +721,12 @@ function DetailPanel({ row, user, mutations, onDelete }) {
     setResolveNotes('')
     setRepairCost('0')
     setDisposable(false)
-    setTBranch('')
-    setTBrand('')
-    setTName('')
+    setTBranch(transferBranches[0] || '')
     setRejectNotes('')
     setAiRecommendation(null)
     setAiError('')
     setManagerNotes('')
-  }, [row?.request_id])
+  }, [row?.request_id, transferBranches])
 
   if (!row) {
     return (
@@ -1044,16 +1040,21 @@ function DetailPanel({ row, user, mutations, onDelete }) {
       {canTransferCrossBranch(user.role) ? (
         <div className="space-y-3 border-t border-slate-100 pt-5">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Cross-branch transfer</p>
-          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Target branch" value={tBranch} onChange={(e) => setTBranch(e.target.value)} />
-          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Target brand" value={tBrand} onChange={(e) => setTBrand(e.target.value)} />
-          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Target asset name" value={tName} onChange={(e) => setTName(e.target.value)} />
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={tBranch} onChange={(e) => setTBranch(e.target.value)}>
+            <option value="">Select target branch</option>
+            {transferBranches.map((branchName) => (
+              <option key={branchName} value={branchName}>{branchName}</option>
+            ))}
+          </select>
           <button
             type="button"
             className="rounded-xl border border-slate-300 text-sm font-medium px-4 py-2"
-            onClick={() => mutations.transferMut.mutate({ id: row.request_id, body: { target_branch: tBranch, target_asset_brand: tBrand, target_asset_name: tName } })}
+            disabled={!tBranch}
+            onClick={() => mutations.transferMut.mutate({ id: row.request_id, body: { target_branch: tBranch } })}
           >
             Request transfer
           </button>
+          {!transferBranches.length ? <p className="text-xs text-slate-500">No eligible target branches with active manager found.</p> : null}
           {mutations.transferMut.isError ? <p className="text-xs text-rose-600">{err(mutations.transferMut)}</p> : null}
         </div>
       ) : null}
@@ -1075,6 +1076,12 @@ export default function Requests() {
   const formOptionsQuery = useQuery({
     queryKey: ['request-form-options'],
     queryFn: () => apiFetch('/requests/form-options'),
+  })
+
+  const transferBranchesQuery = useQuery({
+    queryKey: ['request-transfer-target-branches'],
+    queryFn: () => apiFetch('/requests/transfer-target-branches'),
+    enabled: canTransferCrossBranch(user.role),
   })
 
   const { data = { items: [], total: 0, page: 1, per_page: perPage }, isLoading, isError, error, refetch, isFetching } = useQuery({
@@ -1237,7 +1244,7 @@ export default function Requests() {
               ×
             </button>
             <div className="p-6">
-              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut, invalidate }} onDelete={() => setDetailsOpen(false)} />
+              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut, invalidate }} onDelete={() => setDetailsOpen(false)} transferBranches={transferBranchesQuery.data || []} />
             </div>
           </div>
         </div>
