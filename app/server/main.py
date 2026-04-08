@@ -9,16 +9,16 @@ from jose import JWTError, jwt
 from app.server.database.database import Base, engine, SessionLocal
 from app.server.routes.auth import router as auth_router
 from app.server.routes.employee import router as employee_router
+from app.server.routes.organization import router as org_router
 from app.server.routes.stock import router as stock_router
 from app.server.routes.assets import router as assets_router
 from app.server.routes.analytics import router as analytics_router
 from app.server.routes.request import router as req_router
 from app.server.routes.account import router as account_router
 from app.server.routes.tracking import router as tracking_router
-from app.server.routes.onboarding_preset import router as onboarding_preset_router
 from app.server.routes.discovery import router as discovery_router
 from app.server.routes.cmdb import router as cmdb_router
-from app.server.schema import asset, employee, category, attribute, request, tracking, audit, onboarding_preset
+from app.server.schema import asset, employee, category, attribute, request, tracking, audit
 import app.server.schema.cmdb  # noqa: F401 — register CMDB tables
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.auth.service import ALGORITHM, SECRET_KEY, get_password_hash
@@ -157,7 +157,7 @@ def init_admin():
                 name="System Administrator",
                 email=admin_email,
                 personal_email=admin_personal_env,
-                role=EmployeeRole.ADMIN,
+                role=EmployeeRole.SUPER_ADMIN,
                 password_hash=get_password_hash(admin_password),
                 is_active=True
             )
@@ -179,13 +179,13 @@ def init_admin():
 
 app.include_router(auth_router)
 app.include_router(employee_router)
+app.include_router(org_router)
 app.include_router(stock_router)
 app.include_router(assets_router)
 app.include_router(analytics_router)
 app.include_router(req_router)
 app.include_router(account_router)
 app.include_router(tracking_router)
-app.include_router(onboarding_preset_router)
 app.include_router(discovery_router)
 app.include_router(cmdb_router)
 @app.get("/health")

@@ -8,15 +8,16 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 import { apiFetch } from '@/lib/api'
-import { R, canRegisterEmployees, canDeactivateEmployees, labelForRole } from '@/lib/roles'
+import { R, canRegisterEmployees, canDeactivateEmployees, labelForRole, canManagePermissions } from '@/lib/roles'
 import { useAuth } from '@/context/AuthContext'
-import { RefreshCw, UserPlus, X, UserMinus } from 'lucide-react'
+import { RefreshCw, UserPlus, X, UserMinus, Shield } from 'lucide-react'
 
 export default function Employees() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [deact, setDeact] = useState(null)
+  const [permsUser, setPermsUser] = useState(null)
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['employees'],
@@ -95,19 +96,33 @@ export default function Employees() {
         cell: ({ row }) => {
           const emp = row.original
           if (!emp?.is_active) return <span className="text-slate-400 text-xs">—</span>
-          if (!canDeactivateEmployees(user.role)) return <span className="text-slate-400 text-xs">—</span>
-          if (user.employeeId && emp.employee_id === user.employeeId) {
-            return <span className="text-xs text-slate-400">Current user</span>
-          }
+          
           return (
-            <button
-              type="button"
-              onClick={() => setDeact({ id: emp.employee_id, name: emp.name })}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100"
-            >
-              <UserMinus className="w-3.5 h-3.5" />
-              Remove
-            </button>
+            <div className="flex gap-2 items-center">
+              {canManagePermissions(user.role) && (
+                <button
+                  type="button"
+                  onClick={() => setPermsUser({ id: emp.employee_id, name: emp.name })}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100"
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  Permissions
+                </button>
+              )}
+              {canDeactivateEmployees(user.role) && (user.employeeId !== emp.employee_id) && (
+                <button
+                  type="button"
+                  onClick={() => setDeact({ id: emp.employee_id, name: emp.name })}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100"
+                >
+                  <UserMinus className="w-3.5 h-3.5" />
+                  Remove
+                </button>
+              )}
+              {(!canDeactivateEmployees(user.role) && !canManagePermissions(user.role)) && (
+                <span className="text-slate-400 text-xs">—</span>
+              )}
+            </div>
           )
         },
       },
@@ -180,6 +195,14 @@ export default function Employees() {
           error={deactivateMut.error?.message}
           onCancel={() => setDeact(null)}
           onConfirm={() => deactivateMut.mutate(deact.id)}
+        />
+      ) : null}
+
+      {permsUser ? (
+        <PermissionsModal
+          empId={permsUser.id}
+          name={permsUser.name}
+          onClose={() => setPermsUser(null)}
         />
       ) : null}
 
@@ -466,6 +489,150 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  )
+}
+
+function PermissionsModal({ empId, name, onClose }) {
+  const { data: permissions, isLoading } = useQuery({
+    queryKey: ['employee-permissions', empId],
+    queryFn: () => apiFetch(`/employees/${empId}/permissions`),
+  })
+
+  const updateMut = useMutation({
+    mutationFn: (body) => apiFetch(`/employees/${empId}/permissions`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      onClose()
+      window.alert(`Permissions for ${name} updated successfully.`)
+    },
+  })
+
+  const [perms, setPerms] = useState({})
+
+  useEffect(() => {
+    if (permissions) {
+      setPerms(permissions)
+    }
+  }, [permissions])
+
+  const toggle = (field) => {
+    setPerms(p => ({ ...p, [field]: !p[field] }))
+  }
+
+  const groups = [
+    {
+      title: 'Asset Module',
+      fields: [
+        { key: 'can_view_assets', label: 'View Assets' },
+        { key: 'can_create_assets', label: 'Create Assets' },
+        { key: 'can_update_assets', label: 'Update Assets' },
+        { key: 'can_delete_assets', label: 'Delete Assets' },
+      ]
+    },
+    {
+      title: 'Request Module',
+      fields: [
+        { key: 'can_create_request', label: 'Create Request' },
+        { key: 'can_approve_request', label: 'Approve Request' },
+        { key: 'can_reject_request', label: 'Reject Request' },
+      ]
+    },
+    {
+      title: 'Finance Module',
+      fields: [
+        { key: 'can_view_finance', label: 'View Finance' },
+        { key: 'can_manage_finance', label: 'Manage Finance' },
+      ]
+    },
+    {
+      title: 'Tracking Module',
+      fields: [
+        { key: 'can_view_tracking', label: 'View Tracking' },
+        { key: 'can_allocate_asset', label: 'Allocate Asset' },
+        { key: 'can_transfer_asset', label: 'Transfer Asset' },
+      ]
+    },
+    {
+      title: 'Branch Module',
+      fields: [
+        { key: 'can_view_branch', label: 'View Branch' },
+        { key: 'can_create_branch', label: 'Create Branch' },
+        { key: 'can_update_branch', label: 'Update Branch' },
+      ]
+    },
+    {
+      title: 'Reports Module',
+      fields: [
+        { key: 'can_view_reports', label: 'View Reports' },
+      ]
+    },
+    {
+      title: 'Admin Module',
+      fields: [
+        { key: 'can_manage_users', label: 'Manage Users' },
+        { key: 'can_manage_permissions', label: 'Manage Permissions' },
+      ]
+    }
+  ]
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <button type="button" className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" aria-label="Close" onClick={onClose} />
+      <div className="relative w-full max-w-2xl rounded-2xl bg-white border border-slate-200 shadow-xl p-6 max-h-[92vh] overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-slate-900">Permissions for {name}</h3>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        {isLoading ? (
+          <div className="flex-1 min-h-[300px] flex items-center justify-center text-slate-400 animate-pulse">Loading permissions...</div>
+        ) : (
+          <>
+            <div className="flex-1 overflow-y-auto mb-6 pr-2 space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {groups.map((g) => (
+                  <div key={g.title} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    <h4 className="text-sm font-bold text-slate-700 mb-3">{g.title}</h4>
+                    <div className="space-y-2">
+                      {g.fields.map(f => (
+                        <label key={f.key} className="flex items-center gap-2 cursor-pointer hover:bg-white p-1 -mx-1 rounded">
+                          <input 
+                            type="checkbox" 
+                            className="w-4 h-4 text-violet-600 rounded border-slate-300 focus:ring-violet-600 focus:ring-2"
+                            checked={perms[f.key] === true}
+                            onChange={() => toggle(f.key)}
+                          />
+                          <span className="text-sm text-slate-600 select-none">{f.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            <div className="pt-4 border-t border-slate-100 flex gap-2 shrink-0">
+              <button 
+                type="button" 
+                onClick={onClose} 
+                className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={updateMut.isPending}
+                className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-700 text-white py-2.5 text-sm font-semibold transition-colors disabled:opacity-50"
+                onClick={() => updateMut.mutate(perms)}
+              >
+                {updateMut.isPending ? 'Saving...' : 'Save Permissions'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

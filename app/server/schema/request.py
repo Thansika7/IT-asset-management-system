@@ -22,6 +22,8 @@ class Request(Base):
     )
     request_id=Column(String(50), primary_key=True, index=True, default=lambda: f"REQ-{uuid.uuid4().hex[:8].upper()}")
     emp_id=Column(String(50), ForeignKey("employees.employee_id"), nullable=False)
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True)
     asset_name=Column(String(150), nullable=False)
     asset_category=Column(String(100), nullable=True)
     reason=Column(Text, nullable=True)
@@ -34,18 +36,19 @@ class Request(Base):
     urgency=Column(String(20), nullable=True, default="MEDIUM")
     serviced_asset_id=Column(String(50), nullable=True)
     request_type=Column(String(20), nullable=False, default="ASSET")
-    resignation_status=Column(String(20), nullable=True)
+    # resignation_status=Column(String(20), nullable=True) # DELETED DECOMMISSIONED WORKFLOW FIELD
     req_date=Column(DateTime(timezone=True), server_default=func.now())
     manager_notes=Column(Text, nullable=True)
     employee=relationship("Employee", back_populates="requests")
+    organization=relationship("Organization", back_populates="requests")
 
     @property
     def requester_name(self) -> str | None:
         return self.employee.name if self.employee else None
 
     @property
-    def requester_branch(self) -> str | None:
-        return self.employee.branch if self.employee else None
+    def requester_branch_name(self) -> str | None:
+        return self.employee.branch_rel.branch_name if self.employee and self.employee.branch_rel else None
 
     @property
     def requester_role(self) -> str | None:

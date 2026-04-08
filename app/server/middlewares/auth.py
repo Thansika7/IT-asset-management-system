@@ -12,3 +12,21 @@ def require_roles(*allowed_roles: EmployeeRole):
         return current_user
 
     return role_checker
+
+def RequirePermission(permission_flag: str):
+    def permission_checker(current_user: Employee = Depends(get_current_user)) -> Employee:
+        # Global Admin override
+        if current_user.role == EmployeeRole.SUPER_ADMIN:
+            return current_user
+        # Organization Admin override
+        if current_user.role == EmployeeRole.ORG_ADMIN:
+            return current_user
+        
+        # Check specific Employee permission flag
+        if current_user.permissions:
+            if getattr(current_user.permissions, permission_flag, False):
+                return current_user
+        
+        raise UnauthorizedActionError()
+    return permission_checker
+

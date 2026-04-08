@@ -5,6 +5,7 @@ from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee
 from app.server.exceptions.base import InsufficientStockError, InvalidStateError, ResourceNotFoundError
 from app.server.services.audit_service import AuditService
+from app.server.database.tenant import apply_tenant_filter
 
 class StockService:
     @staticmethod
@@ -19,7 +20,7 @@ class StockService:
         if quantity <= 0:
             raise InvalidStateError("Stock addition quantity must be greater than zero.")
 
-        asset=db.query(Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
+        asset=apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
         if not asset: raise ResourceNotFoundError("Asset", asset_id)
         
         old_val={
@@ -49,7 +50,7 @@ class StockService:
 
     @staticmethod
     def allocate_asset(db: Session, asset_id: str, emp_id: str, alloc_type: AllocationType, user: Employee, reason: str = "ALLOCATION"):
-        asset=db.query(Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
+        asset=apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id==asset_id).with_for_update().first()
         if not asset: raise ResourceNotFoundError("Asset", asset_id)
         if asset.unused <= 0: raise InsufficientStockError(asset.name, 0)
 
@@ -70,6 +71,7 @@ class StockService:
 
         trk=Tracking(
             asset_id=asset_id, emp_id=emp_id, branch=asset.branch,
+            organization_id=asset.organization_id, branch_id=asset.branch_id,
             movement_type=MovementType.ALLOCATE, allocation_type=alloc_type,
             movement_reason=reason
         )
@@ -106,6 +108,7 @@ class StockService:
             from app.server.schema.employee import EmployeeRole
             support_emails = [
                 e.email for e in db.query(Employee).filter(
+                    Employee.organization_id == user.organization_id,
                     func.lower(func.trim(Employee.branch)) == normalized_branch.lower(),
                     Employee.role == EmployeeRole.SUPPORT_TEAM,
                     Employee.is_active == True,
@@ -113,6 +116,7 @@ class StockService:
             ]
             manager_emails = [
                 e.email for e in db.query(Employee).filter(
+                    Employee.organization_id == user.organization_id,
                     func.lower(func.trim(Employee.branch)) == normalized_branch.lower(),
                     Employee.role == EmployeeRole.MANAGER,
                     Employee.is_active == True,
@@ -136,10 +140,10 @@ class StockService:
 
     @staticmethod
     def return_asset(db: Session, tracking_id: str, user: Employee, reason: str = "RETURN"):
-        trk=db.query(Tracking).filter(Tracking.tracking_id==tracking_id, Tracking.returned_at==None).with_for_update().first()
+        trk=apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.tracking_id==tracking_id, Tracking.returned_at==None).with_for_update().first()
         if not trk: raise ResourceNotFoundError("Active Tracking Record", tracking_id)
         
-        asset=db.query(Asset).filter(Asset.asset_id==trk.asset_id).with_for_update().first()
+        asset=apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id==trk.asset_id).with_for_update().first()
         old_asset_val={
             "unused": asset.unused,
             "used": asset.used,

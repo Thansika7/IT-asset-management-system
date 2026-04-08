@@ -18,19 +18,19 @@ router=APIRouter(prefix="/stock", tags=["stock_inventory_manual"])
 def list_inventory_status(
     branch_name: Optional[str]=None, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
 ):
     """View full inventory snapshot across branches."""
     query=db.query(Asset)
     if branch_name:
-        query=query.filter(Asset.branch==branch_name)
+        query=query.filter(Asset.branch_id==branch_name)
     return query.all()
 
 @router.post("/", response_model=StockResponse, status_code=201)
 def create_asset_entry(
     payload: AssetCreate, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.SUPPORT_TEAM))
 ):
     """Register a new hardware item in the system's catalog."""
     cat=db.query(Category).filter(Category.category_name==payload.category_name).first()
@@ -57,7 +57,7 @@ def create_asset_entry(
         "name": payload.name,
         "category_id": cat.category_id,
         "sub_category_id": sub_category.sub_category_id if sub_category else None,
-        "branch": payload.branch,
+        "branch_id": payload.branch_id,
         "purchased_date": payload.purchased_date,
         "purchase_cost": payload.purchase_cost,
         "salvage_value": payload.salvage_value,
@@ -79,7 +79,7 @@ def create_asset_entry(
 def add_new_stock(
     payload: StockAdd, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.SUPPORT_TEAM))
 ):
     """Restock an asset and optionally record procurement data."""
     asset=StockService.add_stock(
@@ -95,7 +95,7 @@ def add_new_stock(
 def manual_allocate(
     payload: AllocateRequest, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     """Emergency manual allocation (Bypasses Request workflow)."""
     trk=StockService.allocate_asset(
@@ -113,7 +113,7 @@ def manual_allocate(
 def manual_return(
     payload: ReturnRequest, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     """Emergency manual return (Bypasses Request workflow)."""
     trk=StockService.return_asset(db, payload.tracking_id, current_user, payload.movement_reason or "MANUAL_RETURN")
@@ -123,7 +123,7 @@ def manual_return(
 @router.post("/check-expirations")
 def trigger_expiration_check(
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     """
     Manually triggers the daily scan for Warranty and License expirations.

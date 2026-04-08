@@ -10,7 +10,8 @@ class AssetCreate(BaseModel):
     name: str
     category_name: str
     sub_category_name: Optional[str] = None
-    branch: str = "Headquarters"
+    branch_id: Optional[str] = None
+    branch: Optional[str] = None
     total_quantity: int = 1
     unused: int = 1
     purchase_cost: Optional[float] = 0.0
@@ -28,7 +29,7 @@ class AssetCreate(BaseModel):
         value = v.strip()
         return value or None
 
-    @field_validator("name", "category_name", "branch")
+    @field_validator("name", "category_name")
     @classmethod
     def validate_text_fields(cls, v: str) -> str:
         if not isinstance(v, str):
@@ -120,6 +121,7 @@ class StockResponse(BaseModel):
     model_config=ConfigDict(from_attributes=True)
     asset_id: str
     name: str
+    branch_id: Optional[str] = None
     branch: Optional[str] = None
     total_quantity: int
     used: int

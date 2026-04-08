@@ -18,6 +18,8 @@ class AllocationType(str, enum.Enum):
     PERMANENT="PERMANENT"
 class Tracking(Base):
     __tablename__="tracking"
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
     tracking_id=Column(String(50), primary_key=True, index=True, default=lambda: f"TRK-{uuid.uuid4().hex[:8].upper()}")
     asset_id=Column(String(50), ForeignKey("assets.asset_id"), nullable=False)
     asset_name=Column(String(150), nullable=True)

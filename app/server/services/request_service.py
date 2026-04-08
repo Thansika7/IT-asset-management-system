@@ -27,6 +27,7 @@ from app.server.services.email_service import EmailService
 from app.server.services.stock_service import StockService
 from app.server.services.account_service import AccountService
 from app.server.services.audit_service import AuditService
+from app.server.database.tenant import apply_tenant_filter
 
 
 class RequestService:
@@ -261,7 +262,7 @@ class RequestService:
 
     @staticmethod
     def get_request_form_options(db: Session, current_user: Employee) -> RequestFormOptions:
-        categories = sorted(set(RequestService.FORM_CATEGORIES + [row[0] for row in db.query(Category.category_name).all() if row[0]]))
+        categories = sorted(set(RequestService.FORM_CATEGORIES + [row[0] for row in apply_tenant_filter(db.query(Category.category_name), current_user, Category).all() if row[0]]))
 
         known_assets: list[RequestFormAssetOption] = []
         if current_user.role == EmployeeRole.EMPLOYEE:
@@ -287,7 +288,7 @@ class RequestService:
                 for _, asset, category in rows
             ]
         else:
-            query = db.query(Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
+            query = apply_tenant_filter(db.query(Asset), current_user, Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
             if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
                 query = query.filter(Asset.branch == current_user.branch)
             # Managers can see assets from all branches
@@ -324,9 +325,9 @@ class RequestService:
         per_page: int = 20,
         request_type: Optional[str] = None,
     ):
-        query = db.query(Request).options(joinedload(Request.employee))
+        query = apply_tenant_filter(db.query(Request), current_user, Request).options(joinedload(Request.employee))
 
-        if current_user.role == EmployeeRole.ADMIN:
+        if current_user.role == EmployeeRole.SUPER_ADMIN:
             pass
         elif current_user.role in [EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR, EmployeeRole.MANAGER]:
             effective_branch = current_user.branch
@@ -351,7 +352,7 @@ class RequestService:
         if request_type:
             query = query.filter(Request.request_type == request_type.strip().upper())
         if branch:
-            if current_user.role == EmployeeRole.ADMIN:
+            if current_user.role == EmployeeRole.SUPER_ADMIN:
                 query = query.join(Request.employee).filter(Employee.branch == branch.strip())
             else:
                 query = query.filter(Employee.branch == branch.strip())
@@ -385,23 +386,23 @@ class RequestService:
         }
 
     @staticmethod
-    def get_inventory_across_branches(db: Session, category_name: str):
+    def get_inventory_across_branches(db: Session, category_name: str, current_user: Employee):
         from app.server.schema.category import Category
 
-        query = db.query(
+        query = apply_tenant_filter(db.query(
             Asset.branch,
             Asset.brand,
             Asset.name,
             func.sum(Asset.unused).label("available_quantity")
-        ).join(Category).filter(
+        ), current_user, Asset).join(Category).filter(
             Category.category_name == category_name,
             Asset.unused > 0
         )
         return query.group_by(Asset.branch, Asset.brand, Asset.name).all()
 
     @staticmethod
-    def get_manager_email_for_branch(db: Session, branch: str) -> str | None:
-        manager = db.query(Employee).filter(
+    def get_manager_email_for_branch(db: Session, branch: str, current_user: Employee) -> str | None:
+        manager = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(
             Employee.branch == branch,
             Employee.role == EmployeeRole.MANAGER,
             Employee.is_active == True,
@@ -414,7 +415,7 @@ class RequestService:
             EmployeeRole.EMPLOYEE,
             EmployeeRole.MANAGER,
             EmployeeRole.HR,
-            EmployeeRole.ADMIN,
+            EmployeeRole.SUPER_ADMIN,
             EmployeeRole.SUPPORT_TEAM,
         ]
         if current_user.role not in allowed_roles:
@@ -430,10 +431,12 @@ class RequestService:
             )
 
         # 2. Initialize Request: Start at HR Verification as planned, unless admin
-        initial_status = "APPROVED_FOR_SUPPORT" if current_user.role == EmployeeRole.ADMIN else "PENDING_SUPPORT"
-        initial_stage = "READY" if current_user.role == EmployeeRole.ADMIN else "HR_VERIFICATION"
+        initial_status = "APPROVED_FOR_SUPPORT" if current_user.role == EmployeeRole.SUPER_ADMIN else "PENDING_SUPPORT"
+        initial_stage = "READY" if current_user.role == EmployeeRole.SUPER_ADMIN else "HR_VERIFICATION"
         req = Request(
             emp_id=current_user.employee_id,
+            organization_id=current_user.organization_id,
+            branch_id=current_user.branch_id,
             asset_name=payload.asset_name,
             asset_category=payload.asset_category,
             reason=payload.reason,
@@ -449,7 +452,7 @@ class RequestService:
         db.commit()
         db.refresh(req)
         
-        audit_action = "AUTO_APPROVED" if current_user.role == EmployeeRole.ADMIN else "USER_SUBMISSION"
+        audit_action = "AUTO_APPROVED" if current_user.role == EmployeeRole.SUPER_ADMIN else "USER_SUBMISSION"
         AuditService.log_change(db, "requests", req.request_id, "CREATE", current_user, None, {
             "status": req.status,
             "asset_name": req.asset_name,
@@ -457,32 +460,33 @@ class RequestService:
         }, audit_action)
 
         # 3. Branch-Specific Notification Logic
-        # We find stakeholders in the SAME branch, AND all Global Admins
+        # We find stakeholders in the SAME branch, AND all Global Admins (of this organization)
         recipients = []
-        admin_emails = RequestService.get_admin_emails(db)
+        admin_emails = RequestService.get_admin_emails(db, current_user)
         
         if current_user.role == EmployeeRole.EMPLOYEE:
             recipients = RequestService.get_emails_by_roles_in_branch(
-                db, [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM], current_user.branch
+                db, [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM], current_user.branch, current_user
             )
         elif current_user.role == EmployeeRole.HR:
             recipients = RequestService.get_emails_by_roles_in_branch(
-                db, [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM], current_user.branch
+                db, [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM], current_user.branch, current_user
             )
         elif current_user.role == EmployeeRole.MANAGER:
             recipients = RequestService.get_emails_by_roles_in_branch(
-                db, [EmployeeRole.SUPPORT_TEAM], current_user.branch
+                db, [EmployeeRole.SUPPORT_TEAM], current_user.branch, current_user
             )
             EmailService.notify_admin_of_manager_request(current_user.name, payload.asset_name, admin_emails)
-        elif current_user.role == EmployeeRole.ADMIN:
+        elif current_user.role == EmployeeRole.SUPER_ADMIN:
             recipients = RequestService.get_emails_by_roles_in_branch(
                 db,
                 [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM],
                 current_user.branch or "",
+                current_user
             )
         elif current_user.role == EmployeeRole.SUPPORT_TEAM:
             recipients = RequestService.get_emails_by_roles_in_branch(
-                db, [EmployeeRole.MANAGER, EmployeeRole.HR], current_user.branch
+                db, [EmployeeRole.MANAGER, EmployeeRole.HR], current_user.branch, current_user
             )
 
         recipients.extend(admin_emails)
@@ -502,13 +506,13 @@ class RequestService:
 
     @staticmethod
     def review_request_by_hr(db: Session, request_id: str, payload: RequestHRVerify, user: Employee):
-        req = db.query(Request).filter(
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(
             Request.request_id == request_id,
             Request.stage == "HR_VERIFICATION",
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in HR stage")
-        if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
+        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="HR can review only requests from their own branch.")
 
         old_status = req.status
@@ -539,25 +543,25 @@ class RequestService:
         )
 
         if payload.is_needed:
-            support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch)
+            support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch, user)
             EmailService.notify_hr_verified(req.employee.name, req.asset_name, payload.is_needed, support_emails)
         return RequestService._serialize_request(req)
 
     @staticmethod
     def triage_asset_request(db: Session, request_id: str, payload: RequestTriage, user: Employee):
-        req = db.query(Request).filter(
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(
             Request.request_id == request_id,
             Request.stage == "HELPDESK_TRIAGE",
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
-        if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
+        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Support can triage only requests from their own branch.")
         
         requested_action = (req.action_type or "NEW").strip().upper()
         base_action = requested_action.split(":", 1)[0].strip() or "NEW"
 
-        local_stock = db.query(sql_func.sum(Asset.unused)).join(Category).filter(
+        local_stock = apply_tenant_filter(db.query(sql_func.sum(Asset.unused)), user, Asset).join(Category).filter(
             Asset.branch == req.employee.branch,
             Category.category_name == req.asset_category,
         ).scalar() or 0
@@ -567,7 +571,7 @@ class RequestService:
             req.status = f"Available in local branch: {req.employee.branch}"
             stock_msg = req.status
         else:
-            other_stocks = RequestService.get_inventory_across_branches(db, req.asset_category)
+            other_stocks = RequestService.get_inventory_across_branches(db, req.asset_category, user)
             if not other_stocks:
                 req.status = "Unavailable in all branches"
                 stock_msg = req.status
@@ -592,7 +596,7 @@ class RequestService:
         req.priority = payload.priority.value
         req.urgency = RequestService._derive_urgency(req, req.severity, 1, base_action)
 
-        if user.role == EmployeeRole.ADMIN:
+        if user.role == EmployeeRole.SUPER_ADMIN:
             req.status = "APPROVED_FOR_SUPPORT"
             req.stage = "READY"
         else:
@@ -606,17 +610,17 @@ class RequestService:
                                 {"status": "PENDING_SUPPORT"}, {"status": req.status, "action": req.action_type, "stage": req.stage}, "SUPPORT_TRIAGE")
 
         if req.stage == "MANAGER_APPROVAL":
-            manager_email = RequestService.get_manager_email_for_branch(db, req.employee.branch)
+            manager_email = RequestService.get_manager_email_for_branch(db, req.employee.branch, user)
             EmailService.notify_stock_info_to_manager(req.employee.name, req.asset_name, manager_email, stock_msg)
         
         return RequestService._serialize_request(req)
 
     @staticmethod
     def review_request_by_manager(db: Session, request_id: str, payload: RequestReview, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found")
-        if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
+        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Managers can review only requests from their own branch.")
 
         if req.hr_verified is False and payload.is_approved:
@@ -641,16 +645,16 @@ class RequestService:
         AuditService.log_change(db, "requests", request_id, "UPDATE", user, {"status": old_status}, {"status": req.status}, "MANAGER_REVIEW")
         
         # Fetch branch support emails from DB
-        support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch)
+        support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch, user)
         EmailService.notify_manager_decision(req.employee.name, req.asset_name, payload.is_approved, support_emails)
         return RequestService._serialize_request(req)
 
     @staticmethod
     def update_manager_notes(db: Session, request_id: str, payload: RequestManagerNotes, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found")
-        if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
+        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Managers can update notes only for requests from their own branch.")
 
         old_notes = req.manager_notes
@@ -662,7 +666,7 @@ class RequestService:
 
     @staticmethod
     def delete_request(db: Session, request_id: str, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found")
 
@@ -686,9 +690,8 @@ class RequestService:
 
     @staticmethod
     def review_request_by_admin(db: Session, request_id: str, payload: RequestReview, user: Employee):
-        if user.role != EmployeeRole.ADMIN:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admins can perform this override")
-        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
+        # Admin review usually means ORG_ADMIN or SUPER_ADMIN
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req: raise HTTPException(status_code=404)
         old_status = req.status
         if not payload.is_approved:
@@ -704,9 +707,9 @@ class RequestService:
 
     @staticmethod
     def execute_asset_request(db: Session, request_id: str, provided_asset_id: str, broken_asset_id: Optional[str], user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req: raise HTTPException(status_code=404)
-        if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
+        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Support can execute only requests from their own branch.")
         if req.status not in ["APPROVED_FOR_SUPPORT", "READY"] and req.stage != "READY":
             raise HTTPException(status_code=400, detail="Request not actionable")
@@ -714,16 +717,16 @@ class RequestService:
         if req.action_type in ["NEW", "REPLACE"]:
             StockService.allocate_asset(db, provided_asset_id, req.emp_id, AllocationType.PERMANENT, user, f"FULFILL_REQ_{request_id}")
             if req.action_type == "REPLACE" and broken_asset_id:
-                active_trk = db.query(Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
+                active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
                 if active_trk:
                     StockService.return_asset(db, active_trk.tracking_id, user, "REPLACEMENT_RETURN")
             req.status = "COMPLETED"
             req.stage = "COMPLETED"
         elif req.action_type == "SERVICE":
-            active_trk = db.query(Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
+            active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
             if not active_trk:
                 raise HTTPException(status_code=400, detail="Employee does not currently hold this asset")
-            asset = db.query(Asset).filter(Asset.asset_id == broken_asset_id).with_for_update().first()
+            asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == broken_asset_id).with_for_update().first()
             asset.asset_status = AssetStatus.IN_REPAIR
             if provided_asset_id:
                 StockService.allocate_asset(db, provided_asset_id, req.emp_id, AllocationType.TEMPORARY, user, f"LOANER_FOR_REQ_{request_id}")
@@ -738,20 +741,20 @@ class RequestService:
 
         db.commit()
         db.refresh(req)
-        EmailService.notify_asset_assigned(req.employee.name, req.asset_name, RequestService.get_manager_email_for_branch(db, req.employee.branch))
+        EmailService.notify_asset_assigned(req.employee.name, req.asset_name, RequestService.get_manager_email_for_branch(db, req.employee.branch, user))
         return req
 
     @staticmethod
     def resolve_service_request(db: Session, request_id: str, payload: RequestResolve, user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id, Request.status == "WIP_SERVICE").with_for_update().first()
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id, Request.status == "WIP_SERVICE").with_for_update().first()
         if not req: raise HTTPException(status_code=400, detail="No active service request found")
-        if user.role != EmployeeRole.ADMIN and req.employee.branch != user.branch:
+        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Support can resolve only requests from their own branch.")
         loaner_reason = f"LOANER_FOR_REQ_{request_id}"
-        loaner_trk = db.query(Tracking).filter(Tracking.emp_id == req.emp_id, Tracking.movement_reason == loaner_reason, Tracking.returned_at == None).first()
+        loaner_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.emp_id == req.emp_id, Tracking.movement_reason == loaner_reason, Tracking.returned_at == None).first()
         if loaner_trk:
             StockService.return_asset(db, loaner_trk.tracking_id, user, f"LOANER_RETURN_RESOLVE_{request_id}")
-        repaired_asset = db.query(Asset).filter(Asset.asset_id == req.serviced_asset_id).with_for_update().first()
+        repaired_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == req.serviced_asset_id).with_for_update().first()
         if repaired_asset:
             if payload.repair_cost > 0:
                 AccountService.add_maintenance_cost(db, repaired_asset.asset_id, payload.repair_cost, user, f"SERVICE_REQ_{request_id}")
@@ -759,7 +762,13 @@ class RequestService:
                 repaired_asset.asset_status = AssetStatus.RETIRED
             else:
                 repaired_asset.asset_status = AssetStatus.ACTIVE
-                new_trk = Tracking(asset_id=repaired_asset.asset_id, emp_id=req.emp_id, branch=repaired_asset.branch, movement_type=MovementType.ALLOCATE, allocation_type=AllocationType.PERMANENT, movement_reason="REPAIRED_ASSET_RETURNED")
+                new_trk = Tracking(
+                    asset_id=repaired_asset.asset_id, emp_id=req.emp_id, 
+                    branch=repaired_asset.branch, 
+                    organization_id=repaired_asset.organization_id, branch_id=repaired_asset.branch_id,
+                    movement_type=MovementType.ALLOCATE, allocation_type=AllocationType.PERMANENT, 
+                    movement_reason="REPAIRED_ASSET_RETURNED"
+                )
                 db.add(new_trk)
                 db.flush()
                 AuditService.log_change(db, "tracking", new_trk.tracking_id, "CREATE", user, None, {"asset_id": repaired_asset.asset_id}, "SERVICE_RESOLVE_RETURN")
@@ -772,7 +781,7 @@ class RequestService:
     @staticmethod
     def try_auto_allocate_for_asset(db: Session, asset_id: str, user: Employee, trigger_reason: str = "AUTO_REALLOCATION"):
         asset = (
-            db.query(Asset)
+            apply_tenant_filter(db.query(Asset), user, Asset)
             .options(joinedload(Asset.category))
             .filter(Asset.asset_id == asset_id)
             .first()
@@ -781,7 +790,7 @@ class RequestService:
             return None
 
         req = (
-            db.query(Request)
+            apply_tenant_filter(db.query(Request), user, Request)
             .join(Request.employee)
             .filter(
                 Request.stage == "READY",
@@ -850,7 +859,7 @@ class RequestService:
 
     @staticmethod
     def request_cross_branch_transfer(db: Session, request_id: str, payload: "RequestCrossBranchTransfer", user: Employee):
-        req = db.query(Request).filter(Request.request_id == request_id).with_for_update().first()
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found")
         
@@ -863,11 +872,11 @@ class RequestService:
             raise HTTPException(status_code=400, detail="Cannot request transfer from your own branch")
 
         # Find target branch stakeholders
-        target_manager_email = RequestService.get_manager_email_for_branch(db, payload.target_branch)
+        target_manager_email = RequestService.get_manager_email_for_branch(db, payload.target_branch, user)
         if not target_manager_email:
             raise HTTPException(status_code=400, detail=f"Target branch '{payload.target_branch}' has no active Manager to receive this request.")
         
-        target_support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], payload.target_branch)
+        target_support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], payload.target_branch, user)
         
         # Update Request Status
         old_status = req.status
@@ -879,6 +888,8 @@ class RequestService:
                 asset_id=req.serviced_asset_id,
                 asset_name=payload.target_asset_name,
                 emp_id=req.emp_id,
+                organization_id=user.organization_id,
+                branch_id=user.branch_id,
                 category=req.asset_category,
                 branch=req.employee.branch,
                 from_branch=req.employee.branch,
@@ -928,8 +939,9 @@ class RequestService:
         return req
 
     @staticmethod
-    def get_emails_by_roles_in_branch(db: Session, roles: List[EmployeeRole], branch: str) -> List[str]:
-        stakeholders = db.query(Employee).filter(
+    def get_emails_by_roles_in_branch(db: Session, roles: List[EmployeeRole], branch: str, current_user: Employee) -> List[str]:
+        # Filter stakeholders by organization to prevent cross-tenant notifications
+        stakeholders = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(
             Employee.branch == branch,
             Employee.role.in_(roles),
             Employee.is_active == True,  # noqa: E712
@@ -937,9 +949,17 @@ class RequestService:
         return [EmailService.delivery_email(s) for s in stakeholders if EmailService.delivery_email(s)]
 
     @staticmethod
-    def get_admin_emails(db: Session) -> List[str]:
+    def get_admin_emails(db: Session, current_user: Employee) -> List[str]:
+        from sqlalchemy import or_, and_
+        # Notify global SUPER_ADMINs and the organization's ORG_ADMINs
         admins = db.query(Employee).filter(
-            Employee.role == EmployeeRole.ADMIN,
-            Employee.is_active == True,  # noqa: E712
+            Employee.is_active == True,
+            or_(
+                Employee.role == EmployeeRole.SUPER_ADMIN,
+                and_(
+                    Employee.role == EmployeeRole.ORG_ADMIN,
+                    Employee.organization_id == (current_user.organization_id if current_user else None)
+                )
+            )
         ).all()
         return [EmailService.delivery_email(a) for a in admins if EmailService.delivery_email(a)]

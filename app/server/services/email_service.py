@@ -541,12 +541,12 @@ class EmailService:
             db.query(Employee)
             .filter(
                 Employee.is_active == True,  # noqa: E712
-                Employee.role.in_([EmployeeRole.HR, EmployeeRole.ADMIN]),
+                Employee.role.in_([EmployeeRole.HR, EmployeeRole.SUPER_ADMIN]),
             )
             .all()
         )
         for e in rows:
-            if e.role == EmployeeRole.ADMIN:
+            if e.role == EmployeeRole.SUPER_ADMIN:
                 out.append(EmailService.delivery_email(e))
             elif branch is None or (e.branch or "") == (branch or ""):
                 out.append(EmailService.delivery_email(e))

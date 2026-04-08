@@ -5,6 +5,8 @@ from app.server.database.database import Base
 
 class AssetAttribute(Base):
     __tablename__="asset_attributes"
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
     attribute_id=Column(String(50), primary_key=True, index=True, default=lambda: f"ATTR-{uuid.uuid4().hex[:8].upper()}")
     sub_category_id=Column(String(50), ForeignKey("sub_categories.sub_category_id"), nullable=False)
     attribute_name=Column(String(100), nullable=False)
@@ -15,6 +17,8 @@ class AssetAttribute(Base):
 
 class AssetAttributeValue(Base):
     __tablename__="asset_attribute_values"
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
     value_id=Column(String(50), primary_key=True, index=True, default=lambda: f"VAL-{uuid.uuid4().hex[:8].upper()}")
     asset_id=Column(String(50), ForeignKey("assets.asset_id"), nullable=False)
     attribute_id=Column(String(50), ForeignKey("asset_attributes.attribute_id"), nullable=False)

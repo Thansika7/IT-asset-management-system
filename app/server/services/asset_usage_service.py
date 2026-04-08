@@ -15,7 +15,7 @@ from app.server.schema.tracking import MovementType, Tracking
 class AssetUsageService:
     @staticmethod
     def _scope_employee(db: Session, current_user: Employee) -> Optional[str]:
-        if current_user.role == EmployeeRole.ADMIN:
+        if current_user.role == EmployeeRole.SUPER_ADMIN:
             return None
         if current_user.role in (EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM):
             return current_user.branch

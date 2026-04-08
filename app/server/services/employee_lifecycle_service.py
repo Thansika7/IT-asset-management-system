@@ -17,7 +17,7 @@ class EmployeeLifecycleService:
         target = db.query(Employee).filter(Employee.employee_id == emp_id).first()
         if not target:
             raise ResourceNotFoundError("Employee", emp_id)
-        if target.role == EmployeeRole.ADMIN:
+        if target.role == EmployeeRole.SUPER_ADMIN:
             raise HTTPException(status_code=403, detail="The Global System Administrator cannot be deactivated.")
 
         active = db.query(Tracking).filter(Tracking.emp_id == emp_id, Tracking.returned_at == None).all()

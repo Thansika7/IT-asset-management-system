@@ -268,7 +268,7 @@ def recommend_necessity_for_request(db: Session, viewer: Employee, request_id: s
     if viewer.role == EmployeeRole.HR:
         if (requester.branch or "").strip() != (viewer.branch or "").strip():
             raise HTTPException(status_code=403, detail="You can only run necessity review for requests from your branch.")
-    elif viewer.role != EmployeeRole.ADMIN:
+    elif viewer.role != EmployeeRole.SUPER_ADMIN:
         raise HTTPException(status_code=403, detail="Only HR or Admin may request AI necessity analysis.")
 
     asset_name = (req.asset_name or "").strip()

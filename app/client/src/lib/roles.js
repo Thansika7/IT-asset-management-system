@@ -1,6 +1,8 @@
 /** Matches backend `EmployeeRole` string values */
 export const R = {
-  ADMIN: 'admin',
+  SUPER_ADMIN: 'super_admin',
+  ADMIN: 'super_admin',
+  ORG_ADMIN: 'org_admin',
   MANAGER: 'manager',
   HR: 'hr',
   SUPPORT_TEAM: 'support_team',
@@ -8,7 +10,8 @@ export const R = {
 }
 
 export const ROLE_LABEL = {
-  [R.ADMIN]: 'Administrator',
+  [R.SUPER_ADMIN]: 'Super Admin',
+  [R.ORG_ADMIN]: 'Org Admin',
   [R.MANAGER]: 'Manager',
   [R.HR]: 'HR',
   [R.SUPPORT_TEAM]: 'Support',
@@ -17,7 +20,9 @@ export const ROLE_LABEL = {
 
 export function normalizeRole(value) {
   if (!value) return R.EMPLOYEE
-  return String(value).toLowerCase()
+  const normalized = String(value).toLowerCase()
+  if (normalized === 'admin') return R.SUPER_ADMIN
+  return normalized
 }
 
 export function labelForRole(role) {
@@ -30,7 +35,7 @@ export const NAV = {
   myAssets: () => true,
   requests: () => true,
   tracking: () => true,
-  employees: (r) => [R.ADMIN, R.HR, R.MANAGER].includes(r),
+  employees: (r) => [R.ADMIN, R.ORG_ADMIN, R.HR, R.MANAGER].includes(r),
   /** View kits for registration / allocation planning */
   onboardingKits: (r) => [R.ADMIN, R.MANAGER, R.HR].includes(r),
   stock: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
@@ -94,4 +99,8 @@ export function canResolveService(r) {
 
 export function canTransferCrossBranch(r) {
   return r === R.MANAGER
+}
+
+export function canManagePermissions(r) {
+  return [R.ADMIN, R.ORG_ADMIN].includes(r)
 }

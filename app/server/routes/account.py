@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.server.database.database import get_db
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.middlewares.auth import require_roles
+from app.server.middlewares.auth import require_roles, RequirePermission
 from app.server.services.account_service import AccountService
 from app.server.models.account import ProcurementUpdate, MaintenanceLog, FinancialSummary
 
@@ -13,7 +13,7 @@ router=APIRouter(prefix="/accounts", tags=["accounts"])
 def record_procurement(
     payload: ProcurementUpdate,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.HR))
+    current_user: Employee=Depends(RequirePermission("can_manage_finance"))
 ):
     asset=AccountService.update_procurement(
         db, payload.asset_id, payload.cost, payload.vendor_name,
@@ -26,7 +26,7 @@ def record_procurement(
 def log_maintenance(
     payload: MaintenanceLog,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.SUPPORT_TEAM))
+    current_user: Employee=Depends(RequirePermission("can_manage_finance"))
 ):
     asset=AccountService.add_maintenance_cost(db, payload.asset_id, payload.cost, current_user, payload.reason)
     db.commit()
@@ -36,27 +36,27 @@ def log_maintenance(
 def get_financial_summary(
     branch: Optional[str] = None,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER))
+    current_user: Employee=Depends(RequirePermission("can_view_finance"))
 ):
     effective_branch = branch
     if current_user.role == EmployeeRole.MANAGER:
         effective_branch = current_user.branch
-    return AccountService.get_financial_dashboard(db, effective_branch)
+    return AccountService.get_financial_dashboard(db, current_user, effective_branch)
 
 @router.get("/tco/{asset_id}")
 def get_asset_tco(
     asset_id: str,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM))
+    current_user: Employee=Depends(RequirePermission("can_view_finance"))
 ):
-    tco=AccountService.get_asset_tco(db, asset_id)
+    tco=AccountService.get_asset_tco(db, asset_id, current_user)
     return {"asset_id": asset_id, "total_cost_of_ownership": tco}
 
 @router.post("/acknowledge/{tracking_id}")
 def acknowledge_receipt(
     tracking_id: str,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
+    current_user: Employee=Depends(require_roles(EmployeeRole.EMPLOYEE, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
 ):
     trk=AccountService.acknowledge_asset(db, tracking_id, current_user)
     db.commit()

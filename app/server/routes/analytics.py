@@ -15,7 +15,7 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 @router.get("/utilization", response_model=List[UtilizationItem])
 def get_utilization(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     items = AssetInsightsService.get_utilization_summary(db)
     if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
@@ -27,7 +27,7 @@ def get_utilization(
 def get_branch_analytics(
     branch: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     effective_branch = branch
     if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:

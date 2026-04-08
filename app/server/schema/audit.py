@@ -1,10 +1,12 @@
 import uuid
-from sqlalchemy import Column, DateTime, String, JSON, Text
+from sqlalchemy import ForeignKey, Column, DateTime, String, JSON, Text
 from sqlalchemy.sql import func
 from app.server.database.database import Base
 
 class AuditLog(Base):
     __tablename__="audit_logs"
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
     audit_id=Column(String(50), primary_key=True, index=True, default=lambda: f"AUD-{uuid.uuid4().hex[:8].upper()}")
     table_name=Column(String(100), nullable=False)
     record_id=Column(String(50), nullable=False)

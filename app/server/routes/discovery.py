@@ -57,7 +57,7 @@ def recent_assets(
 def list_categories(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(
-        require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
+        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
     ),
 ):
     return AssetInsightsService.list_categories(db)
@@ -68,7 +68,7 @@ def list_subcategories(
     category_id: str,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(
-        require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
+        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
     ),
 ):
     return AssetInsightsService.list_subcategories(db, category_id)
@@ -79,7 +79,7 @@ def list_assets_by_subcategory(
     sub_category_id: str,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(
-        require_roles(EmployeeRole.ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
+        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
     ),
 ):
     return AssetInsightsService.list_assets_by_subcategory(db, current_user=current_user, sub_category_id=sub_category_id)

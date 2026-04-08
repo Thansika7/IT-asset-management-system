@@ -24,10 +24,12 @@ from app.server.models.asset_insights import (
     SubCategoryRead,
     UtilizationItem,
 )
+from app.server.schema.employee import Employee
 from app.server.schema.request import Request
 from app.server.schema.asset import Asset
 from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
 from app.server.schema.category import Category, SubCategory
+from app.server.schema.organization import Branch
 from app.server.schema.tracking import Tracking
 
 
@@ -35,13 +37,19 @@ class AssetInsightsService:
     @staticmethod
     def _apply_role_scope(query, current_user):
         from app.server.schema.employee import EmployeeRole
+        from app.server.database.tenant import apply_tenant_filter
 
-        if current_user.role in [EmployeeRole.ADMIN, EmployeeRole.MANAGER]:
+        # Apply strict organization isolation
+        query = apply_tenant_filter(query, current_user, Asset)
+
+        if current_user.role == EmployeeRole.SUPER_ADMIN:
             return query
-        if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
-            return query.filter(Asset.branch == current_user.branch)
-        if current_user.role == EmployeeRole.EMPLOYEE and current_user.branch:
-            return query.filter(Asset.branch == current_user.branch)
+        if current_user.role == EmployeeRole.ORG_ADMIN:
+            return query
+        if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
+            return query.filter(Asset.branch_id == current_user.branch_id)
+        if current_user.role == EmployeeRole.EMPLOYEE and current_user.branch_id:
+            return query.filter(Asset.branch_id == current_user.branch_id)
         return query
 
     @staticmethod
@@ -70,12 +78,14 @@ class AssetInsightsService:
         return total_days
 
     @staticmethod
-    def _base_asset_query(db: Session):
-        return db.query(Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
+    def _base_asset_query(db: Session, current_user: Employee):
+        query = db.query(Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
+        return AssetInsightsService._apply_role_scope(query, current_user)
 
     @staticmethod
     def search_assets(
         db: Session,
+        current_user: Employee,
         *,
         search: Optional[str] = None,
         category: Optional[str] = None,
@@ -86,7 +96,7 @@ class AssetInsightsService:
         allocated_only: bool = False,
         low_stock_only: bool = False,
     ) -> list[AssetListItem]:
-        query = AssetInsightsService._base_asset_query(db).join(Category)
+        query = AssetInsightsService._base_asset_query(db, current_user).join(Category)
         if sub_category:
             query = query.outerjoin(SubCategory)
 
@@ -95,7 +105,7 @@ class AssetInsightsService:
         if sub_category:
             query = query.filter(SubCategory.sub_category_name.ilike(f"%{sub_category.strip()}%"))
         if branch:
-            query = query.filter(Asset.branch.ilike(f"%{branch.strip()}%"))
+            query = query.join(Asset.branch_rel).filter(Branch.branch_name.ilike(f"%{branch.strip()}%"))
 
         if status:
             normalized = status.strip().lower()
@@ -222,8 +232,8 @@ class AssetInsightsService:
         return None
 
     @staticmethod
-    def get_asset_finance(db: Session, asset_id: str) -> AssetFinanceRead:
-        asset = AssetInsightsService._base_asset_query(db).filter(Asset.asset_id == asset_id).first()
+    def get_asset_finance(db: Session, asset_id: str, current_user: Employee) -> AssetFinanceRead:
+        asset = AssetInsightsService._base_asset_query(db, current_user).filter(Asset.asset_id == asset_id).first()
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
 
@@ -264,10 +274,10 @@ class AssetInsightsService:
         )
 
     @staticmethod
-    def _build_finance_monitor_item(db: Session, asset: Asset) -> AssetFinanceMonitorItem:
-        finance = AssetInsightsService.get_asset_finance(db, asset.asset_id)
-        health = AssetInsightsService.get_asset_health(db, asset.asset_id)
-        recommendation = AssetInsightsService.get_replacement_recommendation(db, asset.asset_id)
+    def _build_finance_monitor_item(db: Session, asset: Asset, current_user: Employee) -> AssetFinanceMonitorItem:
+        finance = AssetInsightsService.get_asset_finance(db, asset.asset_id, current_user)
+        health = AssetInsightsService.get_asset_health(db, asset.asset_id, current_user)
+        recommendation = AssetInsightsService.get_replacement_recommendation(db, asset.asset_id, current_user)
         return AssetFinanceMonitorItem(
             asset_id=asset.asset_id,
             asset_name=asset.name,
@@ -302,14 +312,14 @@ class AssetInsightsService:
         )
 
     @staticmethod
-    def get_asset_detail(db: Session, asset_id: str) -> AssetDetailRead:
-        asset = AssetInsightsService._base_asset_query(db).filter(Asset.asset_id == asset_id).first()
+    def get_asset_detail(db: Session, asset_id: str, current_user: Employee) -> AssetDetailRead:
+        asset = AssetInsightsService._base_asset_query(db, current_user).filter(Asset.asset_id == asset_id).first()
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
 
-        finance = AssetInsightsService.get_asset_finance(db, asset_id)
-        health = AssetInsightsService.get_asset_health(db, asset_id)
-        recommendation = AssetInsightsService.get_replacement_recommendation(db, asset_id)
+        finance = AssetInsightsService.get_asset_finance(db, asset_id, current_user)
+        health = AssetInsightsService.get_asset_health(db, asset_id, current_user)
+        recommendation = AssetInsightsService.get_replacement_recommendation(db, asset_id, current_user)
 
         return AssetDetailRead(
             asset_id=asset.asset_id,
@@ -351,6 +361,7 @@ class AssetInsightsService:
     @staticmethod
     def get_finance_report(
         db: Session,
+        current_user: Employee,
         branch: Optional[str] = None,
         *,
         search: Optional[str] = None,
@@ -367,9 +378,7 @@ class AssetInsightsService:
         max_health_score: Optional[int] = None,
         sort_by: str = "priority_cost",
     ) -> AssetFinanceReportRead:
-        query = AssetInsightsService._base_asset_query(db)
-        if branch:
-            query = query.filter(Asset.branch == branch)
+        query = AssetInsightsService._base_asset_query(db, current_user)
         assets = [
             asset for asset in query.all()
             if AssetInsightsService._matches_asset_filters(
@@ -385,7 +394,7 @@ class AssetInsightsService:
             )
         ]
 
-        items = [AssetInsightsService._build_finance_monitor_item(db, asset) for asset in assets]
+        items = [AssetInsightsService._build_finance_monitor_item(db, asset, current_user) for asset in assets]
         if recommendation:
             desired = recommendation.strip().upper()
             items = [item for item in items if item.replacement_recommendation.upper() == desired]
@@ -433,8 +442,8 @@ class AssetInsightsService:
         )
 
     @staticmethod
-    def get_asset_health(db: Session, asset_id: str) -> AssetHealthRead:
-        asset = db.query(Asset).filter(Asset.asset_id == asset_id).first()
+    def get_asset_health(db: Session, asset_id: str, current_user: Employee) -> AssetHealthRead:
+        asset = AssetInsightsService._base_asset_query(db, current_user).filter(Asset.asset_id == asset_id).first()
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
 
@@ -534,8 +543,8 @@ class AssetInsightsService:
         )
 
     @staticmethod
-    def get_replacement_recommendation(db: Session, asset_id: str) -> AssetRecommendationRead:
-        health = AssetInsightsService.get_asset_health(db, asset_id)
+    def get_replacement_recommendation(db: Session, asset_id: str, current_user: Employee) -> AssetRecommendationRead:
+        health = AssetInsightsService.get_asset_health(db, asset_id, current_user)
         if health.health_score < 30:
             return AssetRecommendationRead(
                 asset_id=asset_id,
@@ -558,20 +567,21 @@ class AssetInsightsService:
     @staticmethod
     def get_health_report(
         db: Session,
+        current_user: Employee,
         *,
         branch: Optional[str] = None,
         critical_only: bool = False,
     ) -> AssetHealthReportRead:
-        query = AssetInsightsService._base_asset_query(db)
-        if branch:
-            query = query.filter(Asset.branch == branch)
+        query = AssetInsightsService._base_asset_query(db, current_user)
 
         items: list[AssetHealthReportItem] = []
         for asset in query.all():
-            health = AssetInsightsService.get_asset_health(db, asset.asset_id)
+            if branch and branch.strip().lower() != (asset.branch or "").lower():
+                continue
+            health = AssetInsightsService.get_asset_health(db, asset.asset_id, current_user)
             if critical_only and health.health_score > 39:
                 continue
-            recommendation = AssetInsightsService.get_replacement_recommendation(db, asset.asset_id)
+            recommendation = AssetInsightsService.get_replacement_recommendation(db, asset.asset_id, current_user)
             items.append(
                 AssetHealthReportItem(
                     asset_id=asset.asset_id,
@@ -608,8 +618,8 @@ class AssetInsightsService:
         )
 
     @staticmethod
-    def get_health_classification(db: Session) -> dict[str, int]:
-        report = AssetInsightsService.get_health_report(db)
+    def get_health_classification(db: Session, current_user: Employee) -> dict[str, int]:
+        report = AssetInsightsService.get_health_report(db, current_user)
         return {
             "Healthy": report.healthy_assets,
             "Good": report.good_assets,
@@ -619,8 +629,8 @@ class AssetInsightsService:
         }
 
     @staticmethod
-    def get_utilization_summary(db: Session) -> list[UtilizationItem]:
-        assets = AssetInsightsService._base_asset_query(db).all()
+    def get_utilization_summary(db: Session, current_user: Employee) -> list[UtilizationItem]:
+        assets = AssetInsightsService._base_asset_query(db, current_user).all()
         branch_category_map: dict[tuple[str | None, str | None], dict[str, float]] = {}
         for asset in assets:
             key = (asset.branch, asset.category.category_name if asset.category else None)
@@ -659,8 +669,8 @@ class AssetInsightsService:
         return items
 
     @staticmethod
-    def get_branch_analytics(db: Session, branch: Optional[str] = None) -> list[UtilizationItem]:
-        items = AssetInsightsService.get_utilization_summary(db)
+    def get_branch_analytics(db: Session, current_user: Employee, branch: Optional[str] = None) -> list[UtilizationItem]:
+        items = AssetInsightsService.get_utilization_summary(db, current_user)
         if branch:
             branch_lower = branch.strip().lower()
             return [item for item in items if (item.branch or "").lower() == branch_lower]
