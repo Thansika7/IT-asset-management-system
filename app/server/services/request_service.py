@@ -336,7 +336,7 @@ class RequestService:
         else:
             query = apply_tenant_filter(db.query(Asset), current_user, Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
             if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
-                query = query.filter(Asset.branch == current_user.branch)
+                query = query.filter(Asset.branch_id == current_user.branch_id)
             # Managers can see assets from all branches
             known_assets = [
                 RequestFormAssetOption(
@@ -508,30 +508,40 @@ class RequestService:
         if not branch_rows:
             return []
 
-        active_manager_rows = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(
-            Employee.role == EmployeeRole.MANAGER,
-            Employee.is_active == True,
-        ).all()
-
-        manager_branch_ids = {row.branch_id for row in active_manager_rows if row.branch_id}
-        manager_branch_names = {(row.branch or "").strip().lower() for row in active_manager_rows if row.branch}
-        own_branch_id = (current_user.branch_id or "").strip()
-        own_branch_name = (current_user.branch or "").strip().lower()
-
         options: List[str] = []
         for branch in branch_rows:
             branch_name = (branch.branch_name or "").strip()
             if not branch_name:
                 continue
-            if own_branch_id and branch.branch_id == own_branch_id:
-                continue
-            if own_branch_name and branch_name.lower() == own_branch_name:
-                continue
-            has_manager = branch.branch_id in manager_branch_ids or branch_name.lower() in manager_branch_names
-            if has_manager:
-                options.append(branch_name)
+            options.append(branch_name)
 
         return sorted(dict.fromkeys(options))
+
+    @staticmethod
+    def _higher_authority_roles_for_requester(requester_role: EmployeeRole) -> List[EmployeeRole]:
+        if requester_role == EmployeeRole.EMPLOYEE:
+            return [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.MANAGER]
+        if requester_role == EmployeeRole.HR:
+            return [EmployeeRole.SUPPORT_TEAM, EmployeeRole.MANAGER]
+        if requester_role == EmployeeRole.MANAGER:
+            return [EmployeeRole.SUPPORT_TEAM]
+        if requester_role == EmployeeRole.SUPPORT_TEAM:
+            return [EmployeeRole.MANAGER, EmployeeRole.HR]
+        return [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]
+
+    @staticmethod
+    def _get_higher_authority_emails_for_request(
+        db: Session,
+        requester: Employee,
+        current_user: Employee,
+    ) -> List[str]:
+        roles = RequestService._higher_authority_roles_for_requester(requester.role)
+        branch_name = requester.branch or ""
+        branch_recipients = RequestService.get_emails_by_roles_in_branch(db, roles, branch_name, current_user) if branch_name else []
+        admin_emails = RequestService.get_admin_emails(db, current_user)
+        requester_email = EmailService.delivery_email(requester)
+        recipients = [mail for mail in [*branch_recipients, *admin_emails] if mail and mail != requester_email]
+        return list(dict.fromkeys(recipients))
 
     @staticmethod
     def create_asset_request(db: Session, payload: RequestCreate, current_user: Employee):
@@ -583,41 +593,15 @@ class RequestService:
             "role": current_user.role
         }, audit_action)
 
-        # 3. Branch-Specific Notification Logic
-        # We find stakeholders in the SAME branch, AND all Global Admins (of this organization)
-        recipients = []
-        admin_emails = RequestService.get_admin_emails(db, current_user)
-        
-        if current_user.role == EmployeeRole.EMPLOYEE:
-            recipients = RequestService.get_emails_by_roles_in_branch(
-                db, [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM], current_user.branch, current_user
-            )
-        elif current_user.role == EmployeeRole.HR:
-            recipients = RequestService.get_emails_by_roles_in_branch(
-                db, [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM], current_user.branch, current_user
-            )
-        elif current_user.role == EmployeeRole.MANAGER:
-            recipients = RequestService.get_emails_by_roles_in_branch(
-                db, [EmployeeRole.SUPPORT_TEAM], current_user.branch, current_user
-            )
-            EmailService.notify_admin_of_manager_request(current_user.name, payload.asset_name, admin_emails)
-        elif current_user.role == EmployeeRole.SUPER_ADMIN:
-            recipients = RequestService.get_emails_by_roles_in_branch(
-                db,
-                [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM],
-                current_user.branch or "",
-                current_user
-            )
-        elif current_user.role == EmployeeRole.SUPPORT_TEAM:
-            recipients = RequestService.get_emails_by_roles_in_branch(
-                db, [EmployeeRole.MANAGER, EmployeeRole.HR], current_user.branch, current_user
-            )
-
-        recipients.extend(admin_emails)
-
-        # 4. Immediate Automated Notifications
-        EmailService.notify_branch_stakeholders(
-            current_user.name, payload.asset_name, recipients, current_user.role, current_user.branch
+        # 3. Immediate notifications to all higher authorities based on requester role hierarchy.
+        recipients = RequestService._get_higher_authority_emails_for_request(db, current_user, current_user)
+        EmailService.notify_branch_stakeholders(current_user.name, payload.asset_name, recipients, current_user.role, current_user.branch)
+        EmailService.notify_request_stage_update(
+            employee_name=current_user.name,
+            asset_name=payload.asset_name,
+            branch=current_user.branch or "-",
+            stage_name=initial_stage,
+            recipients=recipients,
         )
         
         # B. Notify Requester (Confirmation)
@@ -669,6 +653,15 @@ class RequestService:
         if payload.is_needed:
             support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch, user)
             EmailService.notify_hr_verified(req.employee.name, req.asset_name, payload.is_needed, support_emails)
+
+        stage_recipients = RequestService._get_higher_authority_emails_for_request(db, req.employee, user)
+        EmailService.notify_request_stage_update(
+            employee_name=req.employee.name,
+            asset_name=req.asset_name,
+            branch=req.employee.branch or "-",
+            stage_name=req.stage,
+            recipients=stage_recipients,
+        )
         return RequestService._serialize_request(req)
 
     @staticmethod
@@ -745,6 +738,15 @@ class RequestService:
         if req.stage == "MANAGER_APPROVAL":
             manager_email = RequestService.get_manager_email_for_branch(db, req.employee.branch, user)
             EmailService.notify_stock_info_to_manager(req.employee.name, req.asset_name, manager_email, stock_msg)
+
+        stage_recipients = RequestService._get_higher_authority_emails_for_request(db, req.employee, user)
+        EmailService.notify_request_stage_update(
+            employee_name=req.employee.name,
+            asset_name=req.asset_name,
+            branch=req.employee.branch or "-",
+            stage_name=req.stage,
+            recipients=stage_recipients,
+        )
         
         return RequestService._serialize_request(req)
 
@@ -753,8 +755,36 @@ class RequestService:
         req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found")
-        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
-            raise HTTPException(status_code=403, detail="Managers can review only requests from their own branch.")
+
+        if user.role != EmployeeRole.SUPER_ADMIN:
+            user_branch_id = (user.branch_id or "").strip()
+            user_branch_name = (user.branch or "").strip().lower()
+            requester_branch_id = (req.employee.branch_id or "").strip() if req.employee else ""
+            requester_branch_name = (req.employee.branch or "").strip().lower() if req.employee else ""
+
+            # Default rule: manager can review requests from their own branch.
+            can_review = bool(
+                (user_branch_id and requester_branch_id and user_branch_id == requester_branch_id)
+                or (user_branch_name and requester_branch_name and user_branch_name == requester_branch_name)
+            )
+
+            # Cross-branch transfer override: target branch manager can review.
+            action_text = (req.action_type or "").strip()
+            if not can_review and action_text.upper().startswith("TRANSFER:"):
+                target_branch_name = action_text.split(":", 1)[1].strip()
+                target_branch = RequestService._resolve_active_branch(db, target_branch_name, user)
+                target_branch_id = (target_branch.branch_id if target_branch else "").strip() if target_branch else ""
+                target_branch_name_norm = (target_branch.branch_name if target_branch else target_branch_name).strip().lower()
+                can_review = bool(
+                    (user_branch_id and target_branch_id and user_branch_id == target_branch_id)
+                    or (user_branch_name and target_branch_name_norm and user_branch_name == target_branch_name_norm)
+                )
+
+            if not can_review:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Managers can review only requests from their own branch unless they are the target manager for a transfer request.",
+                )
 
         if req.hr_verified is False and payload.is_approved:
             raise HTTPException(
@@ -780,6 +810,15 @@ class RequestService:
         # Fetch branch support emails from DB
         support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch, user)
         EmailService.notify_manager_decision(req.employee.name, req.asset_name, payload.is_approved, support_emails)
+
+        stage_recipients = RequestService._get_higher_authority_emails_for_request(db, req.employee, user)
+        EmailService.notify_request_stage_update(
+            employee_name=req.employee.name,
+            asset_name=req.asset_name,
+            branch=req.employee.branch or "-",
+            stage_name=req.stage,
+            recipients=stage_recipients,
+        )
         return RequestService._serialize_request(req)
 
     @staticmethod
@@ -836,6 +875,15 @@ class RequestService:
         db.commit()
         db.refresh(req)
         AuditService.log_change(db, "requests", request_id, "UPDATE", user, {"status": old_status}, {"status": req.status}, "ADMIN_OVERRIDE_REVIEW")
+
+        stage_recipients = RequestService._get_higher_authority_emails_for_request(db, req.employee, user)
+        EmailService.notify_request_stage_update(
+            employee_name=req.employee.name,
+            asset_name=req.asset_name,
+            branch=req.employee.branch or "-",
+            stage_name=req.stage,
+            recipients=stage_recipients,
+        )
         return RequestService._serialize_request(req)
 
     @staticmethod
@@ -930,7 +978,7 @@ class RequestService:
                 Request.status == "APPROVED_FOR_SUPPORT",
                 Request.action_type.in_(["NEW", "REPLACE"]),
                 Request.asset_category == asset.category.category_name,
-                Employee.branch == asset.branch,
+                Employee.branch_id == asset.branch_id,
                 Employee.is_active == True,
             )
             .order_by(Request.req_date.asc())
@@ -944,7 +992,7 @@ class RequestService:
             db.query(Asset)
             .options(joinedload(Asset.category))
             .filter(
-                Asset.branch == asset.branch,
+                Asset.branch_id == asset.branch_id,
                 Asset.unused > 0,
             )
             .all()

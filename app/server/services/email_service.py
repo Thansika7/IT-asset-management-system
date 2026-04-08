@@ -371,6 +371,61 @@ class EmailService:
                 cls._send_email(email, subject, body)
 
     @classmethod
+    def notify_request_stage_update(
+        cls,
+        employee_name: str,
+        asset_name: str,
+        branch: str,
+        stage_name: str,
+        recipients: List[str],
+    ):
+        if not recipients:
+            return
+
+        subject = f"Request Stage Update: {asset_name} - {stage_name}"
+        body = f"""
+        <html>
+            <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
+                <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+                    <div style="background-color: #0ea5e9; padding: 30px; text-align: center;">
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">Request Workflow Update</h1>
+                        <p style="color: #e0f2fe; margin: 10px 0 0 0; font-size: 14px;">{_app_display_name()}</p>
+                    </div>
+                    <div style="padding: 40px;">
+                        <p>The request has moved to a new workflow stage and requires visibility from higher authorities.</p>
+                        <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="padding: 5px 0; color: #64748b; font-size: 14px; width: 40%;">Requester</td>
+                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500;">{employee_name}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Branch</td>
+                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500;">{branch}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Asset Requested</td>
+                                    <td style="padding: 5px 0; color: #1e293b; font-weight: 500;">{asset_name}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 5px 0; color: #64748b; font-size: 14px;">Current Stage</td>
+                                    <td style="padding: 5px 0; color: #0369a1; font-weight: 700;">{stage_name}</td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                    <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated message from {_app_display_name()}.</p>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        for email in set(recipients):
+            if email:
+                cls._send_email(email, subject, body)
+
+    @classmethod
     def notify_requester_confirmation(cls, requester_email: str, employee_name: str, asset_name: str, branch: str):
         if not requester_email:
             return
