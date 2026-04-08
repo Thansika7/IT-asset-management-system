@@ -651,8 +651,8 @@ function RequestList({ rows, selectedId, onSelect }) {
                 <p className="text-xs text-slate-500 mt-1 truncate">{row.requester_branch || 'Branch not set'}</p>
               </div>
               <div className="space-y-1 min-w-0">
-                <Badge tone={priorityTone(row.priority || 'P3')}>{row.priority || 'P3'}</Badge>
-                <p className="text-xs text-slate-500 truncate">{row.priority_response_time || 'No SLA'}</p>
+                {row.priority ? <Badge tone={priorityTone(row.priority)}>{row.priority}</Badge> : <span className="text-xs text-slate-400 uppercase tracking-wide">Not set yet</span>}
+                <p className="text-xs text-slate-500 truncate">{row.priority_response_time || 'Waiting for support triage'}</p>
               </div>
               <div className="min-w-0">
                 <Badge tone={stageTone(row.stage)} className="whitespace-nowrap">{row.stage || 'Unknown'}</Badge>
@@ -766,10 +766,10 @@ function DetailPanel({ row, user, mutations, onDelete }) {
     ['Stage', row.stage || 'Not available'],
     ['Status', row.status || 'Not available'],
     ['Request type', row.action_type || 'Not selected'],
-    ['Priority', row.priority ? `${row.priority}${row.priority_response_time ? ` (${row.priority_response_time})` : ''}` : 'Not calculated'],
-    ['Severity', row.severity || 'Not set'],
-    ['Urgency', row.urgency || 'Not set'],
-    ['Urgency response target', row.urgency_response_time || 'Not set'],
+    ['Priority', row.priority ? `${row.priority}${row.priority_response_time ? ` (${row.priority_response_time})` : ''}` : 'Waiting for support triage'],
+    ['Severity', row.severity || 'Waiting for support triage'],
+    ['Urgency', row.urgency || 'Waiting for support triage'],
+    ['Urgency response target', row.urgency_response_time || 'Waiting for support triage'],
     ['HR verified', prettyBool(row.hr_verified)],
     ['Requested at', formatDate(row.req_date)],
     ['Manager notes', row.manager_notes || 'No notes'],
@@ -919,11 +919,25 @@ function DetailPanel({ row, user, mutations, onDelete }) {
       ) : null}
 
       {stage === 'HR_VERIFICATION' && canHrReview(user.role) ? (
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="rounded-xl bg-emerald-600 text-white text-sm font-medium px-4 py-2" onClick={() => mutations.hrMut.mutate({ id: row.request_id, is_needed: true })}>Mark needed</button>
-          <button type="button" className="rounded-xl bg-rose-600 text-white text-sm font-medium px-4 py-2" onClick={() => mutations.hrMut.mutate({ id: row.request_id, is_needed: false })}>Not needed</button>
-          {mutations.hrMut.isError ? <p className="text-xs text-rose-600 w-full">{err(mutations.hrMut)}</p> : null}
-        </div>
+        canAdminReview(user.role) ? (
+          <div className="space-y-3 border-t border-slate-100 pt-5">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Admin override</p>
+              <p className="mt-1 text-sm text-slate-600">Admins can bypass HR verification and approve or reject this request directly.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="rounded-xl bg-emerald-600 text-white text-sm font-medium px-4 py-2" onClick={() => mutations.admMut.mutate({ id: row.request_id, is_approved: true })}>Approve</button>
+              <button type="button" className="rounded-xl bg-rose-600 text-white text-sm font-medium px-4 py-2" onClick={() => mutations.admMut.mutate({ id: row.request_id, is_approved: false })}>Reject</button>
+              {mutations.admMut.isError ? <p className="text-xs text-rose-600 w-full">{err(mutations.admMut)}</p> : null}
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="rounded-xl bg-emerald-600 text-white text-sm font-medium px-4 py-2" onClick={() => mutations.hrMut.mutate({ id: row.request_id, is_needed: true })}>Mark needed</button>
+            <button type="button" className="rounded-xl bg-rose-600 text-white text-sm font-medium px-4 py-2" onClick={() => mutations.hrMut.mutate({ id: row.request_id, is_needed: false })}>Not needed</button>
+            {mutations.hrMut.isError ? <p className="text-xs text-rose-600 w-full">{err(mutations.hrMut)}</p> : null}
+          </div>
+        )
       ) : null}
 
       {stage === 'HELPDESK_TRIAGE' && canTriage(user.role) ? (
