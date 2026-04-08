@@ -36,6 +36,14 @@ def get_request_form_options(
 ):
     return RequestService.get_request_form_options(db, current_user)
 
+
+@router.get("/transfer-target-branches", response_model=List[str])
+def list_transfer_target_branches(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.MANAGER, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN)),
+):
+    return RequestService.list_transfer_target_branches(db, current_user)
+
 @router.get("/", response_model=RequestListResponse)
 def list_requests(
     status: Optional[str] = None,

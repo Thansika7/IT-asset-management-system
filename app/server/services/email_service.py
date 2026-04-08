@@ -437,11 +437,11 @@ class EmailService:
                 cls._send_email(email, subject, body)
 
     @classmethod
-    def notify_cross_branch_transfer_request(cls, requester_branch: str, target_branch: str, asset_brand: str, asset_name: str, recipients: List[str], reply_to_email: str):
+    def notify_cross_branch_transfer_request(cls, requester_branch: str, target_branch: str, asset_name: str, recipients: List[str], reply_to_email: str):
         if not recipients:
             return
             
-        subject = f"Urgent Transfer Request: {asset_brand} {asset_name} from {requester_branch} Branch"
+        subject = f"Urgent Transfer Request: {asset_name} from {requester_branch} Branch"
         body = f"""
         <html>
             <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
@@ -459,10 +459,6 @@ class EmailService:
                                 <tr>
                                     <td style="padding: 5px 0; color: #b45309; font-size: 14px; width: 40%;">Target Asset Name</td>
                                     <td style="padding: 5px 0; color: #92400e; font-weight: 600;">{asset_name}</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 5px 0; color: #b45309; font-size: 14px;">Asset Brand Spec</td>
-                                    <td style="padding: 5px 0; color: #92400e; font-weight: 600;">{asset_brand}</td>
                                 </tr>
                                 <tr>
                                     <td style="padding: 5px 0; color: #b45309; font-size: 14px;">Requesting Branch</td>

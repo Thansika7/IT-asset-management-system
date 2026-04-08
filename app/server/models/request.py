@@ -67,10 +67,8 @@ class RequestReview(BaseModel):
 class RequestCrossBranchTransfer(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_branch: str
-    target_asset_brand: str
-    target_asset_name: str
 
-    @field_validator("target_branch", "target_asset_brand", "target_asset_name")
+    @field_validator("target_branch")
     @classmethod
     def validate_transfer_fields(cls, v: str) -> str:
         if not isinstance(v, str):

@@ -22,7 +22,7 @@ from app.server.schema.request import Request
 from app.server.schema.asset import Asset, AssetStatus
 from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.schema.organization import Branch
+from app.server.schema.organization import Branch, BranchStatus
 from app.server.schema.category import Category
 from app.server.services.email_service import EmailService
 from app.server.services.stock_service import StockService
@@ -461,12 +461,77 @@ class RequestService:
 
     @staticmethod
     def get_manager_email_for_branch(db: Session, branch: str, current_user: Employee) -> str | None:
-        manager = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(
-            Employee.branch == branch,
+        resolved_branch = RequestService._resolve_active_branch(db, branch, current_user)
+        if resolved_branch:
+            manager = apply_tenant_filter(db.query(Employee), current_user, Employee).join(
+                Branch,
+                Employee.branch_id == Branch.branch_id,
+                isouter=True,
+            ).filter(
+                Employee.role == EmployeeRole.MANAGER,
+                Employee.is_active == True,
+                or_(
+                    Employee.branch_id == resolved_branch.branch_id,
+                    func.lower(Branch.branch_name) == resolved_branch.branch_name.strip().lower(),
+                ),
+            ).first()
+        else:
+            normalized = (branch or "").strip().lower()
+            manager = apply_tenant_filter(db.query(Employee), current_user, Employee).join(
+                Branch,
+                Employee.branch_id == Branch.branch_id,
+                isouter=True,
+            ).filter(
+                Employee.role == EmployeeRole.MANAGER,
+                Employee.is_active == True,
+                func.lower(Branch.branch_name) == normalized,
+            ).first()
+        return EmailService.delivery_email(manager) if manager else None
+
+    @staticmethod
+    def _resolve_active_branch(db: Session, branch: str, current_user: Employee) -> Branch | None:
+        normalized = (branch or "").strip()
+        if not normalized:
+            return None
+        branch_row = apply_tenant_filter(db.query(Branch), current_user, Branch).filter(
+            Branch.status == BranchStatus.ACTIVE,
+            or_(
+                Branch.branch_id == normalized,
+                func.lower(Branch.branch_name) == normalized.lower(),
+            ),
+        ).first()
+        return branch_row
+
+    @staticmethod
+    def list_transfer_target_branches(db: Session, current_user: Employee) -> List[str]:
+        branch_rows = apply_tenant_filter(db.query(Branch), current_user, Branch).filter(Branch.status == BranchStatus.ACTIVE).all()
+        if not branch_rows:
+            return []
+
+        active_manager_rows = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(
             Employee.role == EmployeeRole.MANAGER,
             Employee.is_active == True,
-        ).first()
-        return EmailService.delivery_email(manager) if manager else None
+        ).all()
+
+        manager_branch_ids = {row.branch_id for row in active_manager_rows if row.branch_id}
+        manager_branch_names = {(row.branch or "").strip().lower() for row in active_manager_rows if row.branch}
+        own_branch_id = (current_user.branch_id or "").strip()
+        own_branch_name = (current_user.branch or "").strip().lower()
+
+        options: List[str] = []
+        for branch in branch_rows:
+            branch_name = (branch.branch_name or "").strip()
+            if not branch_name:
+                continue
+            if own_branch_id and branch.branch_id == own_branch_id:
+                continue
+            if own_branch_name and branch_name.lower() == own_branch_name:
+                continue
+            has_manager = branch.branch_id in manager_branch_ids or branch_name.lower() in manager_branch_names
+            if has_manager:
+                options.append(branch_name)
+
+        return sorted(dict.fromkeys(options))
 
     @staticmethod
     def create_asset_request(db: Session, payload: RequestCreate, current_user: Employee):
@@ -936,32 +1001,45 @@ class RequestService:
         if req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Managers can initiate transfers only for requests in their own branch.")
         
-        if req.employee.branch == payload.target_branch:
+        target_branch = RequestService._resolve_active_branch(db, payload.target_branch, user)
+        if not target_branch:
+            raise HTTPException(status_code=400, detail=f"Target branch '{payload.target_branch}' is not a valid active branch.")
+
+        target_branch_name = target_branch.branch_name
+
+        if (req.employee.branch_id and req.employee.branch_id == target_branch.branch_id) or (
+            (req.employee.branch or "").strip().lower() == target_branch_name.strip().lower()
+        ):
             raise HTTPException(status_code=400, detail="Cannot request transfer from your own branch")
 
         # Find target branch stakeholders
-        target_manager_email = RequestService.get_manager_email_for_branch(db, payload.target_branch, user)
+        target_manager_email = RequestService.get_manager_email_for_branch(db, target_branch_name, user)
         if not target_manager_email:
-            raise HTTPException(status_code=400, detail=f"Target branch '{payload.target_branch}' has no active Manager to receive this request.")
-        
-        target_support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], payload.target_branch, user)
+            raise HTTPException(status_code=400, detail=f"Target branch '{target_branch_name}' has no active Manager to receive this request.")
+
+        target_support_emails = RequestService.get_emails_by_roles_in_branch(
+            db,
+            [EmployeeRole.SUPPORT_TEAM],
+            target_branch_name,
+            user,
+        )
         
         # Update Request Status
         old_status = req.status
         req.status = "AWAITING_TRANSFER"
-        req.action_type = f"TRANSFER:{payload.target_branch}"
+        req.action_type = f"TRANSFER:{target_branch_name}"
         transfer_tracking = None
         if req.serviced_asset_id:
             transfer_tracking = Tracking(
                 asset_id=req.serviced_asset_id,
-                asset_name=payload.target_asset_name,
+                asset_name=req.asset_name,
                 emp_id=req.emp_id,
                 organization_id=user.organization_id,
                 branch_id=user.branch_id,
                 category=req.asset_category,
                 branch=req.employee.branch,
                 from_branch=req.employee.branch,
-                to_branch=payload.target_branch,
+                to_branch=target_branch_name,
                 movement_type=MovementType.TRANSFER,
                 movement_reason=f"CROSS_BRANCH_REQUEST_{request_id}",
                 allocation_type=AllocationType.TEMPORARY,
@@ -998,9 +1076,8 @@ class RequestService:
         recipients = [target_manager_email] + target_support_emails
         EmailService.notify_cross_branch_transfer_request(
             requester_branch=req.employee.branch,
-            target_branch=payload.target_branch,
-            asset_brand=payload.target_asset_brand,
-            asset_name=payload.target_asset_name,
+            target_branch=target_branch_name,
+            asset_name=req.asset_name,
             recipients=recipients,
             reply_to_email=user.email
         )
@@ -1008,12 +1085,29 @@ class RequestService:
 
     @staticmethod
     def get_emails_by_roles_in_branch(db: Session, roles: List[EmployeeRole], branch: str, current_user: Employee) -> List[str]:
-        # Filter stakeholders by organization to prevent cross-tenant notifications
-        stakeholders = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(
-            Employee.branch == branch,
+        resolved_branch = RequestService._resolve_active_branch(db, branch, current_user)
+        normalized = (branch or "").strip().lower()
+
+        stakeholders_query = apply_tenant_filter(db.query(Employee), current_user, Employee).join(
+            Branch,
+            Employee.branch_id == Branch.branch_id,
+            isouter=True,
+        ).filter(
             Employee.role.in_(roles),
             Employee.is_active == True,  # noqa: E712
-        ).all()
+        )
+
+        if resolved_branch:
+            stakeholders_query = stakeholders_query.filter(
+                or_(
+                    Employee.branch_id == resolved_branch.branch_id,
+                    func.lower(Branch.branch_name) == resolved_branch.branch_name.strip().lower(),
+                )
+            )
+        else:
+            stakeholders_query = stakeholders_query.filter(func.lower(Branch.branch_name) == normalized)
+
+        stakeholders = stakeholders_query.all()
         return [EmailService.delivery_email(s) for s in stakeholders if EmailService.delivery_email(s)]
 
     @staticmethod
