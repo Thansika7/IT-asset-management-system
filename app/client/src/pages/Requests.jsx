@@ -685,6 +685,7 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
   const [aiRecommendation, setAiRecommendation] = useState(null)
   const [aiError, setAiError] = useState('')
   const [managerNotes, setManagerNotes] = useState('')
+  const [transferConfirmOpen, setTransferConfirmOpen] = useState(false)
 
   const necessityMut = useMutation({
     mutationFn: (requestId) => apiFetch(`/requests/${requestId}/recommend-necessity`, { method: 'POST' }),
@@ -726,6 +727,7 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
     setAiRecommendation(null)
     setAiError('')
     setManagerNotes('')
+    setTransferConfirmOpen(false)
   }, [row?.request_id, transferBranches])
 
   if (!row) {
@@ -1050,14 +1052,30 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
             type="button"
             className="rounded-xl border border-slate-300 text-sm font-medium px-4 py-2"
             disabled={!tBranch}
-            onClick={() => mutations.transferMut.mutate({ id: row.request_id, body: { target_branch: tBranch } })}
+            onClick={() => setTransferConfirmOpen(true)}
           >
             Request transfer
           </button>
-          {!transferBranches.length ? <p className="text-xs text-slate-500">No eligible target branches with active manager found.</p> : null}
+          {!transferBranches.length ? <p className="text-xs text-slate-500">No active branches available.</p> : null}
           {mutations.transferMut.isError ? <p className="text-xs text-rose-600">{err(mutations.transferMut)}</p> : null}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={transferConfirmOpen}
+        title={tBranch ? `Request transfer to ${tBranch}?` : 'Request transfer?'}
+        description="This will create a cross-branch transfer request and notify the target branch stakeholders."
+        confirmLabel="Confirm transfer"
+        variant="neutral"
+        busy={mutations.transferMut.isPending}
+        onCancel={() => !mutations.transferMut.isPending && setTransferConfirmOpen(false)}
+        onConfirm={() => {
+          mutations.transferMut.mutate(
+            { id: row.request_id, body: { target_branch: tBranch } },
+            { onSuccess: () => setTransferConfirmOpen(false) }
+          )
+        }}
+      />
     </div>
   )
 }
