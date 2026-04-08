@@ -193,19 +193,22 @@ class RequestService:
             data.requester_name = getattr(req.employee, "name", None)
             data.requester_role = req.employee.role.value if getattr(req.employee, "role", None) else None
             data.requester_branch = req.employee.branch  # derived via relationship (branch_name)
-        priority = (req.priority or "P3").upper()
+        priority = (req.priority or "").strip().upper()
         req_date = req.req_date
-        if req_date:
+        if req_date and priority:
             sla_target = req_date + timedelta(hours=RequestService.SLA_HOURS.get(priority, 24))
             data.sla_target_at = sla_target
             now = datetime.now(req_date.tzinfo) if req_date.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
             data.sla_breached = req.stage not in {"COMPLETED", "REJECTED"} and sla_target < now
-        severity = (req.severity or "MEDIUM").upper()
-        data.severity_description = RequestService.SEVERITY_DESCRIPTIONS.get(severity)
-        data.priority_description = RequestService.PRIORITY_DESCRIPTIONS.get(priority)
-        data.priority_response_time = RequestService.PRIORITY_RESPONSE_TIME.get(priority)
-        urgency = (req.urgency or "MEDIUM").upper()
-        data.urgency_response_time = RequestService.URGENCY_RESPONSE_TIME.get(urgency)
+        severity = (req.severity or "").strip().upper()
+        if severity:
+            data.severity_description = RequestService.SEVERITY_DESCRIPTIONS.get(severity)
+        if priority:
+            data.priority_description = RequestService.PRIORITY_DESCRIPTIONS.get(priority)
+            data.priority_response_time = RequestService.PRIORITY_RESPONSE_TIME.get(priority)
+        urgency = (req.urgency or "").strip().upper()
+        if urgency:
+            data.urgency_response_time = RequestService.URGENCY_RESPONSE_TIME.get(urgency)
         data.escalation_triggered, data.escalation_role = RequestService._compute_escalation_state(req)
         return data
 
