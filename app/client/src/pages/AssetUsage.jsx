@@ -91,10 +91,7 @@ export default function AssetUsage() {
             Asset usage
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Built from <code className="text-xs bg-slate-100 px-1 rounded">Tracking</code> movements and catalog fields (
-            <code className="text-xs bg-slate-100 px-1 rounded">GET /assets/usage/analytics</code>,{' '}
-            <code className="text-xs bg-slate-100 px-1 rounded">GET /assets/usage/report</code>,{' '}
-            <code className="text-xs bg-slate-100 px-1 rounded">GET /assets/:id/usage</code>). Branch-scoped for managers, HR, and support.
+            Built from <code className="text-xs bg-slate-100 px-1 rounded">Tracking</code> movements and catalog fields. Branch-scoped for managers, HR, and support.
           </p>
         </div>
         <button

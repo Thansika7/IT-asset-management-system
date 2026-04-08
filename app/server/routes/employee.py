@@ -63,7 +63,22 @@ def register_employee(
             detail="organization_id is required (set on your account or provide it as a super admin).",
         )
 
+    # Prefer branch_id; if UI sends branch name, resolve it to a branch_id in this organization.
     resolved_branch_id = payload.branch_id
+    if not resolved_branch_id and payload.branch:
+        branch_name = payload.branch.strip()
+        if branch_name:
+            branch_obj = (
+                db.query(Branch)
+                .filter(
+                    Branch.organization_id == resolved_organization_id,
+                    Branch.branch_name == branch_name,
+                )
+                .first()
+            )
+            if not branch_obj:
+                raise HTTPException(status_code=400, detail="Invalid branch (no such branch in your organization)")
+            resolved_branch_id = branch_obj.branch_id
     if resolved_branch_id:
         branch_obj = db.query(Branch).filter(Branch.branch_id == resolved_branch_id).first()
         if not branch_obj:

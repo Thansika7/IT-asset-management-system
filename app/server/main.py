@@ -101,9 +101,43 @@ def _ensure_request_branch_column() -> None:
             conn.execute(text("ALTER TABLE requests ADD COLUMN branch_id VARCHAR(50) NULL"))
 
 
+def _ensure_onboarding_preset_columns() -> None:
+    """Backfill schema for environments created before onboarding presets were tenant-scoped."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'onboarding_presets'
+                """
+            )
+        )
+        existing = {row[0] for row in rows}
+
+        if "organization_id" not in existing:
+            conn.execute(text("ALTER TABLE onboarding_presets ADD COLUMN organization_id VARCHAR(50) NULL"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_onboarding_presets_organization_id ON onboarding_presets (organization_id)"))
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE onboarding_presets
+                    ADD CONSTRAINT onboarding_presets_organization_id_fkey
+                    FOREIGN KEY (organization_id)
+                    REFERENCES organizations (organization_id)
+                    ON DELETE CASCADE
+                    """
+                )
+            )
+
+        if "created_by" not in existing:
+            conn.execute(text("ALTER TABLE onboarding_presets ADD COLUMN created_by VARCHAR(50) NULL"))
+
+
 Base.metadata.create_all(bind=engine)
 _ensure_organization_subscription_columns()
 _ensure_request_branch_column()
+_ensure_onboarding_preset_columns()
 
 @app.exception_handler(AppBaseException)
 async def app_exception_handler(request: Request, exc: AppBaseException):
