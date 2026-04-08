@@ -10,6 +10,7 @@ function AdminAllocationForm({ onSuccess, adminId }) {
   const [selectedAssetId, setSelectedAssetId] = useState('')
   const [allocationType, setAllocationType] = useState('PERMANENT')
   const [reason, setReason] = useState('')
+  const [validationHint, setValidationHint] = useState('')
 
   const stockQuery = useQuery({
     queryKey: ['stock-for-allocation'],
@@ -36,9 +37,10 @@ function AdminAllocationForm({ onSuccess, adminId }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     if (!selectedAssetId) {
-      alert('Please select an asset')
+      setValidationHint('Please select an asset.')
       return
     }
+    setValidationHint('')
     allocateMut.mutate({
       asset_id: selectedAssetId,
       employee_id: adminId,
@@ -57,6 +59,13 @@ function AdminAllocationForm({ onSuccess, adminId }) {
         <p className="text-sm text-slate-600">Quickly allocate an asset directly to yourself</p>
       </div>
 
+      {validationHint ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex gap-2 text-sm text-amber-900">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div>{validationHint}</div>
+        </div>
+      ) : null}
+
       {allocateMut.isError && (
         <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 flex gap-2 text-sm text-rose-800">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -69,7 +78,10 @@ function AdminAllocationForm({ onSuccess, adminId }) {
           <label className="block text-sm font-semibold text-slate-700 mb-2">Asset</label>
           <select
             value={selectedAssetId}
-            onChange={(e) => setSelectedAssetId(e.target.value)}
+            onChange={(e) => {
+              setSelectedAssetId(e.target.value)
+              if (e.target.value) setValidationHint('')
+            }}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             disabled={stockQuery.isLoading}
           >

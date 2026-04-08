@@ -48,6 +48,59 @@ def _normalize_verdict(raw: str) -> NecessityVerdict:
     return NecessityVerdict.UNCERTAIN
 
 
+def _analyze_reason_priority(reason: str) -> dict[str, Any]:
+    text = (reason or "").strip().lower()
+    if not text:
+        return {
+            "priority": "LOW",
+            "signal": "missing_reason",
+            "note": "Request reason is missing.",
+        }
+
+    high_signals = [
+        "not working",
+        "broken",
+        "failed",
+        "replace",
+        "replacement",
+        "repair",
+        "onboarding",
+        "new joiner",
+        "cannot login",
+        "production",
+        "security",
+        "urgent",
+    ]
+    medium_signals = [
+        "slow",
+        "performance",
+        "upgrade",
+        "project",
+        "role change",
+        "team expansion",
+    ]
+
+    if any(token in text for token in high_signals):
+        return {
+            "priority": "HIGH",
+            "signal": "strong_business_reason",
+            "note": "Reason includes failure/onboarding/critical work indicators.",
+        }
+    if any(token in text for token in medium_signals):
+        return {
+            "priority": "MEDIUM",
+            "signal": "moderate_business_reason",
+            "note": "Reason includes moderate operational justification.",
+        }
+
+    # Short, generic requests should be treated as weak justification.
+    return {
+        "priority": "LOW",
+        "signal": "weak_or_generic_reason",
+        "note": "Reason appears generic; justification quality is low.",
+    }
+
+
 def _call_gemini_json(prompt: str) -> dict[str, Any]:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -194,6 +247,7 @@ def recommend_request_necessity(
         raise ValueError("asset_name, asset_category, and reason are required.")
 
     context = _gather_context(db, requester, asset_category)
+    context["reason_first_priority"] = _analyze_reason_priority(reason)
     if ticket_context:
         context["ticket_being_reviewed"] = ticket_context
     context_json = json.dumps(context, indent=2, default=str)
@@ -216,6 +270,11 @@ Request (from the employee named in requester in the JSON):
 - Stated reason: {reason}
 
 Task: Judge whether this request is LIKELY_NEEDED, LIKELY_REDUNDANT, or UNCERTAIN.
+Decision rule priority (strict):
+1) FIRST PRIORITY: evaluate the quality and business necessity of the stated reason.
+2) Then validate reason against assigned assets, branch stock, and recent request history.
+3) If reason is weak/generic and overlaps existing assets, lean LIKELY_REDUNDANT.
+4) If reason is strong (failure/onboarding/critical work) and no clear conflict exists, lean LIKELY_NEEDED.
 - LIKELY_REDUNDANT: e.g. they already hold a suitable asset of the same class and the reason does not justify another (duplicate laptop without clear business case), or the reason is vague and overlaps existing assignments.
 - LIKELY_NEEDED: e.g. clear failure/replacement need, onboarding, first device of that type, role change, or no conflicting assignment.
 - UNCERTAIN: not enough information or mixed signals.
@@ -270,6 +329,12 @@ def recommend_necessity_for_request(db: Session, viewer: Employee, request_id: s
             raise HTTPException(status_code=403, detail="You can only run necessity review for requests from your branch.")
     elif viewer.role != EmployeeRole.SUPER_ADMIN:
         raise HTTPException(status_code=403, detail="Only HR or Admin may request AI necessity analysis.")
+
+    if (req.stage or "").strip() != "HR_VERIFICATION":
+        raise HTTPException(
+            status_code=400,
+            detail="AI necessity recommendation is available only during HR_VERIFICATION stage.",
+        )
 
     asset_name = (req.asset_name or "").strip()
     asset_category = (req.asset_category or "Unknown").strip()

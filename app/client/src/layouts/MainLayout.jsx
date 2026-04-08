@@ -2,6 +2,7 @@
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
+  Building2,
   PackageSearch,
   FileStack,
   MapPinned,
@@ -20,6 +21,7 @@ import { useAuth } from '@/context/AuthContext'
 import { NAV, labelForRole } from '@/lib/roles'
 
 const navDef = [
+  { to: '/organizations', label: 'Organizations', icon: Building2, show: NAV.organizations },
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, show: NAV.dashboard },
   { to: '/my-assets', label: 'My assets', icon: Laptop, show: NAV.myAssets },
   { to: '/requests', label: 'Requests', icon: FileStack, show: NAV.requests },
@@ -38,8 +40,8 @@ export default function MainLayout() {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const items = useMemo(
-    () => navDef.filter((n) => n.show(user.role)),
-    [user.role],
+    () => navDef.filter((n) => n.show(user.role, user.permissions)),
+    [user.role, user.permissions],
   )
 
   const Crumb = () => {
@@ -67,7 +69,7 @@ export default function MainLayout() {
         </div>
       </div>
 
-      <nav className="flex-1 px-3 space-y-1 overflow-y-auto pb-6">
+      <nav className="flex-1 px-3 space-y-1 overflow-y-auto no-scrollbar pb-6">
         {items.map(({ to, label, icon: Icon }, index) => (
           <NavLink
             key={to}

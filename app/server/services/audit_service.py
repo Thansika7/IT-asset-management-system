@@ -15,7 +15,7 @@ class AuditService:
         new_values: dict = None,
         reason: str = None
     ):
-        if action not in ["CREATE", "UPDATE"]:
+        if action not in ["CREATE", "UPDATE", "DELETE"]:
             return
             
         audit=AuditLog(

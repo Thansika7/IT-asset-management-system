@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from typing import Optional, Set
 
 from dotenv import load_dotenv
@@ -145,11 +146,76 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
+def _login_email_host_strict(raw_email: str) -> Optional[str]:
+    """
+    Normalized domain host from the login identifier (exact match against org domain).
+    Rejects multiple @, whitespace in local/host, empty labels, and non-IDNA-safe hosts.
+    """
+    if raw_email is None:
+        return None
+    s = raw_email.strip().lower()
+    if not s or s.count("@") != 1:
+        return None
+    local, host = s.split("@", 1)
+    local, host = local.strip(), host.strip().strip(".")
+    if not local or not host:
+        return None
+    if any(ch.isspace() for ch in local) or any(ch.isspace() for ch in host):
+        return None
+    if "@" in host:
+        return None
+    labels = host.split(".")
+    if not labels or any(not lb for lb in labels):
+        return None
+    try:
+        ascii_host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    return ascii_host.lower()
+
+
+def _org_domain_host_strict(raw_domain: Optional[str]) -> Optional[str]:
+    """Normalize organization.domain config (strip scheme/path/port, drop leading www., IDNA)."""
+    raw = (raw_domain or "").strip()
+    if not raw:
+        return None
+    lower = raw.lower()
+    if "://" not in lower:
+        lower = f"https://{lower}"
+    parsed = urlparse(lower)
+    host = (parsed.netloc or parsed.path or "").strip().lower()
+    if not host:
+        return None
+    host = host.split(":")[0].strip(".")
+    if host.startswith("www."):
+        host = host[4:].strip(".")
+    if not host:
+        return None
+    try:
+        ascii_host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    return ascii_host.lower()
+
+
 def authenticate_user(db: Session, email: str, password: str) -> Employee | None:
-    email_lower=email.lower()
-    user=db.query(Employee).filter(Employee.email==email_lower, Employee.is_active==True).first()
+    email_norm = (email or "").strip().lower()
+    if not email_norm:
+        return None
+    user = db.query(Employee).filter(Employee.email == email_norm, Employee.is_active == True).first()
     if not user or not user.password_hash:
         return None
+
+    # Tenant users: company email host must exactly match the organization's configured
+    # domain (strict parsing / IDNA). Super admin is exempt.
+    if user.role != EmployeeRole.SUPER_ADMIN and user.organization_id and user.organization:
+        configured = (user.organization.domain or "").strip()
+        if configured:
+            email_host = _login_email_host_strict(email_norm)
+            org_host = _org_domain_host_strict(user.organization.domain)
+            if not email_host or not org_host or email_host != org_host:
+                return None
+
     if not verify_password(password, user.password_hash):
         return None
     return user
@@ -204,7 +270,11 @@ def get_token_from_header_or_cookie(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-def get_current_user(token: str=Depends(get_token_from_header_or_cookie), db: Session=Depends(get_db)) -> Employee:
+def get_current_user(
+    request: Request,
+    token: str=Depends(get_token_from_header_or_cookie),
+    db: Session=Depends(get_db)
+) -> Employee:
     credentials_exception=HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -220,6 +290,23 @@ def get_current_user(token: str=Depends(get_token_from_header_or_cookie), db: Se
     user=db.query(Employee).filter(Employee.email==token_data.sub.lower()).first()
     if not user or not user.is_active:
         raise credentials_exception
+
+    # Super admin is only for platform-level operations and must not access
+    # organization-scoped business endpoints.
+    if user.role == EmployeeRole.SUPER_ADMIN:
+        allowed_prefixes = (
+            "/organizations",
+            "/auth",
+            "/health",
+            "/openapi.json",
+            "/docs",
+            "/redoc",
+        )
+        if not request.url.path.startswith(allowed_prefixes):
+            raise HTTPException(
+                status_code=403,
+                detail="Super Admin is restricted to organization management endpoints.",
+            )
         
     if user.organization and user.role.value != "super_admin":
         from app.server.schema.organization import SubscriptionStatus

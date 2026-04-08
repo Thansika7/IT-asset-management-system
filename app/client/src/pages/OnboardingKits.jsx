@@ -4,11 +4,13 @@ import { apiFetch } from '@/lib/api'
 import { R, canManageOnboardingKits, labelForRole } from '@/lib/roles'
 import { useAuth } from '@/context/AuthContext'
 import { RefreshCw, Trash2, Plus } from 'lucide-react'
+import ConfirmDialog from '@/components/ConfirmDialog'
 
 export default function OnboardingKits() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const canEdit = canManageOnboardingKits(user.role)
+  const [deleteTarget, setDeleteTarget] = useState(null)
 
   const { data: presets = [], isLoading, refetch, isFetching } = useQuery({
     queryKey: ['onboarding-presets'],
@@ -30,7 +32,10 @@ export default function OnboardingKits() {
 
   const deleteMut = useMutation({
     mutationFn: (id) => apiFetch(`/onboarding-presets/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['onboarding-presets'] }),
+    onSuccess: () => {
+      setDeleteTarget(null)
+      qc.invalidateQueries({ queryKey: ['onboarding-presets'] })
+    },
   })
 
   return (
@@ -99,9 +104,7 @@ export default function OnboardingKits() {
                 {canEdit ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      if (window.confirm(`Delete kit “${p.name}”?`)) deleteMut.mutate(p.preset_id)
-                    }}
+                    onClick={() => setDeleteTarget({ id: p.preset_id, name: p.name })}
                     className="inline-flex items-center gap-1.5 text-sm font-semibold text-rose-700 border border-rose-200 rounded-xl px-3 py-2 hover:bg-rose-50 shrink-0"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -113,6 +116,16 @@ export default function OnboardingKits() {
           </ul>
         )}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={deleteTarget ? `Delete kit “${deleteTarget.name}”?` : ''}
+        description="This removes the onboarding kit preset. Employees already registered are not affected."
+        confirmLabel="Delete kit"
+        busy={deleteMut.isPending}
+        onCancel={() => !deleteMut.isPending && setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget.id)}
+      />
     </div>
   )
 }

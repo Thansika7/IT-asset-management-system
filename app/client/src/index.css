@@ -145,6 +145,16 @@ body {
   transform: translateX(140%);
 }
 
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* Ensure all buttons and clickable elements explicitly use the pointer cursor */
 button,
 [role="button"],

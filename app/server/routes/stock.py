@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import List, Optional
 
 from app.server.database.database import get_db
 from app.server.models.stock import AssetCreate, StockAdd, StockResponse, AllocateRequest, ReturnRequest
 from app.server.schema.asset import Asset
 from app.server.schema.category import Category, SubCategory
+from app.server.schema.organization import Branch
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.middlewares.auth import require_roles
 from app.server.services.stock_service import StockService
@@ -20,10 +22,20 @@ def list_inventory_status(
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM))
 ):
-    """View full inventory snapshot across branches."""
-    query=db.query(Asset)
+    """View full inventory snapshot across branches (scoped by organization for non super-admins)."""
+    query = db.query(Asset)
+    if current_user.role != EmployeeRole.SUPER_ADMIN:
+        org_cond = [Asset.organization_id == current_user.organization_id]
+        branch_ids = [
+            bid for (bid,) in db.query(Branch.branch_id).filter(Branch.organization_id == current_user.organization_id).all()
+        ]
+        if branch_ids:
+            org_cond.append(Asset.branch_id.in_(branch_ids))
+        query = query.filter(or_(*org_cond))
+    if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM] and current_user.branch_id:
+        query = query.filter(Asset.branch_id == current_user.branch_id)
     if branch_name:
-        query=query.filter(Asset.branch_id==branch_name)
+        query = query.filter(Asset.branch_id == branch_name)
     return query.all()
 
 @router.post("/", response_model=StockResponse, status_code=201)
@@ -53,11 +65,30 @@ def create_asset_entry(
             db.add(sub_category)
             db.flush()
 
+    resolved_branch_id = payload.branch_id
+    if not resolved_branch_id and current_user.role == EmployeeRole.SUPPORT_TEAM:
+        resolved_branch_id = current_user.branch_id
+
+    branch_obj = None
+    resolved_org_id = current_user.organization_id if current_user.role != EmployeeRole.SUPER_ADMIN else None
+    if resolved_branch_id:
+        branch_obj = db.query(Branch).filter(Branch.branch_id == resolved_branch_id).first()
+        if not branch_obj:
+            raise HTTPException(status_code=400, detail="Invalid branch_id")
+        resolved_org_id = branch_obj.organization_id
+
+    if current_user.role != EmployeeRole.SUPER_ADMIN:
+        if not resolved_org_id or resolved_org_id != current_user.organization_id:
+            raise HTTPException(status_code=403, detail="Cannot create assets in another organization")
+        if current_user.role == EmployeeRole.SUPPORT_TEAM and current_user.branch_id and resolved_branch_id != current_user.branch_id:
+            raise HTTPException(status_code=403, detail="Support can create assets only in their own branch")
+
     asset_kwargs = {
         "name": payload.name,
         "category_id": cat.category_id,
         "sub_category_id": sub_category.sub_category_id if sub_category else None,
-        "branch_id": payload.branch_id,
+        "organization_id": resolved_org_id,
+        "branch_id": resolved_branch_id,
         "purchased_date": payload.purchased_date,
         "purchase_cost": payload.purchase_cost,
         "salvage_value": payload.salvage_value,

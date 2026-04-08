@@ -10,7 +10,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SMTP_FROM = "Kovan IT <no-reply@kovan.com>"
+
+def _app_display_name() -> str:
+    """Product name in email copy and default SMTP From (override with APP_DISPLAY_NAME in .env)."""
+    return (os.getenv("APP_DISPLAY_NAME", "Asset Control System") or "Asset Control System").strip()
+
+
+def _default_smtp_from() -> str:
+    return f"{_app_display_name()} <no-reply@localhost>"
+
 
 class EmailService:
     @staticmethod
@@ -22,7 +30,9 @@ class EmailService:
         return text.title() if text else "User"
 
     @staticmethod
-    def _wrap_email(title: str, subtitle: str, body_html: str, accent_color: str = "#6366f1", footer_note: str = "Automated message from IT Asset Control System.") -> str:
+    def _wrap_email(title: str, subtitle: str, body_html: str, accent_color: str = "#6366f1", footer_note: Optional[str] = None) -> str:
+        if footer_note is None:
+            footer_note = f"Automated message from {_app_display_name()} — do not reply."
         return f"""
         <html>
             <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
@@ -53,7 +63,7 @@ class EmailService:
         smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else 587
         smtp_user = os.getenv("SMTP_USER", "").strip()
         smtp_pass = os.getenv("SMTP_PASSWORD", "").strip()
-        smtp_from = os.getenv("SMTP_FROM", DEFAULT_SMTP_FROM).strip()
+        smtp_from = os.getenv("SMTP_FROM", "").strip() or _default_smtp_from()
 
         if not all([smtp_host, smtp_user, smtp_pass]):
             logger.warning(
@@ -136,10 +146,10 @@ class EmailService:
                         <div style="border-left: 4px solid {urgency_color}; background-color: #f8fafc; padding: 15px; margin: 25px 0; font-size: 14px;">
                             <strong>Recommended Action:</strong><br>{action_note}
                         </div>
-                        <p style="font-size: 14px; color: #64748b;">Manage stock levels from the Inventory section of the IT Asset Control portal.</p>
+                        <p style="font-size: 14px; color: #64748b;">Manage stock levels from the Inventory section of the {_app_display_name()} portal.</p>
                     </div>
                     <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
-                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated alert from IT Asset Control System.</p>
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated alert from {_app_display_name()}.</p>
                     </div>
                 </div>
             </body>
@@ -319,7 +329,7 @@ class EmailService:
             <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #1e293b; line-height: 1.6; background-color: #f8fafc; padding: 20px;">
                 <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
                     <div style="background-color: #6366f1; padding: 30px; text-align: center;">
-                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">IT Asset Control</h1>
+                        <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">{_app_display_name()}</h1>
                         <p style="color: #e0e7ff; margin: 10px 0 0 0; font-size: 14px;">Incoming Resource Request</p>
                     </div>
                     <div style="padding: 40px;">
@@ -350,8 +360,7 @@ class EmailService:
                         <p style="font-size: 14px; color: #64748b;">The request is currently at the <strong>HR & Support Triage</strong> stage. Please review the details.</p>
                     </div>
                     <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
-                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated message from IT Asset Management System.</p>
-                        <p style="font-size: 12px; color: #94a3b8; margin: 5px 0 0 0;">&copy; 2026 Your Organization . IT Dept</p>
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated message from {_app_display_name()}.</p>
                     </div>
                 </div>
             </body>
@@ -373,7 +382,7 @@ class EmailService:
                 <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
                     <div style="background-color: #10b981; padding: 30px; text-align: center;">
                         <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;">Request Confirmed</h1>
-                        <p style="color: #d1fae5; margin: 10px 0 0 0; font-size: 14px;">Your IT Asset Request has been raised</p>
+                        <p style="color: #d1fae5; margin: 10px 0 0 0; font-size: 14px;">Your request has been submitted in {_app_display_name()}</p>
                     </div>
                     <div style="padding: 40px;">
                         <p>Hello <strong>{employee_name}</strong>,</p>
@@ -387,7 +396,7 @@ class EmailService:
                         <p style="font-size: 14px; color: #64748b;">You can track the progress of your request at any time via the employee portal.</p>
                     </div>
                     <div style="background-color: #f8fafc; padding: 20px; text-align: center; border-top: 1px solid #e2e8f0;">
-                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated message from IT Asset Management System.</p>
+                        <p style="font-size: 12px; color: #94a3b8; margin: 0;">Automated message from {_app_display_name()}.</p>
                     </div>
                 </div>
             </body>
@@ -556,13 +565,14 @@ class EmailService:
     def send_provisioning_credentials(cls, personal_email: str, employee_name: str, company_email: str, temp_password: str):
         if not personal_email:
             return
-        subject = "Your Kovan account is ready"
+        app_name = _app_display_name()
+        subject = f"Your {app_name} account is ready"
         body = cls._wrap_email(
-            "Welcome to Kovan",
+            f"Welcome to {app_name}",
             "Sign-in details",
             f"""
             <p>Hello <strong>{employee_name}</strong>,</p>
-            <p>Your company account has been created. Use the credentials below to sign in; you will be prompted to change your password after first login.</p>
+            <p>Your company account has been created in {app_name}. Use the credentials below to sign in; you will be prompted to change your password after first login.</p>
             <div style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:20px 0;">
                 <table style="width:100%;border-collapse:collapse;">
                     <tr><td style="padding:6px 0;color:#64748b;width:40%;">Company email (username)</td><td style="font-family:monospace;font-weight:600;">{company_email}</td></tr>
@@ -572,7 +582,6 @@ class EmailService:
             <p style="font-size:13px;color:#64748b;">This message was sent to your personal email on file. All system notifications will be delivered here.</p>
             """,
             accent_color="#6366f1",
-            footer_note="Automated message from Kovan IT — do not reply.",
         )
         cls._send_email(personal_email, subject, body)
 
@@ -580,13 +589,14 @@ class EmailService:
     def send_password_reset_email(cls, email: str, new_password: str, employee_name: str):
         """Send new password via email"""
         
-        subject = "Password Reset - IT Asset Control System"
+        app_name = _app_display_name()
+        subject = f"Password reset — {app_name}"
         body = cls._wrap_email(
-            "Password Reset",
+            "Password reset",
             "Your new password",
             f"""
             <p>Hello <strong>{employee_name}</strong>,</p>
-            <p>Your password has been reset. Use the credentials below to sign in:</p>
+            <p>Your {app_name} password has been reset. Use the credentials below to sign in:</p>
             <div style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px;margin:20px 0;">
                 <table style="width:100%;border-collapse:collapse;">
                     <tr><td style="padding:6px 0;color:#64748b;width:40%;">New Password</td><td style="font-family:monospace;font-weight:600;font-size:16px;">{new_password}</td></tr>
@@ -595,7 +605,6 @@ class EmailService:
             <p style="font-size: 14px; color: #64748b;">For security reasons, please change this password after signing in.</p>
             """,
             accent_color="#6366f1",
-            footer_note="Automated message from IT Asset Control System — do not reply.",
         )
         cls._send_email(email, subject, body)
 
