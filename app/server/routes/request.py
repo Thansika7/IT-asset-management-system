@@ -101,7 +101,7 @@ def triage_request(
     request_id: str, 
     payload: RequestTriage, 
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN))
 ):
     return RequestService.triage_asset_request(db, request_id, payload, current_user)
 

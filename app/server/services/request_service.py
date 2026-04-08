@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from app.server.schema.request import Request
 from app.server.schema.asset import Asset, AssetStatus
 from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee, EmployeeRole
+from app.server.schema.organization import Branch
 from app.server.schema.category import Category
 from app.server.services.email_service import EmailService
 from app.server.services.stock_service import StockService
@@ -130,6 +131,24 @@ class RequestService:
         ("LOW", "LOW"): "P4",
     }
 
+    STATUS_ORDER = {
+        "PENDING": 1,
+        "PENDING_SUPPORT": 1,
+        "PENDING_SUPPORT_TRIAGE": 1,
+        "PENDING_MANAGER": 2,
+        "HR_VERIFICATION": 1,
+        "HELPDESK_TRIAGE": 2,
+        "MANAGER_APPROVAL": 3,
+        "ADMIN_APPROVAL": 4,
+        "APPROVED_FOR_SUPPORT": 5,
+        "READY": 5,
+        "AWAITING_TRANSFER": 6,
+        "WIP_SERVICE": 6,
+        "IN_REPAIR": 6,
+        "COMPLETED": 7,
+        "REJECTED": 8,
+    }
+
     @staticmethod
     def _urgency_sla_hours(urgency: str | None) -> int:
         return RequestService.URGENCY_SLA_HOURS.get((urgency or "MEDIUM").upper(), 4)
@@ -169,6 +188,11 @@ class RequestService:
         from datetime import datetime, timedelta, timezone
 
         data = RequestResponse.model_validate(req)
+        # Always populate requester info for the UI, even if the model doesn't expose it directly.
+        if getattr(req, "employee", None):
+            data.requester_name = getattr(req.employee, "name", None)
+            data.requester_role = req.employee.role.value if getattr(req.employee, "role", None) else None
+            data.requester_branch = req.employee.branch  # derived via relationship (branch_name)
         priority = (req.priority or "P3").upper()
         req_date = req.req_date
         if req_date:
@@ -261,6 +285,25 @@ class RequestService:
         return "MEDIUM" if severity == "MEDIUM" else "LOW"
 
     @staticmethod
+    def _status_rank(value: str | None) -> int:
+        if not value:
+            return 99
+        raw = value.strip().upper()
+        if raw in RequestService.STATUS_ORDER:
+            return RequestService.STATUS_ORDER[raw]
+        if raw.startswith("PENDING"):
+            return 1
+        if raw.startswith("APPROVED") or raw == "READY":
+            return 5
+        if raw.startswith("AWAITING") or raw.startswith("WIP") or raw.startswith("IN_"):
+            return 6
+        if raw == "COMPLETED":
+            return 7
+        if raw == "REJECTED":
+            return 8
+        return 50
+
+    @staticmethod
     def get_request_form_options(db: Session, current_user: Employee) -> RequestFormOptions:
         categories = sorted(set(RequestService.FORM_CATEGORIES + [row[0] for row in apply_tenant_filter(db.query(Category.category_name), current_user, Category).all() if row[0]]))
 
@@ -321,24 +364,33 @@ class RequestService:
         urgency: Optional[str] = None,
         branch: Optional[str] = None,
         sort_by_priority: bool = False,
+        sort_by_status: bool = False,
         page: int = 1,
         per_page: int = 20,
         request_type: Optional[str] = None,
     ):
         query = apply_tenant_filter(db.query(Request), current_user, Request).options(joinedload(Request.employee))
-
+        
         if current_user.role == EmployeeRole.SUPER_ADMIN:
+            # Global admin: see everything.
+            pass
+        elif current_user.role == EmployeeRole.ORG_ADMIN:
+            # Org admins already scoped by tenant filter (organization).
             pass
         elif current_user.role in [EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR, EmployeeRole.MANAGER]:
-            effective_branch = current_user.branch
-            # Show requests from own branch OR requests pending transfer TO own branch
-            query = query.join(Request.employee).filter(
-                or_(
-                    Employee.branch == effective_branch,
-                    Request.action_type.like(f"TRANSFER:{effective_branch}%"),  # Pending transfer to this branch
-                )
-            )
+            effective_branch_id = (current_user.branch_id or "").strip()
+            effective_branch_name = (current_user.branch or "").strip()
+            # Branch-scoped staff:
+            # - If they have a branch_id, show requests from that branch.
+            # - Also include transfers targeting their branch name (legacy action_type encoding).
+            # - If they don't have a branch (HQ/central staff), rely on tenant filter and show all org requests.
+            if effective_branch_id:
+                conds = [Employee.branch_id == effective_branch_id]
+                if effective_branch_name:
+                    conds.append(Request.action_type.like(f"TRANSFER:{effective_branch_name}%"))
+                query = query.join(Request.employee).filter(or_(*conds))
         else:
+            # Regular employees: only their own tickets.
             query = query.filter(Request.emp_id == current_user.employee_id)
 
         if status:
@@ -352,26 +404,30 @@ class RequestService:
         if request_type:
             query = query.filter(Request.request_type == request_type.strip().upper())
         if branch:
-            if current_user.role == EmployeeRole.SUPER_ADMIN:
-                query = query.join(Request.employee).filter(Employee.branch == branch.strip())
-            else:
-                query = query.filter(Employee.branch == branch.strip())
+            # Accept either a branch_id (preferred) or a branch name.
+            b = branch.strip()
+            query = query.join(Request.employee)
+            query = query.filter(or_(Employee.branch_id == b, Employee.branch_rel.has(Branch.branch_name == b)))
 
         page = max(1, page)
         per_page = max(1, min(per_page, 100))
         offset = (page - 1) * per_page
 
-        if sort_by_priority:
+        if sort_by_status or sort_by_priority:
             rows = query.all()
-            rows = sorted(
-                rows,
-                key=lambda req: (
-                    RequestService._compute_escalation_state(req)[0],
-                    RequestService.PRIORITY_ORDER.get((req.priority or "P3").upper(), 0),
-                    req.req_date,
-                ),
-                reverse=True,
-            )
+            def _sort_key(req: Request):
+                status_rank = RequestService._status_rank(req.status)
+                priority_rank = RequestService.PRIORITY_ORDER.get((req.priority or "P3").upper(), 0)
+                req_dt = req.req_date
+                if req_dt is None:
+                    req_dt = datetime.min.replace(tzinfo=timezone.utc)
+                elif req_dt.tzinfo is None:
+                    req_dt = req_dt.replace(tzinfo=timezone.utc)
+                if sort_by_priority:
+                    return (status_rank, -priority_rank, -req_dt.timestamp())
+                return (status_rank, -req_dt.timestamp())
+
+            rows = sorted(rows, key=_sort_key)
             total = len(rows)
             rows = rows[offset:offset + per_page]
         else:
@@ -442,9 +498,9 @@ class RequestService:
             reason=payload.reason,
             action_type="NEW",
             request_type="ASSET",
-            priority="P3",
-            severity="MEDIUM",
-            urgency="MEDIUM",
+            priority=None,
+            severity=None,
+            urgency=None,
             status=initial_status,
             stage=initial_stage,
         )
@@ -555,16 +611,25 @@ class RequestService:
         ).with_for_update().first()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
-        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
-            raise HTTPException(status_code=403, detail="Support can triage only requests from their own branch.")
+        if user.role not in {EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN}:
+            raise HTTPException(status_code=403, detail="Only Support Team may set priority and severity.")
+        if user.role != EmployeeRole.SUPER_ADMIN:
+            if (req.employee.branch_id or "").strip() != (user.branch_id or "").strip():
+                raise HTTPException(status_code=403, detail="Support can triage only requests from their own branch.")
         
         requested_action = (req.action_type or "NEW").strip().upper()
         base_action = requested_action.split(":", 1)[0].strip() or "NEW"
 
-        local_stock = apply_tenant_filter(db.query(sql_func.sum(Asset.unused)), user, Asset).join(Category).filter(
-            Asset.branch == req.employee.branch,
-            Category.category_name == req.asset_category,
-        ).scalar() or 0
+        local_stock = (
+            apply_tenant_filter(db.query(sql_func.sum(Asset.unused)), user, Asset)
+            .join(Category)
+            .filter(
+                Asset.branch_id == req.employee.branch_id,
+                Category.category_name == req.asset_category,
+            )
+            .scalar()
+            or 0
+        )
 
         stock_msg = ""
         if local_stock > 0:

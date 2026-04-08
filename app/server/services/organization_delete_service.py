@@ -1,5 +1,8 @@
 """
-Hard-delete an organization and all tenant-scoped rows (PostgreSQL FK-safe order).
+Hard-delete an organization and all tenant-scoped rows (FK-safe order).
+
+This is intentionally explicit (not relying on DB cascades) because many tables
+use nullable org/branch FKs without ON DELETE CASCADE.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from app.server.schema.tracking import Tracking
 
 
 def purge_organization(db: Session, org: Organization) -> None:
-    """Remove all data owned by this organization, then the caller may delete ``org``."""
+    """Remove all data owned by this organization; caller deletes ``org`` after this."""
     org_id = org.organization_id
 
     branch_ids = [b for (b,) in db.query(Branch.branch_id).filter(Branch.organization_id == org_id).all()]
@@ -43,7 +46,7 @@ def purge_organization(db: Session, org: Organization) -> None:
     asset_filter = or_filter(asset_parts)
     asset_ids = [r[0] for r in db.query(Asset.asset_id).filter(asset_filter).all()]
 
-    # 1) Audit logs for this tenant
+    # 1) Audit logs
     aud_parts = [AuditLog.organization_id == org_id]
     if branch_ids:
         aud_parts.append(AuditLog.branch_id.in_(branch_ids))
@@ -67,7 +70,7 @@ def purge_organization(db: Session, org: Organization) -> None:
         rq_parts.append(Request.emp_id.in_(emp_ids))
     db.query(Request).filter(or_filter(rq_parts)).delete(synchronize_session=False)
 
-    # 4) Attribute values (asset-linked)
+    # 4) Attribute values
     v_parts = [AssetAttributeValue.organization_id == org_id]
     if branch_ids:
         v_parts.append(AssetAttributeValue.branch_id.in_(branch_ids))
@@ -75,7 +78,7 @@ def purge_organization(db: Session, org: Organization) -> None:
         v_parts.append(AssetAttributeValue.asset_id.in_(asset_ids))
     db.query(AssetAttributeValue).filter(or_filter(v_parts)).delete(synchronize_session=False)
 
-    # 5) CMDB: relationships, then CIs
+    # 5) CMDB relationships then items
     ci_parts = [ConfigurationItem.organization_id == org_id]
     if branch_ids:
         ci_parts.append(ConfigurationItem.branch_id.in_(branch_ids))
@@ -83,6 +86,7 @@ def purge_organization(db: Session, org: Organization) -> None:
         ci_parts.append(ConfigurationItem.asset_id.in_(asset_ids))
     ci_filter = or_filter(ci_parts)
     ci_ids = [r[0] for r in db.query(ConfigurationItem.ci_id).filter(ci_filter).all()]
+
     rel_parts = [CIRelationship.organization_id == org_id]
     if branch_ids:
         rel_parts.append(CIRelationship.branch_id.in_(branch_ids))
@@ -119,8 +123,8 @@ def purge_organization(db: Session, org: Organization) -> None:
     if branch_ids:
         perm_parts.append(EmployeePermission.branch_id.in_(branch_ids))
     db.query(EmployeePermission).filter(or_filter(perm_parts)).delete(synchronize_session=False)
-
     db.query(Employee).filter(emp_filter).delete(synchronize_session=False)
 
     # 10) Branches
     db.query(Branch).filter(Branch.organization_id == org_id).delete(synchronize_session=False)
+

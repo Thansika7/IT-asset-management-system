@@ -324,9 +324,22 @@ def recommend_necessity_for_request(db: Session, viewer: Employee, request_id: s
     if not requester:
         raise ResourceNotFoundError("Employee", req.emp_id)
 
+    # Permission model:
+    # - HR: same-branch requests only.
+    # - Org Admin: any request within their organization.
+    # - Super Admin: any request.
     if viewer.role == EmployeeRole.HR:
         if (requester.branch or "").strip() != (viewer.branch or "").strip():
-            raise HTTPException(status_code=403, detail="You can only run necessity review for requests from your branch.")
+            raise HTTPException(
+                status_code=403,
+                detail="You can only run necessity review for requests from your branch.",
+            )
+    elif viewer.role == EmployeeRole.ORG_ADMIN:
+        if req.organization_id and viewer.organization_id and req.organization_id != viewer.organization_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only run necessity review for requests in your organization.",
+            )
     elif viewer.role != EmployeeRole.SUPER_ADMIN:
         raise HTTPException(status_code=403, detail="Only HR or Admin may request AI necessity analysis.")
 

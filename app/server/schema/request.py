@@ -31,9 +31,9 @@ class Request(Base):
     status=Column(String(50), nullable=False, default="Pending")
     stage=Column(String(50), nullable=False, default="SUPPORT")
     action_type=Column(String(50), nullable=True)
-    priority=Column(String(20), nullable=True, default="P3")
-    severity=Column(String(20), nullable=True, default="MEDIUM")
-    urgency=Column(String(20), nullable=True, default="MEDIUM")
+    priority=Column(String(20), nullable=True)
+    severity=Column(String(20), nullable=True)
+    urgency=Column(String(20), nullable=True)
     serviced_asset_id=Column(String(50), nullable=True)
     request_type=Column(String(20), nullable=False, default="ASSET")
     # resignation_status=Column(String(20), nullable=True) # DELETED DECOMMISSIONED WORKFLOW FIELD

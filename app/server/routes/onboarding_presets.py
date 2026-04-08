@@ -1,6 +1,7 @@
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.server.database.database import get_db
@@ -20,7 +21,17 @@ def list_onboarding_presets(
     query = db.query(OnboardingPreset)
     if current_user.role != EmployeeRole.SUPER_ADMIN:
         query = query.filter(OnboardingPreset.organization_id == current_user.organization_id)
-    return query.order_by(OnboardingPreset.created_at.desc()).all()
+    try:
+        return query.order_by(OnboardingPreset.created_at.desc()).all()
+    except ProgrammingError as exc:
+        msg = str(getattr(exc.orig, "diag", getattr(exc.orig, "pgerror", exc)))
+        if "onboarding_presets.organization_id" in msg or "column onboarding_presets.organization_id does not exist" in msg:
+            raise HTTPException(
+                status_code=500,
+                detail="Database schema is out of date for onboarding_presets. "
+                "Add organization_id column to onboarding_presets or run the latest migrations.",
+            ) from exc
+        raise
 
 
 @router.post("/", response_model=OnboardingPresetRead, status_code=201)
@@ -45,9 +56,20 @@ def create_onboarding_preset(
         created_by=current_user.employee_id,
     )
     db.add(preset)
-    db.commit()
-    db.refresh(preset)
-    return preset
+    try:
+        db.commit()
+        db.refresh(preset)
+        return preset
+    except ProgrammingError as exc:
+        db.rollback()
+        msg = str(getattr(exc.orig, "diag", getattr(exc.orig, "pgerror", exc)))
+        if "onboarding_presets.organization_id" in msg or "column \"organization_id\" of relation \"onboarding_presets\" does not exist" in msg:
+            raise HTTPException(
+                status_code=500,
+                detail="Database schema is out of date for onboarding_presets. "
+                "Add organization_id column to onboarding_presets or run the latest migrations.",
+            ) from exc
+        raise
 
 
 @router.delete("/{preset_id}")
@@ -65,5 +87,16 @@ def delete_onboarding_preset(
         raise HTTPException(status_code=404, detail="Onboarding preset not found")
 
     db.delete(preset)
-    db.commit()
-    return {"status": "ok"}
+    try:
+        db.commit()
+        return {"status": "ok"}
+    except ProgrammingError as exc:
+        db.rollback()
+        msg = str(getattr(exc.orig, "diag", getattr(exc.orig, "pgerror", exc)))
+        if "onboarding_presets.organization_id" in msg or "column onboarding_presets.organization_id does not exist" in msg:
+            raise HTTPException(
+                status_code=500,
+                detail="Database schema is out of date for onboarding_presets. "
+                "Add organization_id column to onboarding_presets or run the latest migrations.",
+            ) from exc
+        raise

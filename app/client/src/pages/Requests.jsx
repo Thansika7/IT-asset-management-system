@@ -133,26 +133,16 @@ function NewRequestForm({ onCreate, busy, options }) {
     return [...rest, ...other]
   }, [options?.categories])
   const knownAssets = options?.known_assets ?? []
-  const reasonsByCategory = options?.reasons_by_category ?? {}
-
   const [assetCategory, setAssetCategory] = useState(fallbackCategories[0] || 'Laptop')
-  const [selectedReason, setSelectedReason] = useState('')
+  const [reasonText, setReasonText] = useState('')
   const [selectedKnownAsset, setSelectedKnownAsset] = useState('')
   const [assetName, setAssetName] = useState('')
-  const [customReason, setCustomReason] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
   const [suggestHighlight, setSuggestHighlight] = useState(-1)
   const suggestHighlightRef = useRef(-1)
   const [selectedCategoryId, setSelectedCategoryId] = useState('')
   const [selectedSubCategoryId, setSelectedSubCategoryId] = useState('')
-
-  const reasonOptions = useMemo(() => {
-    const raw = reasonsByCategory[assetCategory] || reasonsByCategory.Other || ['General issue', 'Other']
-    const other = raw.filter((x) => String(x).toLowerCase() === 'other')
-    const rest = raw.filter((x) => String(x).toLowerCase() !== 'other').sort((a, b) => String(a).localeCompare(String(b)))
-    return [...rest, ...other]
-  }, [assetCategory, reasonsByCategory])
 
   const sortedKnownAssets = useMemo(() => {
     return [...knownAssets].sort((a, b) => String(a.asset_name || '').localeCompare(String(b.asset_name || '')))
@@ -219,10 +209,6 @@ function NewRequestForm({ onCreate, busy, options }) {
   })
 
   useEffect(() => {
-    setSelectedReason(reasonOptions[0] || '')
-  }, [assetCategory])
-
-  useEffect(() => {
     setSelectedSubCategoryId('')
   }, [selectedCategoryId])
 
@@ -257,9 +243,7 @@ function NewRequestForm({ onCreate, busy, options }) {
     const resolvedAssetName = assetName.trim() || selectedKnownAsset.trim()
     const inferredCategory = matchingKnownAsset?.category || assetCategory
     const resolvedCategory = inferredCategory === 'Other' && matchingKnownAsset?.category ? matchingKnownAsset.category : inferredCategory
-    const resolvedReason = selectedReason === 'Other'
-      ? (customReason.trim() || `General support needed for ${resolvedAssetName || resolvedCategory}`)
-      : selectedReason
+    const resolvedReason = reasonText.trim()
 
     onCreate({
       asset_name: resolvedAssetName || `${resolvedCategory} request`,
@@ -269,7 +253,7 @@ function NewRequestForm({ onCreate, busy, options }) {
 
     setSelectedKnownAsset('')
     setAssetName('')
-    setCustomReason('')
+    setReasonText('')
     if (hasApiCategories && sortedApiCategories[0]) {
       setSelectedCategoryId(sortedApiCategories[0].category_id)
       setAssetCategory(sortedApiCategories[0].category_name)
@@ -429,17 +413,6 @@ function NewRequestForm({ onCreate, busy, options }) {
         </div>
       )}
 
-      <div className="space-y-2 max-w-xl">
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</label>
-        <select className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm" value={selectedReason} onChange={(e) => setSelectedReason(e.target.value)}>
-          {reasonOptions.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-2">
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Search assets</label>
@@ -529,7 +502,7 @@ function NewRequestForm({ onCreate, busy, options }) {
               setSelectedKnownAsset('')
               setAssetName(e.target.value)
             }}
-            required={assetCategory === 'Other' || selectedReason === 'Other'}
+            required={false}
           />
           {matchingKnownAsset ? (
             <p className="text-xs text-cyan-700">Matched existing asset. Category loaded as {matchingKnownAsset.category || 'Unknown'}.</p>
@@ -554,17 +527,17 @@ function NewRequestForm({ onCreate, busy, options }) {
         </div>
       ) : null}
 
-      {selectedReason === 'Other' ? (
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Additional details</label>
-          <textarea
-            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm min-h-[96px]"
-            placeholder="Only add extra detail if the predefined reasons do not fit."
-            value={customReason}
-            onChange={(e) => setCustomReason(e.target.value)}
-          />
-        </div>
-      ) : null}
+      <div className="space-y-2 max-w-2xl">
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</label>
+        <textarea
+          className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm min-h-[110px]"
+          placeholder="Describe what is needed and why."
+          value={reasonText}
+          onChange={(e) => setReasonText(e.target.value)}
+          required
+        />
+        <p className="text-[11px] text-slate-500">Use plain text here. The request workflow will use this as the reason.</p>
+      </div>
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
         <p className="font-medium text-slate-800">What happens next</p>
@@ -1094,7 +1067,7 @@ export default function Requests() {
     queryKey: ['requests', filters, page, perPage],
     queryFn: () => {
       const params = new URLSearchParams()
-      params.set('sort_by_priority', 'true')
+      params.set('sort_by_status', 'true')
       params.set('page', String(page))
       params.set('per_page', String(perPage))
       if (filters.priority) params.set('priority', filters.priority)

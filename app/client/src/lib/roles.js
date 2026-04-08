@@ -74,7 +74,7 @@ export function canRegisterEmployees(r) {
 }
 
 export function canTriage(r) {
-  return [R.ADMIN, R.SUPPORT_TEAM].includes(r)
+  return r === R.SUPPORT_TEAM
 }
 
 export function canHrReview(r) {
