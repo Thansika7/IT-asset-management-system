@@ -3,8 +3,10 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.server.auth.service import get_current_user
 from app.server.database.database import get_db
 from app.server.middlewares.auth import require_roles
+from app.server.exceptions.base import UnauthorizedActionError
 from app.server.models.asset_insights import (
     AssetDetailRead,
     AssetFinanceRead,
@@ -58,8 +60,25 @@ def list_assets(
 def get_asset_finance(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(get_current_user),
 ):
+    role_allowed = current_user.role in [
+        EmployeeRole.SUPER_ADMIN,
+        EmployeeRole.ORG_ADMIN,
+        EmployeeRole.MANAGER,
+        EmployeeRole.HR,
+        EmployeeRole.SUPPORT_TEAM,
+    ]
+    permission_allowed = bool(
+        current_user.permissions
+        and (
+            current_user.permissions.can_view_finance
+            or current_user.permissions.can_manage_finance
+        )
+    )
+    if not role_allowed and not permission_allowed:
+        raise UnauthorizedActionError()
+
     return AssetInsightsService.get_asset_finance(db, asset_id, current_user)
 
 
@@ -67,8 +86,25 @@ def get_asset_finance(
 def get_asset_detail(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    current_user: Employee = Depends(get_current_user),
 ):
+    role_allowed = current_user.role in [
+        EmployeeRole.SUPER_ADMIN,
+        EmployeeRole.ORG_ADMIN,
+        EmployeeRole.MANAGER,
+        EmployeeRole.HR,
+        EmployeeRole.SUPPORT_TEAM,
+    ]
+    permission_allowed = bool(
+        current_user.permissions
+        and (
+            current_user.permissions.can_view_finance
+            or current_user.permissions.can_manage_finance
+        )
+    )
+    if not role_allowed and not permission_allowed:
+        raise UnauthorizedActionError()
+
     return AssetInsightsService.get_asset_detail(db, asset_id, current_user)
 
 
@@ -89,10 +125,23 @@ def get_asset_finance_report(
     max_health_score: Optional[int] = None,
     sort_by: str = "priority_cost",
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER)),
+    current_user: Employee = Depends(get_current_user),
 ):
+    role_allowed = current_user.role in [EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER]
+    permission_allowed = bool(
+        current_user.permissions
+        and (
+            current_user.permissions.can_view_finance
+            or current_user.permissions.can_manage_finance
+        )
+    )
+    if not role_allowed and not permission_allowed:
+        raise UnauthorizedActionError()
+
     effective_branch = branch
     if current_user.role == EmployeeRole.MANAGER:
+        effective_branch = current_user.branch
+    if not role_allowed and permission_allowed:
         effective_branch = current_user.branch
     return AssetInsightsService.get_finance_report(
         db,

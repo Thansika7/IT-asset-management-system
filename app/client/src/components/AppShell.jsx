@@ -30,14 +30,17 @@ export function ProtectedShell({ anyOfRoles }) {
   return <Outlet />
 }
 
-export function RoleGate({ roles, children }) {
+export function RoleGate({ roles, allow, children }) {
   const { user, loading } = useAuth()
 
   if (loading) {
     return <FullPageLoader />
   }
 
-  if (!user || !roles.includes(user.role)) {
+  const roleAllowed = Array.isArray(roles) ? roles.includes(user.role) : true
+  const predicateAllowed = typeof allow === 'function' ? allow(user) : true
+
+  if (!user || !roleAllowed || !predicateAllowed) {
     return <Navigate to="/" replace />
   }
 

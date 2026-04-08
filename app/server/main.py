@@ -6,6 +6,7 @@ from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
+from sqlalchemy import text
 from app.server.database.database import Base, engine, SessionLocal
 from app.server.routes.auth import router as auth_router
 from app.server.routes.employee import router as employee_router
@@ -55,12 +56,53 @@ for handler in logging.getLogger().handlers:
     handler.setFormatter(StructuredJsonFormatter())
     handler.addFilter(StructuredDefaultsFilter())
 
-app=FastAPI(title="IT Asset Control System")
+app=FastAPI(title="Asset Control System")
 
 # Setup CORS
 setup_cors(app)
 
+
+def _ensure_organization_subscription_columns() -> None:
+    """Backfill schema for environments created before subscription period fields existed."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'organizations'
+                """
+            )
+        )
+        existing = {row[0] for row in rows}
+
+        if "subscription_start_at" not in existing:
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN subscription_start_at TIMESTAMPTZ NULL"))
+        if "subscription_end_at" not in existing:
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN subscription_end_at TIMESTAMPTZ NULL"))
+
+
+def _ensure_request_branch_column() -> None:
+    """Backfill schema for environments created before requests were branch-scoped."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'requests'
+                """
+            )
+        )
+        existing = {row[0] for row in rows}
+
+        if "branch_id" not in existing:
+            conn.execute(text("ALTER TABLE requests ADD COLUMN branch_id VARCHAR(50) NULL"))
+
+
 Base.metadata.create_all(bind=engine)
+_ensure_organization_subscription_columns()
+_ensure_request_branch_column()
 
 @app.exception_handler(AppBaseException)
 async def app_exception_handler(request: Request, exc: AppBaseException):

@@ -12,6 +12,8 @@ function parseUserFromToken(token) {
     name: null,
     employeeId: payload.emp_id || null,
     branch: payload.branch || null,
+    organizationId: payload.organization_id || null,
+    permissions: null,
   }
 }
 
@@ -60,6 +62,8 @@ export const AuthProvider = ({ children }) => {
           role: normalizeRole(profile.role || parsed.role),
           employeeId: profile.employee_id || parsed.employeeId,
           branch: profile.branch || parsed.branch,
+          organizationId: profile.organization_id || parsed.organizationId,
+          permissions: profile.permissions || null,
         })
       } catch {
         if (active) logout()

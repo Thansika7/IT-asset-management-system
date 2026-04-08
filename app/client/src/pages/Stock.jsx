@@ -214,9 +214,15 @@ export default function Stock() {
 }
 
 function StockForms({ createMut, addMut }) {
+  const { user } = useAuth()
+  const { data: branches = [] } = useQuery({
+    queryKey: ['organization-branches-stock-form', user?.organizationId],
+    queryFn: () => apiFetch(`/organizations/${user.organizationId}/branches`),
+    enabled: Boolean(user?.organizationId),
+  })
   const [cname, setCname] = useState('')
   const [ccat, setCcat] = useState('Hardware')
-  const [cbranch, setCbranch] = useState('Headquarters')
+  const [cbranchId, setCbranchId] = useState('')
   const [cqty, setCqty] = useState('1')
   const [aid, setAid] = useState('')
   const [aqty, setAqty] = useState('1')
@@ -231,7 +237,7 @@ function StockForms({ createMut, addMut }) {
             name: cname,
             category_name: ccat,
             sub_category_name: 'General',
-            branch: cbranch,
+            branch_id: cbranchId || null,
             total_quantity: parseInt(cqty, 10) || 1,
             unused: parseInt(cqty, 10) || 1,
           })
@@ -241,7 +247,14 @@ function StockForms({ createMut, addMut }) {
         <div className="grid grid-cols-2 gap-2">
           <input required className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Display name" value={cname} onChange={(e) => setCname(e.target.value)} />
           <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Category" value={ccat} onChange={(e) => setCcat(e.target.value)} />
-          <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Branch" value={cbranch} onChange={(e) => setCbranch(e.target.value)} />
+          <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={cbranchId} onChange={(e) => setCbranchId(e.target.value)}>
+            <option value="">Select branch (optional)</option>
+            {branches.map((b) => (
+              <option key={b.branch_id} value={b.branch_id}>
+                {b.branch_name}
+              </option>
+            ))}
+          </select>
           <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm col-span-2" placeholder="Initial quantity" value={cqty} onChange={(e) => setCqty(e.target.value)} />
         </div>
         <button type="submit" disabled={createMut.isPending} className="rounded-xl bg-slate-900 text-white text-sm font-medium px-4 py-2 w-full disabled:opacity-50">

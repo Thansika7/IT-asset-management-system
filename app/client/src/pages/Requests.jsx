@@ -15,6 +15,7 @@ import {
   canNecessityRecommendation,
 } from '@/lib/roles'
 import { Eye, Plus, RefreshCw, Search, Sparkles } from 'lucide-react'
+import ConfirmDialog from '@/components/ConfirmDialog'
 
 const SEVERITY_OPTIONS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
 const PRIORITY_OPTIONS = ['P1', 'P2', 'P3', 'P4']
@@ -698,6 +699,7 @@ function RequestList({ rows, selectedId, onSelect }) {
 }
 
 function DetailPanel({ row, user, mutations, onDelete }) {
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [triagePriority, setTriagePriority] = useState('P3')
   const [triageSeverity, setTriageSeverity] = useState('MEDIUM')
   const [providedId, setProvidedId] = useState('')
@@ -733,12 +735,14 @@ function DetailPanel({ row, user, mutations, onDelete }) {
   const deleteMut = useMutation({
     mutationFn: (requestId) => apiFetch(`/requests/${encodeURIComponent(requestId)}`, { method: 'DELETE' }),
     onSuccess: () => {
+      setDeleteConfirmOpen(false)
       mutations.invalidate()
       onDelete()
     },
   })
 
   useEffect(() => {
+    setDeleteConfirmOpen(false)
     setTriagePriority('P3')
     setTriageSeverity('MEDIUM')
     setProvidedId('')
@@ -830,24 +834,31 @@ function DetailPanel({ row, user, mutations, onDelete }) {
       </div>
 
       {canDeleteRequest ? (
-        <div className="flex justify-end pt-4">
-          <button
-            type="button"
-            className="rounded-xl bg-rose-600 text-white text-sm font-semibold px-4 py-2"
-            disabled={deleteMut.isPending}
-            onClick={() => {
-              if (window.confirm('Delete this request before support review? This cannot be undone.')) {
-                deleteMut.mutate(row.request_id)
-              }
-            }}
-          >
-            {deleteMut.isPending ? 'Deleting…' : 'Delete request'}
-          </button>
-        </div>
+        <>
+          <div className="flex justify-end pt-4">
+            <button
+              type="button"
+              className="rounded-xl bg-rose-600 text-white text-sm font-semibold px-4 py-2"
+              disabled={deleteMut.isPending}
+              onClick={() => setDeleteConfirmOpen(true)}
+            >
+              {deleteMut.isPending ? 'Deleting…' : 'Delete request'}
+            </button>
+          </div>
+          <ConfirmDialog
+            open={deleteConfirmOpen}
+            title="Delete this request?"
+            description="This removes the request before support review. This cannot be undone."
+            confirmLabel="Delete request"
+            busy={deleteMut.isPending}
+            onCancel={() => !deleteMut.isPending && setDeleteConfirmOpen(false)}
+            onConfirm={() => deleteMut.mutate(row.request_id)}
+          />
+        </>
       ) : null}
       {deleteMut.isError ? <p className="text-xs text-rose-600 mt-2">{err(deleteMut)}</p> : null}
 
-      {canNecessityRecommendation(user.role) ? (
+      {stage === 'HR_VERIFICATION' && canNecessityRecommendation(user.role) ? (
         <div className="rounded-2xl border border-violet-200 bg-violet-50/60 px-4 py-4 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>

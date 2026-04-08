@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -10,6 +10,7 @@ from app.server.services.provisioning_service import generate_company_email, gen
 from app.server.services.employee_lifecycle_service import EmployeeLifecycleService
 from app.server.database.tenant import apply_tenant_filter
 from app.server.schema.employee import Employee, EmployeeRole, EmployeePermission
+from app.server.schema.organization import Organization, Branch
 from app.server.schema.tracking import Tracking
 from app.server.middlewares.auth import require_roles
 from app.server.services.stock_service import StockService
@@ -22,7 +23,7 @@ router=APIRouter(prefix="/employees", tags=["employees"])
 def register_employee(
     payload: EmployeeCreate,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN))
+    current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     if payload.password:
         email_lower = payload.email.lower()
@@ -43,6 +44,29 @@ def register_employee(
         if taken:
             raise InvalidStateError("The provided personal email is already associated with an existing account.")
 
+    if current_user.role == EmployeeRole.SUPER_ADMIN:
+        resolved_organization_id = payload.organization_id or current_user.organization_id
+    else:
+        resolved_organization_id = current_user.organization_id
+    if not resolved_organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="organization_id is required (set on your account or provide it as a super admin).",
+        )
+
+    resolved_branch_id = payload.branch_id
+    if resolved_branch_id:
+        branch_obj = db.query(Branch).filter(Branch.branch_id == resolved_branch_id).first()
+        if not branch_obj:
+            raise HTTPException(status_code=400, detail="Invalid branch_id")
+        if branch_obj.organization_id != resolved_organization_id:
+            raise HTTPException(status_code=400, detail="branch_id does not belong to the selected organization")
+    if current_user.role == EmployeeRole.HR:
+        if current_user.branch_id and resolved_branch_id and resolved_branch_id != current_user.branch_id:
+            raise HTTPException(status_code=403, detail="HR can register employees only in their own branch")
+        if current_user.branch_id and not resolved_branch_id:
+            resolved_branch_id = current_user.branch_id
+
     # Role Population Constraints
     # 1. Global Admin Limit
     if payload.role == EmployeeRole.SUPER_ADMIN:
@@ -52,8 +76,10 @@ def register_employee(
 
     # 2. Branch-specific limits
     if payload.role in [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR]:
+        if not resolved_branch_id:
+            raise HTTPException(status_code=400, detail="branch_id is required for manager/hr/support_team roles")
         current_count = db.query(Employee).filter(
-            Employee.branch_id == payload.branch_id,
+            Employee.branch_id == resolved_branch_id,
             Employee.role == payload.role,
             Employee.is_active == True
         ).count()
@@ -68,7 +94,7 @@ def register_employee(
     # Enforcement: Singleton Manager per Branch
     if payload.role == EmployeeRole.MANAGER:
         existing_manager = db.query(Employee).filter(
-            Employee.branch_id == payload.branch_id,
+            Employee.branch_id == resolved_branch_id,
             Employee.role == EmployeeRole.MANAGER,
             Employee.is_active == True
         ).first()
@@ -82,23 +108,24 @@ def register_employee(
             email=email_lower,
             personal_email=(payload.personal_email.strip().lower() if payload.personal_email else None),
             phone=payload.phone,
-            organization_id=payload.organization_id or current_user.organization_id,
-            branch_id=payload.branch_id,
+            organization_id=resolved_organization_id,
+            branch_id=resolved_branch_id,
             role=payload.role,
             password_hash=get_password_hash(payload.password),
             password_reset_required=False,
             is_active=True,
         )
     else:
-        company_email = generate_company_email(payload.name, db)
+        org = db.query(Organization).filter(Organization.organization_id == resolved_organization_id).first()
+        company_email = generate_company_email(payload.name, db, org.domain if org else None)
         temp_pw_for_mail = generate_temp_password()
         user = Employee(
             name=payload.name,
             email=company_email,
             personal_email=payload.personal_email.strip().lower(),
             phone=payload.phone,
-            organization_id=payload.organization_id or current_user.organization_id,
-            branch_id=payload.branch_id,
+            organization_id=resolved_organization_id,
+            branch_id=resolved_branch_id,
             role=payload.role,
             password_hash=get_password_hash(temp_pw_for_mail),
             password_reset_required=True,
@@ -144,6 +171,8 @@ def list_employees(
     current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.HR, EmployeeRole.MANAGER))
 ):
     query=apply_tenant_filter(db.query(Employee), current_user, Employee).filter(Employee.is_active==True)
+    if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM] and current_user.branch_id:
+        query = query.filter(Employee.branch_id == current_user.branch_id)
     if branch:
         query=query.filter(Employee.branch_id==branch)
     if role:
@@ -246,6 +275,9 @@ def update_employee_permissions(
     target = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(Employee.employee_id == emp_id).first()
     if not target:
         raise ResourceNotFoundError("Employee", emp_id)
+
+    if current_user.employee_id == emp_id:
+        raise HTTPException(status_code=403, detail="You cannot edit your own permissions.")
 
     if current_user.role == EmployeeRole.ORG_ADMIN:
         if target.role == EmployeeRole.SUPER_ADMIN:

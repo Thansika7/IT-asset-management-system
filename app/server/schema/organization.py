@@ -17,6 +17,8 @@ class Organization(Base):
     organization_name = Column(String(150), nullable=False)
     domain = Column(String(150), nullable=True, unique=True)
     subscription_status = Column(Enum(SubscriptionStatus, name="subscription_status"), nullable=False, default=SubscriptionStatus.ACTIVE)
+    subscription_start_at = Column(DateTime(timezone=True), nullable=True)
+    subscription_end_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     branches = relationship("Branch", back_populates="organization", cascade="all, delete-orphan")

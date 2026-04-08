@@ -18,6 +18,7 @@ export default function Employees() {
   const [open, setOpen] = useState(false)
   const [deact, setDeact] = useState(null)
   const [permsUser, setPermsUser] = useState(null)
+  const [banner, setBanner] = useState(null)
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['employees'],
@@ -30,9 +31,10 @@ export default function Employees() {
       qc.invalidateQueries({ queryKey: ['employees'] })
       setOpen(false)
       const pe = data?.personal_email || 'their personal email'
-      window.alert(
-        `Employee registered.\n\nCompany login: ${data?.email ?? '—'}\nA temporary password was emailed to ${pe}. They must change it on first sign-in.`,
-      )
+      setBanner({
+        kind: 'success',
+        text: `Employee registered.\n\nCompany login: ${data?.email ?? '—'}\nA temporary password was emailed to ${pe}. They must change it on first sign-in.`,
+      })
     },
   })
 
@@ -45,9 +47,13 @@ export default function Employees() {
       qc.invalidateQueries({ queryKey: ['my-assets'] })
       setDeact(null)
       const n = res?.recovered_hardware
-      if (typeof n === 'number') {
-        window.alert(`Employee removed from the database. Recovered ${n} active assignment(s) to stock.`)
-      }
+      setBanner({
+        kind: 'success',
+        text:
+          typeof n === 'number'
+            ? `Employee removed from the database. Recovered ${n} active assignment(s) to stock.`
+            : 'Employee removed from the database.',
+      })
     },
   })
 
@@ -99,7 +105,7 @@ export default function Employees() {
           
           return (
             <div className="flex gap-2 items-center">
-              {canManagePermissions(user.role) && (
+              {canManagePermissions(user.role) && (user.employeeId !== emp.employee_id) && (
                 <button
                   type="button"
                   onClick={() => setPermsUser({ id: emp.employee_id, name: emp.name })}
@@ -178,6 +184,25 @@ export default function Employees() {
         </div>
       </div>
 
+      {banner ? (
+        <div
+          className={`rounded-xl border px-4 py-3 text-sm flex justify-between gap-3 items-start ${
+            banner.kind === 'success'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+              : 'border-slate-200 bg-slate-50 text-slate-800'
+          }`}
+        >
+          <span className="whitespace-pre-wrap">{banner.text}</span>
+          <button
+            type="button"
+            className="shrink-0 text-sm font-medium text-slate-600 hover:text-slate-900"
+            onClick={() => setBanner(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
       {open && canRegisterEmployees(user.role) ? (
         <RegisterModal
           onClose={() => setOpen(false)}
@@ -203,6 +228,7 @@ export default function Employees() {
           empId={permsUser.id}
           name={permsUser.name}
           onClose={() => setPermsUser(null)}
+          onSaved={(message) => setBanner({ kind: 'success', text: message })}
         />
       ) : null}
 
@@ -282,9 +308,16 @@ function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
 }
 
 function RegisterModal({ onClose, onSubmit, busy, error }) {
+  const { user } = useAuth()
   const { data: presets = [] } = useQuery({
     queryKey: ['onboarding-presets'],
     queryFn: () => apiFetch('/onboarding-presets/'),
+  })
+
+  const { data: branches = [] } = useQuery({
+    queryKey: ['organization-branches-register', user?.organizationId],
+    queryFn: () => apiFetch(`/organizations/${user.organizationId}/branches`),
+    enabled: Boolean(user?.organizationId),
   })
 
   const { data: stock = [] } = useQuery({
@@ -295,7 +328,7 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
   const [name, setName] = useState('')
   const [personalEmail, setPersonalEmail] = useState('')
   const [phone, setPhone] = useState('')
-  const [branch, setBranch] = useState('')
+  const [branchId, setBranchId] = useState('')
   const [role, setRole] = useState(R.EMPLOYEE)
   const [presetId, setPresetId] = useState('')
   const [picked, setPicked] = useState(() => new Set())
@@ -304,8 +337,13 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
 
   const availableStock = useMemo(() => stock.filter((a) => a.unused > 0), [stock])
 
+  const selectedBranchName = useMemo(() => {
+    const selected = branches.find((b) => b.branch_id === branchId)
+    return selected?.branch_name || ''
+  }, [branches, branchId])
+
   const compatiblePresets = useMemo(() => {
-    const eb = branch.trim()
+    const eb = selectedBranchName.trim()
     return presets.filter((p) => {
       if (p.target_role && p.target_role !== role) return false
       if (p.branch) {
@@ -313,7 +351,7 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
       }
       return true
     })
-  }, [presets, role, branch])
+  }, [presets, role, selectedBranchName])
 
   useEffect(() => {
     if (!presetId) return
@@ -393,13 +431,18 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
             onChange={(e) => setPhone(e.target.value)}
             autoComplete="off"
           />
-          <input
+          <select
             className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Branch (required if kit is branch-specific)"
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-            autoComplete="off"
-          />
+            value={branchId}
+            onChange={(e) => setBranchId(e.target.value)}
+          >
+            <option value="">Select branch (optional for employee/admin)</option>
+            {branches.map((b) => (
+              <option key={b.branch_id} value={b.branch_id}>
+                {b.branch_name}
+              </option>
+            ))}
+          </select>
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value={R.EMPLOYEE}>Employee</option>
             <option value={R.HR}>HR</option>
@@ -480,6 +523,7 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
                   phone: phone.trim() || null,
                   branch: branch.trim() || null,
                   role,
+                  branch_id: branchId || null,
                   preset_id: presetId || null,
                   onboarding_asset_ids: mergeOnboardingIds(),
                 })
@@ -494,7 +538,8 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
   )
 }
 
-function PermissionsModal({ empId, name, onClose }) {
+function PermissionsModal({ empId, name, onClose, onSaved }) {
+  const qc = useQueryClient()
   const { data: permissions, isLoading } = useQuery({
     queryKey: ['employee-permissions', empId],
     queryFn: () => apiFetch(`/employees/${empId}/permissions`),
@@ -503,8 +548,9 @@ function PermissionsModal({ empId, name, onClose }) {
   const updateMut = useMutation({
     mutationFn: (body) => apiFetch(`/employees/${empId}/permissions`, { method: 'PUT', body: JSON.stringify(body) }),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['employee-permissions', empId] })
+      onSaved?.(`Permissions for ${name} updated successfully.`)
       onClose()
-      window.alert(`Permissions for ${name} updated successfully.`)
     },
   })
 

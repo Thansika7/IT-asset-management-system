@@ -166,6 +166,7 @@ class EmployeeRead(EmployeeBase):
     password_reset_required: bool = False
     created_at: datetime
     last_login_at: Optional[datetime] = None
+    permissions: Optional["EmployeePermissionRead"] = None
 
 class EmployeePermissionBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -200,6 +201,9 @@ class EmployeePermissionUpdate(EmployeePermissionBase):
 class EmployeePermissionRead(EmployeePermissionBase):
     model_config = ConfigDict(from_attributes=True)
     employee_id: str
+
+
+EmployeeRead.model_rebuild()
 
 class PasswordChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
