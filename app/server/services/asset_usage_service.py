@@ -14,6 +14,12 @@ from app.server.schema.tracking import MovementType, Tracking
 
 class AssetUsageService:
     @staticmethod
+    def _scope_organization(current_user: Employee) -> Optional[str]:
+        if current_user.role == EmployeeRole.SUPER_ADMIN:
+            return None
+        return current_user.organization_id
+
+    @staticmethod
     def _scope_employee(db: Session, current_user: Employee) -> Optional[str]:
         if current_user.role == EmployeeRole.SUPER_ADMIN:
             return None
@@ -26,16 +32,19 @@ class AssetUsageService:
         asset = db.query(Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category)).filter(Asset.asset_id == asset_id).first()
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
+
+        org_scope = AssetUsageService._scope_organization(current_user)
+        if org_scope and asset.organization_id != org_scope:
+            raise ResourceNotFoundError("Asset", asset_id)
+
         branch_scope = AssetUsageService._scope_employee(db, current_user)
         if branch_scope and (asset.branch or "") != (branch_scope or ""):
             raise ResourceNotFoundError("Asset", asset_id)
 
-        rows = (
-            db.query(Tracking)
-            .filter(Tracking.asset_id == asset_id)
-            .order_by(Tracking.assigned_date.asc())
-            .all()
-        )
+        rows_query = db.query(Tracking).filter(Tracking.asset_id == asset_id)
+        if org_scope:
+            rows_query = rows_query.filter(Tracking.organization_id == org_scope)
+        rows = rows_query.order_by(Tracking.assigned_date.asc()).all()
 
         allocations = []
         repairs = []
@@ -102,15 +111,21 @@ class AssetUsageService:
 
     @staticmethod
     def usage_report(db: Session, current_user: Employee, branch: Optional[str] = None) -> dict[str, Any]:
+        org_scope = AssetUsageService._scope_organization(current_user)
         branch_scope = AssetUsageService._scope_employee(db, current_user)
         effective = branch or branch_scope
         q = db.query(Asset)
+        if org_scope:
+            q = q.filter(Asset.organization_id == org_scope)
         if effective:
             q = q.filter(Asset.branch == effective)
         assets = q.all()
         items = []
         for a in assets[:500]:
-            tr_count = db.query(func.count(Tracking.tracking_id)).filter(Tracking.asset_id == a.asset_id).scalar() or 0
+            tr_q = db.query(func.count(Tracking.tracking_id)).filter(Tracking.asset_id == a.asset_id)
+            if org_scope:
+                tr_q = tr_q.filter(Tracking.organization_id == org_scope)
+            tr_count = tr_q.scalar() or 0
             items.append(
                 {
                     "asset_id": a.asset_id,
@@ -127,18 +142,25 @@ class AssetUsageService:
 
     @staticmethod
     def usage_analytics(db: Session, current_user: Employee) -> dict[str, Any]:
+        org_scope = AssetUsageService._scope_organization(current_user)
         branch_scope = AssetUsageService._scope_employee(db, current_user)
         q = db.query(Tracking)
+        if org_scope:
+            q = q.filter(Tracking.organization_id == org_scope)
         if branch_scope:
             q = q.filter(Tracking.branch == branch_scope)
         total_movements = q.count()
         by_type = {}
         for mt in MovementType:
             c = db.query(func.count(Tracking.tracking_id)).filter(Tracking.movement_type == mt)
+            if org_scope:
+                c = c.filter(Tracking.organization_id == org_scope)
             if branch_scope:
                 c = c.filter(Tracking.branch == branch_scope)
             by_type[mt.value] = c.scalar() or 0
         assets = db.query(Asset)
+        if org_scope:
+            assets = assets.filter(Asset.organization_id == org_scope)
         if branch_scope:
             assets = assets.filter(Asset.branch == branch_scope)
         total_repairs = sum(a.repair_count or 0 for a in assets.all())

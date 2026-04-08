@@ -65,7 +65,19 @@ export default function App() {
               </RoleGate>
             }
           />
-          <Route path="employees" element={<RoleGate roles={[R.ADMIN, R.HR, R.MANAGER]}><Employees /></RoleGate>} />
+          <Route
+            path="employees"
+            element={
+              <RoleGate
+                allow={(u) =>
+                  [R.ADMIN, R.HR, R.MANAGER].includes(u.role) ||
+                  Boolean(u.permissions?.can_manage_permissions || u.permissions?.can_manage_users)
+                }
+              >
+                <Employees />
+              </RoleGate>
+            }
+          />
           <Route
             path="onboarding-kits"
             element={

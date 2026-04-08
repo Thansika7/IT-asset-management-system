@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from app.server.auth.service import get_password_hash, get_default_permission_flags
+from app.server.auth.service import get_password_hash, get_default_permission_flags, get_current_user
 from app.server.database.database import get_db
 from app.server.models.api import EmployeeCreate, EmployeeRead, EmployeePermissionUpdate, EmployeePermissionRead
 from app.server.services.email_service import EmailService
@@ -10,13 +10,22 @@ from app.server.services.provisioning_service import generate_company_email, gen
 from app.server.services.employee_lifecycle_service import EmployeeLifecycleService
 from app.server.database.tenant import apply_tenant_filter
 from app.server.schema.employee import Employee, EmployeeRole, EmployeePermission
+from app.server.schema.onboarding import OnboardingPreset
 from app.server.schema.organization import Organization, Branch
 from app.server.schema.tracking import Tracking
-from app.server.middlewares.auth import require_roles
+from app.server.middlewares.auth import require_roles, RequirePermission
 from app.server.services.stock_service import StockService
 from app.server.exceptions.base import InvalidStateError, ResourceNotFoundError
 
 router=APIRouter(prefix="/employees", tags=["employees"])
+
+
+def _can_view_employee_directory(user: Employee) -> bool:
+    if user.role in {EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.HR, EmployeeRole.MANAGER}:
+        return True
+    if user.permissions and (user.permissions.can_manage_permissions or user.permissions.can_manage_users):
+        return True
+    return False
 
 
 @router.post("/register", response_model=EmployeeRead, status_code=201)
@@ -150,6 +159,26 @@ def register_employee(
 
     asset_ids = list(payload.onboarding_asset_ids)
 
+    if payload.preset_id:
+        preset_query = db.query(OnboardingPreset).filter(OnboardingPreset.preset_id == payload.preset_id)
+        if current_user.role != EmployeeRole.SUPER_ADMIN:
+            preset_query = preset_query.filter(OnboardingPreset.organization_id == resolved_organization_id)
+        preset = preset_query.first()
+        if not preset:
+            raise HTTPException(status_code=404, detail="Onboarding preset not found")
+
+        if preset.target_role and preset.target_role != user.role.value:
+            raise HTTPException(status_code=400, detail="Selected onboarding preset is not valid for the employee role")
+
+        if preset.branch:
+            if not resolved_branch_id:
+                raise HTTPException(status_code=400, detail="Selected onboarding preset requires a branch")
+            branch_obj = db.query(Branch).filter(Branch.branch_id == resolved_branch_id).first()
+            if not branch_obj or branch_obj.branch_name != preset.branch:
+                raise HTTPException(status_code=400, detail="Selected onboarding preset does not match employee branch")
+
+        asset_ids = list(dict.fromkeys([*asset_ids, *(preset.asset_ids or [])]))
+
     if asset_ids:
         from app.server.schema.tracking import AllocationType
 
@@ -168,8 +197,11 @@ def list_employees(
     branch: Optional[str]=None,
     role: Optional[EmployeeRole]=None,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.HR, EmployeeRole.MANAGER))
+    current_user: Employee=Depends(get_current_user)
 ):
+    if not _can_view_employee_directory(current_user):
+        raise HTTPException(status_code=403, detail="Insufficient permissions to view employees.")
+
     query=apply_tenant_filter(db.query(Employee), current_user, Employee).filter(Employee.is_active==True)
     if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM] and current_user.branch_id:
         query = query.filter(Employee.branch_id == current_user.branch_id)
@@ -245,7 +277,7 @@ def get_employee_assets(
 def get_employee_permissions(
     emp_id: str,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ORG_ADMIN, EmployeeRole.SUPER_ADMIN))
+    current_user: Employee=Depends(RequirePermission("can_manage_permissions"))
 ):
     target = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(Employee.employee_id == emp_id).first()
     if not target:
@@ -270,7 +302,7 @@ def update_employee_permissions(
     emp_id: str,
     payload: EmployeePermissionUpdate,
     db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.ORG_ADMIN, EmployeeRole.SUPER_ADMIN))
+    current_user: Employee=Depends(RequirePermission("can_manage_permissions"))
 ):
     target = apply_tenant_filter(db.query(Employee), current_user, Employee).filter(Employee.employee_id == emp_id).first()
     if not target:
