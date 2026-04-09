@@ -5,11 +5,12 @@ import time
 from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.gzip import GZipMiddleware
 from jose import JWTError, jwt
 from sqlalchemy import text
 from app.server.database.database import Base, engine, SessionLocal
 from app.server.routes.auth import router as auth_router
-from app.server.routes.employee import router as employee_router
+from app.server.routes.employee import router as employee_router, me_router
 from app.server.routes.organization import router as org_router
 from app.server.routes.stock import router as stock_router
 from app.server.routes.assets import router as assets_router
@@ -20,6 +21,12 @@ from app.server.routes.tracking import router as tracking_router
 from app.server.routes.discovery import router as discovery_router
 from app.server.routes.cmdb import router as cmdb_router
 from app.server.routes.onboarding_presets import router as onboarding_presets_router
+from app.server.routes.audit import router as audit_router
+from app.server.routes.branch import router as branch_router
+from app.server.routes.asset_instances import router as asset_instances_router
+from app.server.routes.health import router as health_router
+from app.server.routes.finance import router as finance_router
+from app.server.routes.notifications import router as notifications_router
 from app.server.schema import asset, employee, category, attribute, request, tracking, audit
 import app.server.schema.cmdb  # noqa: F401 — register CMDB tables
 import app.server.schema.onboarding  # noqa: F401 — register onboarding preset tables
@@ -61,6 +68,7 @@ app=FastAPI(title="Asset Control System")
 
 # Setup CORS
 setup_cors(app)
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 def _ensure_organization_subscription_columns() -> None:
@@ -134,10 +142,96 @@ def _ensure_onboarding_preset_columns() -> None:
             conn.execute(text("ALTER TABLE onboarding_presets ADD COLUMN created_by VARCHAR(50) NULL"))
 
 
+def _ensure_employee_permission_columns() -> None:
+    """Backfill schema for temporary permission support in legacy databases."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'employee_permissions'
+                """
+            )
+        )
+        existing = {row[0] for row in rows}
+
+        if "temporary_permissions_json" not in existing:
+            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN temporary_permissions_json JSON NULL"))
+        if "valid_from" not in existing:
+            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN valid_from TIMESTAMPTZ NULL"))
+        if "valid_until" not in existing:
+            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN valid_until TIMESTAMPTZ NULL"))
+
+
+def _ensure_asset_instance_finance_columns() -> None:
+    """Backfill schema for environments created before instance-level finance totals existed."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'asset_instances'
+                """
+            )
+        )
+        existing = {row[0] for row in rows}
+
+        if "repair_cost_total" not in existing:
+            conn.execute(text("ALTER TABLE asset_instances ADD COLUMN repair_cost_total FLOAT DEFAULT 0.0"))
+        if "maintenance_cost_total" not in existing:
+            conn.execute(text("ALTER TABLE asset_instances ADD COLUMN maintenance_cost_total FLOAT DEFAULT 0.0"))
+
+
+def _ensure_performance_indexes() -> None:
+    """Create missing performance indexes for common tenant/status/time filters."""
+    index_statements = [
+        "CREATE INDEX IF NOT EXISTS ix_assets_organization_id ON assets (organization_id)",
+        "CREATE INDEX IF NOT EXISTS ix_assets_branch_id ON assets (branch_id)",
+        "CREATE INDEX IF NOT EXISTS ix_assets_asset_id ON assets (asset_id)",
+        "CREATE INDEX IF NOT EXISTS ix_assets_asset_status ON assets (asset_status)",
+        "CREATE INDEX IF NOT EXISTS ix_assets_created_at ON assets (created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_instances_organization_id ON asset_instances (organization_id)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_instances_branch_id ON asset_instances (branch_id)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_instances_asset_id ON asset_instances (asset_id)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_instances_instance_id ON asset_instances (instance_id)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_instances_status ON asset_instances (status)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_instances_created_at ON asset_instances (created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_tracking_organization_id ON tracking (organization_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tracking_branch_id ON tracking (branch_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tracking_asset_id ON tracking (asset_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tracking_instance_id ON tracking (instance_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tracking_assigned_date ON tracking (assigned_date)",
+        "CREATE INDEX IF NOT EXISTS ix_requests_organization_id ON requests (organization_id)",
+        "CREATE INDEX IF NOT EXISTS ix_requests_branch_id ON requests (branch_id)",
+        "CREATE INDEX IF NOT EXISTS ix_requests_asset_id ON requests (asset_id)",
+        "CREATE INDEX IF NOT EXISTS ix_requests_instance_id ON requests (instance_id)",
+        "CREATE INDEX IF NOT EXISTS ix_requests_status ON requests (status)",
+        "CREATE INDEX IF NOT EXISTS ix_requests_req_date ON requests (req_date)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_organization_id ON audit_logs (organization_id)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_branch_id ON audit_logs (branch_id)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_record_id ON audit_logs (record_id)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_changed_at ON audit_logs (changed_at)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_lifecycle_organization_id ON asset_lifecycle (organization_id)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_lifecycle_asset_id ON asset_lifecycle (asset_id)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_lifecycle_instance_id ON asset_lifecycle (instance_id)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_lifecycle_event_type ON asset_lifecycle (event_type)",
+        "CREATE INDEX IF NOT EXISTS ix_asset_lifecycle_timestamp ON asset_lifecycle (timestamp)",
+    ]
+    with engine.begin() as conn:
+        for stmt in index_statements:
+            conn.execute(text(stmt))
+
+
 Base.metadata.create_all(bind=engine)
 _ensure_organization_subscription_columns()
 _ensure_request_branch_column()
 _ensure_onboarding_preset_columns()
+_ensure_employee_permission_columns()
+_ensure_asset_instance_finance_columns()
+_ensure_performance_indexes()
 
 @app.exception_handler(AppBaseException)
 async def app_exception_handler(request: Request, exc: AppBaseException):
@@ -254,6 +348,7 @@ def init_admin():
 
 app.include_router(auth_router)
 app.include_router(employee_router)
+app.include_router(me_router)
 app.include_router(org_router)
 app.include_router(stock_router)
 app.include_router(assets_router)
@@ -264,6 +359,13 @@ app.include_router(tracking_router)
 app.include_router(discovery_router)
 app.include_router(cmdb_router)
 app.include_router(onboarding_presets_router)
+app.include_router(audit_router)
+app.include_router(branch_router)
+app.include_router(asset_instances_router)
+app.include_router(health_router)
+app.include_router(finance_router)
+app.include_router(notifications_router)
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}

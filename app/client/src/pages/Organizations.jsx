@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
 import ConfirmDialog from '@/components/ConfirmDialog'
+import Pagination from '@/components/Pagination'
 import { useAuth } from '@/context/AuthContext'
 
 function toIsoOrNullFromLocal(v) {
@@ -32,16 +33,35 @@ export default function Organizations() {
   const [subEndLocal, setSubEndLocal] = useState('')
   const [createdMeta, setCreatedMeta] = useState(null)
 
+  const [orgSearch, setOrgSearch] = useState('')
+  const [orgStatusFilter, setOrgStatusFilter] = useState('')
+  const [orgPage, setOrgPage] = useState(1)
+  const ORG_PAGE_SIZE = 10
+
   const [selectedOrgId, setSelectedOrgId] = useState(null)
   const [editOrg, setEditOrg] = useState(null)
   const [branchForm, setBranchForm] = useState({ branch_name: '', location: '' })
   const [editingBranch, setEditingBranch] = useState(null)
   const [removeOrgTarget, setRemoveOrgTarget] = useState(null)
   const [removeBranchTarget, setRemoveBranchTarget] = useState(null)
+  const [branchSearch, setBranchSearch] = useState('')
+  const [branchStatusFilter, setBranchStatusFilter] = useState('')
+  const [branchPage, setBranchPage] = useState(1)
+  const BRANCH_PAGE_SIZE = 10
 
-  const { data = [], isLoading, isError, error } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => apiFetch('/organizations/'),
+  const orgQuery = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(orgPage),
+      per_page: String(ORG_PAGE_SIZE),
+    })
+    if (orgSearch.trim()) params.set('search', orgSearch.trim())
+    if (orgStatusFilter) params.set('status', orgStatusFilter)
+    return params.toString()
+  }, [orgPage, orgSearch, orgStatusFilter])
+
+  const { data = { items: [], total: 0 }, isLoading, isError, error } = useQuery({
+    queryKey: ['organizations', orgQuery],
+    queryFn: () => apiFetch(`/organizations/?${orgQuery}`),
   })
 
   const adminQuery = useQuery({
@@ -51,14 +71,38 @@ export default function Organizations() {
   })
 
   const branchesQuery = useQuery({
-    queryKey: ['organization-branches', selectedOrgId],
-    queryFn: () => apiFetch(`/organizations/${selectedOrgId}/branches`),
+    queryKey: ['organization-branches', selectedOrgId, branchSearch, branchStatusFilter, branchPage],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        page: String(branchPage),
+        per_page: String(BRANCH_PAGE_SIZE),
+      })
+      if (branchSearch.trim()) params.set('search', branchSearch.trim())
+      if (branchStatusFilter) params.set('status', branchStatusFilter)
+      return apiFetch(`/organizations/${selectedOrgId}/branches?${params.toString()}`)
+    },
     enabled: Boolean(selectedOrgId),
   })
 
+  const orgRows = data?.items || []
+  const orgTotal = data?.total || 0
+  const orgTotalPages = Math.max(1, Math.ceil(orgTotal / ORG_PAGE_SIZE))
+  const orgStatusOptions = useMemo(() => {
+    const setValues = new Set(orgRows.map((row) => row.subscription_status).filter(Boolean))
+    return [...setValues].sort((a, b) => String(a).localeCompare(String(b)))
+  }, [orgRows])
+
+  const branchRows = branchesQuery.data?.items || []
+  const branchTotal = branchesQuery.data?.total || 0
+  const branchTotalPages = Math.max(1, Math.ceil(branchTotal / BRANCH_PAGE_SIZE))
+  const branchStatusOptions = useMemo(() => {
+    const setValues = new Set(branchRows.map((row) => row.status).filter(Boolean))
+    return [...setValues].sort((a, b) => String(a).localeCompare(String(b)))
+  }, [branchRows])
+
   const selectedOrg = useMemo(
-    () => data.find((o) => o.organization_id === selectedOrgId) || null,
-    [data, selectedOrgId],
+    () => orgRows.find((o) => o.organization_id === selectedOrgId) || null,
+    [orgRows, selectedOrgId],
   )
 
   const createMut = useMutation({
@@ -248,6 +292,30 @@ export default function Organizations() {
       ) : null}
 
       <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+        <div className="p-4 border-b border-slate-100 bg-slate-50/50 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm md:col-span-2"
+            placeholder="Search organization, domain, status, admin email..."
+            value={orgSearch}
+            onChange={(e) => {
+              setOrgSearch(e.target.value)
+              setOrgPage(1)
+            }}
+          />
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={orgStatusFilter}
+            onChange={(e) => {
+              setOrgStatusFilter(e.target.value)
+              setOrgPage(1)
+            }}
+          >
+            <option value="">All subscription statuses</option>
+            {orgStatusOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </div>
         {isLoading ? (
           <div className="p-6 text-sm text-slate-500">Loading organizations...</div>
         ) : isError ? (
@@ -266,7 +334,7 @@ export default function Organizations() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {data.map((org) => (
+                {orgRows.map((org) => (
                   <tr key={org.organization_id} className={selectedOrgId === org.organization_id ? 'bg-slate-50/80' : ''}>
                     <td className="p-4 font-medium text-slate-900">{org.organization_name}</td>
                     <td className="p-4 text-slate-700">{org.domain || 'Not set'}</td>
@@ -332,7 +400,7 @@ export default function Organizations() {
                     </td>
                   </tr>
                 ))}
-                {data.length === 0 ? (
+                {orgRows.length === 0 ? (
                   <tr>
                     <td className="p-6 text-slate-500" colSpan={6}>
                       No organizations yet.
@@ -343,6 +411,7 @@ export default function Organizations() {
             </table>
           </div>
         )}
+        <Pagination page={orgPage} totalPages={orgTotalPages} onPageChange={setOrgPage} pageSize={ORG_PAGE_SIZE} total={orgTotal} />
       </div>
       {deleteOrgMut.isError ? (
         <p className="text-sm text-rose-600">{deleteOrgMut.error?.message}</p>
@@ -414,6 +483,30 @@ export default function Organizations() {
 
             <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
               <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Branches</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <input
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                  placeholder="Search branch, location, status..."
+                  value={branchSearch}
+                  onChange={(ev) => {
+                    setBranchSearch(ev.target.value)
+                    setBranchPage(1)
+                  }}
+                />
+                <select
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+                  value={branchStatusFilter}
+                  onChange={(ev) => {
+                    setBranchStatusFilter(ev.target.value)
+                    setBranchPage(1)
+                  }}
+                >
+                  <option value="">All branch statuses</option>
+                  {branchStatusOptions.map((item) => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
+              </div>
               <form
                 className="flex flex-wrap gap-2 items-end border-b border-slate-100 pb-3"
                 onSubmit={(ev) => {
@@ -458,7 +551,7 @@ export default function Organizations() {
                 <p className="text-xs text-rose-600">{branchesQuery.error?.message}</p>
               ) : (
                 <ul className="space-y-2 max-h-64 overflow-y-auto">
-                  {(branchesQuery.data || []).map((b) =>
+                  {branchRows.map((b) =>
                     editingBranch?.branch_id === b.branch_id ? (
                       <li key={b.branch_id} className="rounded-lg border border-slate-200 p-2 space-y-2">
                         <input
@@ -550,11 +643,12 @@ export default function Organizations() {
                       </li>
                     ),
                   )}
-                  {(branchesQuery.data || []).length === 0 ? (
+                  {branchRows.length === 0 ? (
                     <li className="text-xs text-slate-500">No branches yet for this organization.</li>
                   ) : null}
                 </ul>
               )}
+              <Pagination page={branchPage} totalPages={branchTotalPages} onPageChange={setBranchPage} pageSize={BRANCH_PAGE_SIZE} total={branchTotal} />
               {deleteBranchMut.isError ? (
                 <p className="text-xs text-rose-600">{deleteBranchMut.error?.message}</p>
               ) : null}

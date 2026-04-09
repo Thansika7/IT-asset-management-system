@@ -17,8 +17,6 @@ import {
 import { Eye, Plus, RefreshCw, Search, Sparkles } from 'lucide-react'
 import ConfirmDialog from '@/components/ConfirmDialog'
 
-const SEVERITY_OPTIONS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
-const PRIORITY_OPTIONS = ['P1', 'P2', 'P3', 'P4']
 const SEVERITY_HELP = {
   CRITICAL: 'Complete system failure',
   HIGH: 'Major functionality affected',
@@ -125,15 +123,13 @@ function prettyBool(value) {
 
 function NewRequestForm({ onCreate, busy, options }) {
   const fallbackCategories = useMemo(() => {
-    const raw = options?.categories?.length
-      ? options.categories
-      : ['Laptop', 'Monitor', 'Keyboard', 'Mouse', 'Printer', 'Phone', 'Accessory', 'Software', 'Other']
+    const raw = options?.categories?.length ? options.categories : []
     const other = raw.filter((x) => String(x).toLowerCase() === 'other')
     const rest = raw.filter((x) => String(x).toLowerCase() !== 'other').sort((a, b) => String(a).localeCompare(String(b)))
     return [...rest, ...other]
   }, [options?.categories])
   const knownAssets = options?.known_assets ?? []
-  const [assetCategory, setAssetCategory] = useState(fallbackCategories[0] || 'Laptop')
+  const [assetCategory, setAssetCategory] = useState(fallbackCategories[0] || '')
   const [reasonText, setReasonText] = useState('')
   const [selectedKnownAsset, setSelectedKnownAsset] = useState('')
   const [assetName, setAssetName] = useState('')
@@ -244,11 +240,14 @@ function NewRequestForm({ onCreate, busy, options }) {
     const inferredCategory = matchingKnownAsset?.category || assetCategory
     const resolvedCategory = inferredCategory === 'Other' && matchingKnownAsset?.category ? matchingKnownAsset.category : inferredCategory
     const resolvedReason = reasonText.trim()
+    const selectedKnown = knownAssets.find((item) => item.asset_name === selectedKnownAsset) || matchingKnownAsset || null
 
     onCreate({
       asset_name: resolvedAssetName || `${resolvedCategory} request`,
       asset_category: resolvedCategory,
       reason: resolvedReason,
+      instance_id: selectedKnown?.instance_id || null,
+      serial_number: selectedKnown?.serial_number || null,
     })
 
     setSelectedKnownAsset('')
@@ -258,7 +257,7 @@ function NewRequestForm({ onCreate, busy, options }) {
       setSelectedCategoryId(sortedApiCategories[0].category_id)
       setAssetCategory(sortedApiCategories[0].category_name)
     } else {
-      setAssetCategory(fallbackCategories[0] || 'Laptop')
+      setAssetCategory(fallbackCategories[0] || '')
     }
     setSelectedSubCategoryId('')
     setSearchInput('')
@@ -399,6 +398,7 @@ function NewRequestForm({ onCreate, busy, options }) {
             onChange={(e) => setAssetCategory(e.target.value)}
             disabled={categoriesQuery.isLoading}
           >
+            <option value="">Select a category</option>
             {fallbackCategories.map((item) => (
               <option key={item} value={item}>
                 {item}
@@ -559,7 +559,13 @@ function NewRequestForm({ onCreate, busy, options }) {
 }
 
 
-function RequestFilters({ draft, onChange, onApply, onClear, count }) {
+function RequestFilters({ draft, onChange, onApply, onClear, count, optionSets }) {
+  const statusOptions = optionSets?.statuses || []
+  const requestTypeOptions = optionSets?.request_types || []
+  const priorityOptions = optionSets?.priorities || []
+  const severityOptions = optionSets?.severities || []
+  const branchOptions = optionSets?.branches || []
+
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm space-y-4 motion-fade-up motion-delay-1">
       <div>
@@ -567,11 +573,38 @@ function RequestFilters({ draft, onChange, onApply, onClear, count }) {
         <p className="text-xs text-slate-500 mt-1">{count} matching request{count === 1 ? '' : 's'}</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="space-y-2 sm:col-span-3">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Search</label>
+          <input
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Search request ID, employee, asset, serial number..."
+            value={draft.search}
+            onChange={(e) => onChange('search', e.target.value)}
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Status</label>
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.status} onChange={(e) => onChange('status', e.target.value)}>
+            <option value="">All</option>
+            {statusOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Request type</label>
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.request_type} onChange={(e) => onChange('request_type', e.target.value)}>
+            <option value="">All</option>
+            {requestTypeOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+        </div>
         <div className="space-y-2">
           <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Priority</label>
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.priority} onChange={(e) => onChange('priority', e.target.value)}>
             <option value="">All</option>
-            {PRIORITY_OPTIONS.map((item) => (
+            {priorityOptions.map((item) => (
               <option key={item} value={item}>{item}</option>
             ))}
           </select>
@@ -580,25 +613,18 @@ function RequestFilters({ draft, onChange, onApply, onClear, count }) {
           <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Severity</label>
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.severity} onChange={(e) => onChange('severity', e.target.value)}>
             <option value="">All</option>
-            {SEVERITY_OPTIONS.map((item) => (
+            {severityOptions.map((item) => (
               <option key={item} value={item}>{item}</option>
             ))}
           </select>
         </div>
         <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Urgency</label>
-          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.urgency} onChange={(e) => onChange('urgency', e.target.value)}>
+          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Branch</label>
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.branch} onChange={(e) => onChange('branch', e.target.value)}>
             <option value="">All</option>
-            <option value="HIGH">HIGH</option>
-            <option value="MEDIUM">MEDIUM</option>
-            <option value="LOW">LOW</option>
-          </select>
-        </div>
-        <div className="space-y-2">
-          <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Request type</label>
-          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.request_type} onChange={(e) => onChange('request_type', e.target.value)}>
-            <option value="">All</option>
-            <option value="ASSET">Asset</option>
+            {branchOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
           </select>
         </div>
       </div>
@@ -645,6 +671,9 @@ function RequestList({ rows, selectedId, onSelect }) {
               <div className="min-w-0">
                 <p className="font-semibold text-slate-900 truncate">{row.requester_name || row.emp_id}</p>
                 <p className="text-xs text-slate-500 mt-1 truncate">{row.asset_name} · {row.asset_category || 'Category not set'}</p>
+                <div className="mt-1">
+                  <Badge tone="cyan">{row.request_type || 'NEW'}</Badge>
+                </div>
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-mono text-slate-600 truncate">{row.request_id}</p>
@@ -671,8 +700,13 @@ function RequestList({ rows, selectedId, onSelect }) {
   )
 }
 
-function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) {
+function DetailPanel({ row, user, mutations, onDelete, transferBranches = [], optionSets }) {
+  const requestTypeOptions = optionSets?.request_types || []
+  const priorityOptions = optionSets?.priorities || []
+  const severityOptions = optionSets?.severities || []
+
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [triageRequestType, setTriageRequestType] = useState('NEW')
   const [triagePriority, setTriagePriority] = useState('P3')
   const [triageSeverity, setTriageSeverity] = useState('MEDIUM')
   const [providedId, setProvidedId] = useState('')
@@ -715,8 +749,9 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
 
   useEffect(() => {
     setDeleteConfirmOpen(false)
-    setTriagePriority('P3')
-    setTriageSeverity('MEDIUM')
+    setTriageRequestType(row?.request_type || requestTypeOptions[0] || 'NEW')
+    setTriagePriority(priorityOptions[0] || '')
+    setTriageSeverity(severityOptions[0] || '')
     setProvidedId('')
     setBrokenId('')
     setResolveNotes('')
@@ -728,7 +763,7 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
     setAiError('')
     setManagerNotes('')
     setTransferConfirmOpen(false)
-  }, [row?.request_id, transferBranches])
+  }, [row?.request_id, row?.request_type, transferBranches, priorityOptions, severityOptions, requestTypeOptions])
 
   if (!row) {
     return (
@@ -747,7 +782,7 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
   const autoUrgencyPreview = deriveUrgencyPreview({
     severity: triageSeverity,
     affectedUsers: 1,
-    actionType: row.action_type || 'NEW',
+    actionType: row.request_type || 'NEW',
     reason: row.reason,
     assetCategory: row.asset_category,
     assetName: row.asset_name,
@@ -763,7 +798,7 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
     ['Employee ID', row.emp_id || 'Not available'],
     ['Stage', row.stage || 'Not available'],
     ['Status', row.status || 'Not available'],
-    ['Request type', row.action_type || 'Not selected'],
+    ['Request type', row.request_type || 'Not selected'],
     ['Priority', row.priority ? `${row.priority}${row.priority_response_time ? ` (${row.priority_response_time})` : ''}` : 'Waiting for support triage'],
     ['Severity', row.severity || 'Waiting for support triage'],
     ['Urgency', row.urgency || 'Waiting for support triage'],
@@ -780,7 +815,7 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={stageTone(stage)}>{stage || 'Unknown stage'}</Badge>
           <Badge>{row.status || 'Unknown status'}</Badge>
-          {row.action_type ? <Badge tone="cyan">Action: {row.action_type}</Badge> : null}
+          {row.request_type ? <Badge tone="cyan">Request type: {row.request_type}</Badge> : null}
           {row.priority ? <Badge tone={priorityTone(row.priority)}>{row.priority}</Badge> : null}
           {row.severity ? <Badge tone={severityTone(row.severity)}>{row.severity}</Badge> : null}
           {row.urgency ? <Badge>{row.urgency} urgency</Badge> : null}
@@ -946,9 +981,17 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Request type</label>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={triageRequestType} onChange={(e) => setTriageRequestType(e.target.value)}>
+                {requestTypeOptions.map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
               <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Priority</label>
               <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={triagePriority} onChange={(e) => setTriagePriority(e.target.value)}>
-                {PRIORITY_OPTIONS.map((item) => (
+                {priorityOptions.map((item) => (
                   <option key={item} value={item}>{item}</option>
                 ))}
               </select>
@@ -957,7 +1000,7 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
             <div className="space-y-2">
               <label className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Severity</label>
               <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={triageSeverity} onChange={(e) => setTriageSeverity(e.target.value)}>
-                {SEVERITY_OPTIONS.map((item) => (
+                {severityOptions.map((item) => (
                   <option key={item} value={item}>{item}</option>
                 ))}
               </select>
@@ -975,8 +1018,11 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
               className="rounded-xl bg-indigo-600 text-white text-sm font-medium px-4 py-2"
               onClick={() => mutations.triageMut.mutate({
                 id: row.request_id,
+                request_type: triageRequestType,
                 priority: triagePriority,
                 severity: triageSeverity,
+                instance_id: row.instance_id || undefined,
+                serial_number: row.serial_number || undefined,
               })}
             >
               Apply triage
@@ -1006,12 +1052,12 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [] }) 
       {canExecuteRequest(user.role) && (stage === 'READY' || row.status === 'APPROVED_FOR_SUPPORT' || row.status === 'READY') ? (
         <div className="space-y-3 border-t border-slate-100 pt-5">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Execute fulfillment</p>
-          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Provided asset id (AST-123)" value={providedId} onChange={(e) => setProvidedId(e.target.value)} />
-          {(row.action_type === 'REPLACE' || row.action_type === 'SERVICE') ? <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Broken / serviced asset id" value={brokenId} onChange={(e) => setBrokenId(e.target.value)} /> : null}
+          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Provided instance id (AST-001-0001)" value={providedId} onChange={(e) => setProvidedId(e.target.value)} />
+          {(row.request_type === 'REPLACE' || row.request_type === 'SERVICE') ? <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Broken / serviced instance id" value={brokenId} onChange={(e) => setBrokenId(e.target.value)} /> : null}
           <button
             type="button"
             className="rounded-xl bg-slate-900 text-white text-sm font-medium px-4 py-2"
-            onClick={() => mutations.execMut.mutate({ id: row.request_id, provided_asset_id: providedId || undefined, broken_asset_id: brokenId || undefined })}
+            onClick={() => mutations.execMut.mutate({ id: row.request_id, provided_instance_id: providedId || undefined, broken_instance_id: brokenId || undefined })}
           >
             Execute
           </button>
@@ -1087,7 +1133,7 @@ export default function Requests() {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(10)
-  const initialFilters = { priority: '', severity: '', urgency: '', request_type: '' }
+  const initialFilters = { search: '', status: '', request_type: '', priority: '', severity: '', branch: '' }
   const [draftFilters, setDraftFilters] = useState(initialFilters)
   const [filters, setFilters] = useState(initialFilters)
 
@@ -1095,6 +1141,19 @@ export default function Requests() {
     queryKey: ['request-form-options'],
     queryFn: () => apiFetch('/requests/form-options'),
   })
+
+  const requestOptionsQuery = useQuery({
+    queryKey: ['request-filter-options'],
+    queryFn: () => apiFetch('/requests/options'),
+  })
+
+  const optionSets = useMemo(() => ({
+    statuses: requestOptionsQuery.data?.statuses || [],
+    request_types: requestOptionsQuery.data?.request_types || [],
+    priorities: requestOptionsQuery.data?.priorities || [],
+    severities: requestOptionsQuery.data?.severities || [],
+    branches: requestOptionsQuery.data?.branches || [],
+  }), [requestOptionsQuery.data])
 
   const transferBranchesQuery = useQuery({
     queryKey: ['request-transfer-target-branches'],
@@ -1109,10 +1168,12 @@ export default function Requests() {
       params.set('sort_by_status', 'true')
       params.set('page', String(page))
       params.set('per_page', String(perPage))
+      if (filters.search?.trim()) params.set('search', filters.search.trim())
+      if (filters.status) params.set('status', filters.status)
+      if (filters.request_type) params.set('request_type', filters.request_type)
       if (filters.priority) params.set('priority', filters.priority)
       if (filters.severity) params.set('severity', filters.severity)
-      if (filters.urgency) params.set('urgency', filters.urgency)
-      if (filters.request_type) params.set('request_type', filters.request_type)
+      if (filters.branch) params.set('branch', filters.branch)
       const query = params.toString()
       return apiFetch(`/requests/${query ? `?${query}` : ''}`)
     },
@@ -1136,10 +1197,10 @@ export default function Requests() {
   const mgrMut = useMutation({ mutationFn: ({ id, is_approved }) => apiFetch(`/requests/${id}/review/manager`, { method: 'POST', body: JSON.stringify({ is_approved }) }), onSuccess: invalidate })
   const admMut = useMutation({ mutationFn: ({ id, is_approved }) => apiFetch(`/requests/${id}/review/admin`, { method: 'POST', body: JSON.stringify({ is_approved }) }), onSuccess: invalidate })
   const execMut = useMutation({
-    mutationFn: ({ id, provided_asset_id, broken_asset_id }) => {
+    mutationFn: ({ id, provided_instance_id, broken_instance_id }) => {
       const q = new URLSearchParams()
-      if (provided_asset_id) q.set('provided_asset_id', provided_asset_id)
-      if (broken_asset_id) q.set('broken_asset_id', broken_asset_id)
+      if (provided_instance_id) q.set('provided_instance_id', provided_instance_id)
+      if (broken_instance_id) q.set('broken_instance_id', broken_instance_id)
       const qs = q.toString()
       return apiFetch(`/requests/${id}/execute${qs ? `?${qs}` : ''}`, { method: 'POST' })
     },
@@ -1160,7 +1221,7 @@ export default function Requests() {
               : 'Guided request creation with known asset autofill, then full workflow review with priority-first visibility.'}
           </p>
         </div>
-        <button type="button" onClick={() => { refetch(); formOptionsQuery.refetch() }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        <button type="button" onClick={() => { refetch(); formOptionsQuery.refetch(); requestOptionsQuery.refetch() }} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
           Refresh
         </button>
@@ -1193,6 +1254,7 @@ export default function Requests() {
           <RequestFilters
             draft={draftFilters}
             count={data.total}
+            optionSets={optionSets}
             onChange={(key, value) => setDraftFilters((prev) => ({ ...prev, [key]: value }))}
             onApply={() => {
               setFilters(draftFilters)
@@ -1262,7 +1324,7 @@ export default function Requests() {
               ×
             </button>
             <div className="p-6">
-              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut, invalidate }} onDelete={() => setDetailsOpen(false)} transferBranches={transferBranchesQuery.data || []} />
+              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut, invalidate }} onDelete={() => setDetailsOpen(false)} transferBranches={transferBranchesQuery.data || []} optionSets={optionSets} />
             </div>
           </div>
         </div>

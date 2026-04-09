@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List
-from sqlalchemy import func
+from typing import List, Optional
+from sqlalchemy import func, or_
 
 from app.server.auth.service import (
     get_password_hash,
@@ -18,7 +18,7 @@ from app.server.schema.organization import Organization, SubscriptionStatus, Bra
 from app.server.services.audit_service import AuditService
 from app.server.models.organization import (
     OrganizationCreate, OrganizationUpdate, OrganizationResponse, OrganizationOnboardResponse,
-    BranchCreate, BranchUpdate, BranchResponse
+    OrganizationListResponse, BranchCreate, BranchUpdate, BranchResponse, BranchListResponse
 )
 from app.server.middlewares.auth import require_roles, RequirePermission
 from app.server.services.email_service import EmailService
@@ -136,17 +136,46 @@ def create_organization(
         created_at=org.created_at,
     )
 
-@router.get("/", response_model=List[OrganizationResponse])
+@router.get("/", response_model=OrganizationListResponse)
 def get_organizations(
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
-    if current_user.role == EmployeeRole.SUPER_ADMIN:
-        return db.query(Organization).all()
-    if not current_user.organization_id:
-        return []
-    own_org = db.query(Organization).filter(Organization.organization_id == current_user.organization_id).first()
-    return [own_org] if own_org else []
+    query = db.query(Organization)
+    
+    if current_user.role != EmployeeRole.SUPER_ADMIN:
+        if not current_user.organization_id:
+            return {"items": [], "total": 0, "page": page, "per_page": per_page}
+        query = query.filter(Organization.organization_id == current_user.organization_id)
+        
+    if status:
+        query = query.filter(Organization.subscription_status == status.upper())
+        
+    if search:
+        search_filter = f"%{search}%"
+        query = query.outerjoin(Employee, (Employee.organization_id == Organization.organization_id) & (Employee.role == EmployeeRole.ORG_ADMIN)).filter(
+            or_(
+                Organization.organization_name.ilike(search_filter),
+                Organization.domain.ilike(search_filter),
+                Organization.subscription_status.astext.ilike(search_filter) if db.bind.dialect.name == 'postgresql' else Organization.subscription_status.ilike(search_filter),
+                Employee.email.ilike(search_filter)
+            )
+        )
+        
+    total = query.count()
+    items = query.order_by(Organization.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page
+    }
+
 
 @router.put("/{org_id}", response_model=OrganizationResponse)
 def update_organization(
@@ -291,9 +320,13 @@ def create_branch(
     db.refresh(branch)
     return branch
 
-@router.get("/{org_id}/branches", response_model=List[BranchResponse])
+@router.get("/{org_id}/branches", response_model=BranchListResponse)
 def get_branches(
     org_id: str,
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(RequirePermission("can_view_branch"))
 ):
@@ -301,7 +334,31 @@ def get_branches(
         if current_user.organization_id != org_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot view branches of another organization")
             
-    return db.query(Branch).filter(Branch.organization_id == org_id).all()
+    query = db.query(Branch).filter(Branch.organization_id == org_id)
+    
+    if status:
+        query = query.filter(Branch.status == status.upper())
+        
+    if search:
+        search_filter = f"%{search}%"
+        query = query.filter(
+            or_(
+                Branch.branch_name.ilike(search_filter),
+                Branch.location.ilike(search_filter),
+                Branch.status.astext.ilike(search_filter) if db.bind.dialect.name == 'postgresql' else Branch.status.ilike(search_filter)
+            )
+        )
+        
+    total = query.count()
+    items = query.order_by(Branch.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page
+    }
+
 
 @router.put("/{org_id}/branches/{branch_id}", response_model=BranchResponse)
 def update_branch(

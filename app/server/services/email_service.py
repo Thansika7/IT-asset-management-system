@@ -76,7 +76,7 @@ class EmailService:
                     "responseTime": 0,
                 },
             )
-            return
+            return False
 
         msg = MIMEMultipart()
         msg["From"] = smtp_from
@@ -102,6 +102,7 @@ class EmailService:
                         "responseTime": 0,
                     },
                 )
+                return True
         except Exception as e:
             logger.error(
                 f"Email send failed: {str(e)}",
@@ -113,6 +114,7 @@ class EmailService:
                     "responseTime": 0,
                 },
             )
+            return False
 
     @classmethod
     def notify_low_stock(cls, asset_name: str, asset_id: str, branch: str, unused: int, threshold: int, recipients: list):
@@ -421,6 +423,78 @@ class EmailService:
             </body>
         </html>
         """
+        for email in set(recipients):
+            if email:
+                cls._send_email(email, subject, body)
+
+    @classmethod
+    def notify_health_alert(
+        cls,
+        recipients: List[str],
+        asset_name: str,
+        instance_id: str,
+        score: int,
+        classification: str,
+        recommendation: str,
+        branch: str,
+    ):
+        if not recipients:
+            return
+        subject = f"[HEALTH ALERT] {asset_name} ({instance_id}) score={score}"
+        body = cls._wrap_email(
+            "Asset Health Alert",
+            f"{asset_name} · Branch {branch}",
+            f"""
+            <p>An asset instance health score has fallen below the configured threshold.</p>
+            <div style=\"background-color:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:20px;margin:25px 0;\">
+                <table style=\"width:100%;border-collapse:collapse;\">
+                    <tr><td style=\"padding:5px 0;color:#64748b;width:40%;\">Asset</td><td style=\"font-weight:600;\">{asset_name}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Instance ID</td><td style=\"font-family:monospace;font-weight:600;\">{instance_id}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Branch</td><td style=\"font-weight:600;\">{branch}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Score</td><td style=\"font-weight:700;color:#b91c1c;\">{score}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Classification</td><td style=\"font-weight:700;color:#b91c1c;\">{classification}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Recommendation</td><td style=\"font-weight:700;color:#7f1d1d;\">{recommendation}</td></tr>
+                </table>
+            </div>
+            <p style=\"font-size:14px;color:#64748b;\">Please review lifecycle events and schedule replacement if required.</p>
+            """,
+            accent_color="#ef4444",
+        )
+        for email in set(recipients):
+            if email:
+                cls._send_email(email, subject, body)
+
+    @classmethod
+    def notify_budget_alert(
+        cls,
+        recipients: List[str],
+        asset_name: str,
+        instance_id: str,
+        repair_cost: float,
+        threshold: float,
+        branch: str,
+    ):
+        if not recipients:
+            return
+        subject = f"[BUDGET ALERT] {asset_name} ({instance_id}) repair cost threshold exceeded"
+        body = cls._wrap_email(
+            "Repair Budget Alert",
+            f"{asset_name} · Branch {branch}",
+            f"""
+            <p>A repair cost entry exceeded the configured threshold and requires finance review.</p>
+            <div style=\"background-color:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:20px;margin:25px 0;\">
+                <table style=\"width:100%;border-collapse:collapse;\">
+                    <tr><td style=\"padding:5px 0;color:#64748b;width:40%;\">Asset</td><td style=\"font-weight:600;\">{asset_name}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Instance ID</td><td style=\"font-family:monospace;font-weight:600;\">{instance_id}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Branch</td><td style=\"font-weight:600;\">{branch}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Repair Cost</td><td style=\"font-weight:700;color:#9a3412;\">{repair_cost:.2f}</td></tr>
+                    <tr><td style=\"padding:5px 0;color:#64748b;\">Threshold</td><td style=\"font-weight:700;color:#9a3412;\">{threshold:.2f}</td></tr>
+                </table>
+            </div>
+            <p style=\"font-size:14px;color:#64748b;\">Please review lifecycle and maintenance plans for this asset.</p>
+            """,
+            accent_color="#f97316",
+        )
         for email in set(recipients):
             if email:
                 cls._send_email(email, subject, body)

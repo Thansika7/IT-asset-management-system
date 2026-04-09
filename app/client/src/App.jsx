@@ -12,12 +12,14 @@ import Employees from './pages/Employees'
 import Requests from './pages/Requests'
 import Stock from './pages/Stock'
 import Finance from './pages/Finance'
+import HealthAnalytics from './pages/HealthAnalytics'
 import MyAssets from './pages/MyAssets'
 import OnboardingKits from './pages/OnboardingKits'
 import CMDB from './pages/CMDB'
 import AssetUsage from './pages/AssetUsage'
 import ChangePassword from './pages/ChangePassword'
 import Organizations from './pages/Organizations'
+import AuditLogs from './pages/AuditLogs'
 import MainLayout from './layouts/MainLayout'
 
 const APP_ROLES = [R.SUPER_ADMIN, R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM, R.EMPLOYEE]
@@ -58,10 +60,18 @@ export default function App() {
               <RoleGate
                 allow={(u) =>
                   [R.ADMIN, R.MANAGER].includes(u.role) ||
-                  Boolean(u.permissions?.can_view_finance || u.permissions?.can_manage_finance)
+                  Boolean(u.permissions?.permissions_json?.finance?.view || u.permissions?.permissions_json?.finance?.manage)
                 }
               >
                 <Finance />
+              </RoleGate>
+            }
+          />
+          <Route
+            path="health-analytics"
+            element={
+              <RoleGate roles={[R.SUPER_ADMIN, R.ORG_ADMIN, R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM]}>
+                <HealthAnalytics />
               </RoleGate>
             }
           />
@@ -71,10 +81,21 @@ export default function App() {
               <RoleGate
                 allow={(u) =>
                   [R.ADMIN, R.HR, R.MANAGER].includes(u.role) ||
-                  Boolean(u.permissions?.can_manage_permissions || u.permissions?.can_manage_users)
+                  Boolean(
+                    u.permissions?.permissions_json?.users?.permissions ||
+                    u.permissions?.permissions_json?.users?.manage
+                  )
                 }
               >
                 <Employees />
+              </RoleGate>
+            }
+          />
+          <Route
+            path="audit-logs"
+            element={
+              <RoleGate roles={[R.SUPER_ADMIN, R.ORG_ADMIN, R.MANAGER]}>
+                <AuditLogs />
               </RoleGate>
             }
           />

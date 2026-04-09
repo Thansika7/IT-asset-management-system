@@ -9,7 +9,9 @@ from app.server.models.request import (
     AdminDirectAllocationResponse,
     RequestCreate,
     RequestCrossBranchTransfer,
+    RequestFilterOptions,
     RequestFormOptions,
+    RequestHRValidation,
     RequestHRVerify,
     RequestListResponse,
     RequestManagerNotes,
@@ -21,12 +23,16 @@ from app.server.models.request import (
 )
 from app.server.schema.request import Request
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.middlewares.auth import require_roles
+from app.server.middlewares.auth import require_module_access, require_roles
 from app.server.auth.service import get_current_user
 from app.server.services.request_necessity_ai_service import recommend_necessity_for_request
 from app.server.services.request_service import RequestService
 
-router=APIRouter(prefix="/requests", tags=["requests"])
+router=APIRouter(
+    prefix="/requests",
+    tags=["requests"],
+    dependencies=[Depends(require_module_access("requests"))],
+)
 
 
 @router.get("/form-options", response_model=RequestFormOptions)
@@ -35,6 +41,14 @@ def get_request_form_options(
     current_user: Employee = Depends(get_current_user),
 ):
     return RequestService.get_request_form_options(db, current_user)
+
+
+@router.get("/options", response_model=RequestFilterOptions)
+def get_request_filter_options(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    return RequestService.get_filter_options(db, current_user)
 
 
 @router.get("/transfer-target-branches", response_model=List[str])
@@ -46,6 +60,7 @@ def list_transfer_target_branches(
 
 @router.get("/", response_model=RequestListResponse)
 def list_requests(
+    search: Optional[str] = None,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     severity: Optional[str] = None,
@@ -61,6 +76,7 @@ def list_requests(
     return RequestService.list_requests(
         db,
         current_user,
+        search=search,
         status=status,
         priority=priority,
         severity=severity,
@@ -114,13 +130,38 @@ def triage_request(
     return RequestService.triage_asset_request(db, request_id, payload, current_user)
 
 @router.post("/{request_id}/review/hr", response_model=RequestResponse)
-def hr_review(
+def hr_validation(
+    request_id: str, 
+    payload: RequestHRValidation, 
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
+):
+    """HR validates request eligibility. SUBMITTED -> HR_VALIDATED or HR_REJECTED."""
+    return RequestService.validate_request_by_hr(db, request_id, payload, current_user)
+
+@router.post("/{request_id}/review/hr-legacy", response_model=RequestResponse)
+def hr_review_legacy(
     request_id: str, 
     payload: RequestHRVerify, 
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
+    """Legacy HR review endpoint. Use /review/hr instead."""
     return RequestService.review_request_by_hr(db, request_id, payload, current_user)
+
+@router.post("/{request_id}/cancel", response_model=RequestResponse)
+def cancel_request(
+    request_id: str,
+    db: Session=Depends(get_db),
+    current_user: Employee=Depends(get_current_user)
+):
+    """
+    Cancel a pending request (user initiated).
+    
+    Only works for PENDING status.
+    Releases any reserved instances.
+    """
+    return RequestService.cancel_asset_request(db, request_id, current_user)
 
 @router.post("/{request_id}/review/manager", response_model=RequestResponse)
 def manager_review(
@@ -162,11 +203,21 @@ def execute_request(
     request_id: str, 
     provided_asset_id: Optional[str] = None, 
     broken_asset_id: Optional[str] = None, 
+    provided_instance_id: Optional[str] = None,
+    broken_instance_id: Optional[str] = None,
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
-    req=RequestService.execute_asset_request(db, request_id, provided_asset_id, broken_asset_id, current_user)
-    return {"status": "success", "executed_action": req.action_type, "new_status": req.status}
+    req=RequestService.execute_asset_request(
+        db,
+        request_id,
+        provided_asset_id,
+        broken_asset_id,
+        current_user,
+        provided_instance_id=provided_instance_id,
+        broken_instance_id=broken_instance_id,
+    )
+    return {"status": "success", "executed_action": req.request_type, "new_status": req.status}
 
 @router.post("/{request_id}/transfer-request", response_model=RequestResponse)
 def transfer_request(

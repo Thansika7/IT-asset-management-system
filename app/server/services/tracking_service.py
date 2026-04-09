@@ -2,11 +2,12 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, date
 from app.server.schema.tracking import Tracking
-from app.server.schema.asset import Asset
+from app.server.schema.asset import Asset, AssetInstance, AssetStatus
 from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
 from app.server.models.tracking import TrackingRead
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.database.tenant import apply_tenant_filter
+from app.server.services.notification_service import NotificationPriority, NotificationService
 
 class TrackingService:
     @staticmethod
@@ -41,6 +42,37 @@ class TrackingService:
         return result
 
     @staticmethod
+    def _get_expiry_value_map_bulk(db: Session, asset_ids: list[str], attr_map: dict[str, list[str]]) -> dict[str, dict[str, Optional[str]]]:
+        out: dict[str, dict[str, Optional[str]]] = {
+            asset_id: {"license": None, "warranty": None}
+            for asset_id in asset_ids
+        }
+        if not asset_ids:
+            return out
+
+        license_attr_ids = attr_map.get("license", [])
+        warranty_attr_ids = attr_map.get("warranty", [])
+        all_attr_ids = [*license_attr_ids, *warranty_attr_ids]
+        if not all_attr_ids:
+            return out
+
+        rows = (
+            db.query(AssetAttributeValue.asset_id, AssetAttributeValue.attribute_id, AssetAttributeValue.value)
+            .filter(
+                AssetAttributeValue.asset_id.in_(asset_ids),
+                AssetAttributeValue.attribute_id.in_(all_attr_ids),
+            )
+            .order_by(AssetAttributeValue.asset_id.asc(), AssetAttributeValue.value.asc())
+            .all()
+        )
+        for asset_id, attr_id, value in rows:
+            if attr_id in license_attr_ids and out[asset_id]["license"] is None:
+                out[asset_id]["license"] = value
+            if attr_id in warranty_attr_ids and out[asset_id]["warranty"] is None:
+                out[asset_id]["warranty"] = value
+        return out
+
+    @staticmethod
     def _get_expiry_attr_map(db: Session) -> dict[str, list[str]]:
         attr_map = {"license": [], "warranty": []}
         for attr in db.query(AssetAttribute).all():
@@ -50,10 +82,15 @@ class TrackingService:
         return attr_map
 
     @staticmethod
-    def _map_tracking_record(db: Session, rec: Tracking, attr_map: dict) -> TrackingRead:
+    def _map_tracking_record(rec: Tracking, expiry_values: dict[str, Optional[str]]) -> TrackingRead:
         data = TrackingRead.model_validate(rec)
         data.movement_type = rec.movement_type.value if hasattr(rec.movement_type, 'value') else rec.movement_type
         data.allocation_type = rec.allocation_type.value if hasattr(rec.allocation_type, 'value') else rec.allocation_type
+        data.instance_id = rec.instance_id
+        data.serial_number = rec.instance.serial_number if rec.instance else None
+        data.status = "RETURNED" if rec.returned_at else (rec.instance.status.value if rec.instance and hasattr(rec.instance.status, "value") else None)
+        data.assigned_to = rec.instance.assigned_to_id if rec.instance and rec.instance.assigned_to_id else rec.emp_id
+        data.employee_name = rec.employee.name if rec.employee else None
         
         if rec.asset:
             data.asset_name = rec.asset.name
@@ -62,33 +99,142 @@ class TrackingService:
             if rec.asset.sub_category:
                 data.sub_category = rec.asset.sub_category.sub_category_name
 
-        expiry_values = TrackingService._get_expiry_value_map(db, rec.asset_id, attr_map)
         data.license_expiry = expiry_values["license"]
         data.warranty_expiry = expiry_values["warranty"]
             
         return data
 
     @staticmethod
-    def get_all_tracking(db: Session, current_user: Employee, emp_id: Optional[str] = None, branch: Optional[str] = None) -> List[TrackingRead]:
-        query = apply_tenant_filter(db.query(Tracking), current_user, Tracking)
-        if emp_id:
-            query = query.filter(Tracking.emp_id == emp_id)
-        if branch:
-            query = query.filter(Tracking.branch == branch)
+    def get_all_tracking(
+        db: Session, 
+        current_user: Employee, 
+        search: Optional[str] = None, 
+        status: Optional[str] = None,
+        branch_id: Optional[str] = None,
+        employee_id: Optional[str] = None,
+        category: Optional[str] = None,
+        movement_type: Optional[str] = None,
+        transfer_status: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 20
+    ) -> dict:
+        from sqlalchemy import or_
+        from app.server.schema.employee import Employee as EmployeeSchema
+        from app.server.schema.category import Category
         
-        records = query.order_by(Tracking.assigned_date.desc()).all()
+        query = apply_tenant_filter(db.query(Tracking), current_user, Tracking).outerjoin(Tracking.instance).outerjoin(Tracking.asset).outerjoin(Tracking.employee)
+        
+        # Scoping based on role
+        if current_user.role == EmployeeRole.EMPLOYEE:
+            query = query.filter(Tracking.emp_id == current_user.employee_id)
+        elif current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM] and current_user.branch_id:
+            query = query.filter(Tracking.branch_id == current_user.branch_id)
+            
+        if branch_id:
+            query = query.filter(Tracking.branch_id == branch_id)
+
+        if employee_id:
+            query = query.filter(Tracking.emp_id == employee_id)
+
+        if category:
+            query = query.outerjoin(Asset.category).filter(Category.category_name.ilike(f"%{category.strip()}%"))
+
+        if status:
+            normalized = status.strip().upper()
+            if normalized == "RETURNED":
+                query = query.filter(Tracking.returned_at.isnot(None))
+            elif normalized in {"NEW", "ASSIGNED", "IN_REPAIR", "NOT_USABLE"}:
+                query = query.filter(Tracking.returned_at.is_(None), AssetInstance.status == normalized)
+
+        if movement_type:
+            query = query.filter(Tracking.movement_type == movement_type.upper())
+
+        if transfer_status:
+            query = query.filter(Tracking.transfer_status == transfer_status.upper())
+            
+        if search:
+            search_filter = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Asset.name.ilike(search_filter),
+                    Tracking.instance_id.ilike(search_filter),
+                    AssetInstance.serial_number.ilike(search_filter),
+                    EmployeeSchema.name.ilike(search_filter),
+                    Tracking.emp_id.ilike(search_filter),
+                    Tracking.movement_reason.ilike(search_filter)
+                )
+            )
+            
+        total = query.count()
+        records = query.order_by(Tracking.assigned_date.desc()).offset((page - 1) * per_page).limit(per_page).all()
         
         attr_map = TrackingService._get_expiry_attr_map(db)
+        expiry_map = TrackingService._get_expiry_value_map_bulk(db, [rec.asset_id for rec in records], attr_map)
+        items = [TrackingService._map_tracking_record(rec, expiry_map.get(rec.asset_id, {"license": None, "warranty": None})) for rec in records]
         
-        return [TrackingService._map_tracking_record(db, rec, attr_map) for rec in records]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "per_page": per_page
+        }
+
+    @staticmethod
+    def get_filter_options(db: Session, current_user: Employee) -> dict:
+        from app.server.schema.organization import Branch
+        from app.server.schema.category import Category
+
+        scoped = apply_tenant_filter(db.query(Tracking), current_user, Tracking)
+
+        if current_user.role == EmployeeRole.EMPLOYEE:
+            scoped = scoped.filter(Tracking.emp_id == current_user.employee_id)
+        elif current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM] and current_user.branch_id:
+            scoped = scoped.filter(Tracking.branch_id == current_user.branch_id)
+
+        rows = scoped.with_entities(Tracking.branch_id, Tracking.emp_id).distinct().all()
+        branch_ids = sorted({r[0] for r in rows if r[0]})
+        employee_ids = sorted({r[1] for r in rows if r[1]})
+
+        branch_map = {
+            b.branch_id: b.branch_name
+            for b in apply_tenant_filter(db.query(Branch), current_user, Branch).filter(Branch.branch_id.in_(branch_ids)).all()
+        } if branch_ids else {}
+
+        employee_map = {
+            e.employee_id: e.name
+            for e in apply_tenant_filter(db.query(Employee), current_user, Employee).filter(Employee.employee_id.in_(employee_ids)).all()
+        } if employee_ids else {}
+
+        categories = [
+            row[0]
+            for row in apply_tenant_filter(db.query(Category.category_name), current_user, Category).order_by(Category.category_name.asc()).all()
+            if row[0]
+        ]
+
+        statuses = [status.value for status in AssetStatus if status.value in {"NEW", "ASSIGNED", "IN_REPAIR", "NOT_USABLE"}]
+        statuses.append("RETURNED")
+
+        return {
+            "statuses": statuses,
+            "branches": [
+                {"value": bid, "label": branch_map.get(bid, bid)}
+                for bid in branch_ids
+            ],
+            "employees": [
+                {"value": eid, "label": employee_map.get(eid, eid)}
+                for eid in employee_ids
+            ],
+            "categories": categories,
+        }
 
     @staticmethod
     def get_asset_history(db: Session, asset_id: str, current_user: Employee) -> List[TrackingRead]:
         records = apply_tenant_filter(db.query(Tracking), current_user, Tracking).filter(Tracking.asset_id == asset_id).order_by(Tracking.assigned_date.desc()).all()
         
         attr_map = TrackingService._get_expiry_attr_map(db)
+        expiry_map = TrackingService._get_expiry_value_map_bulk(db, [r.asset_id for r in records], attr_map)
 
-        return [TrackingService._map_tracking_record(db, r, attr_map) for r in records]
+        return [TrackingService._map_tracking_record(r, expiry_map.get(r.asset_id, {"license": None, "warranty": None})) for r in records]
 
     @staticmethod
     def check_expirations_and_notify_support(db: Session, current_user: Employee):
@@ -134,5 +280,17 @@ class TrackingService:
 
         if expiring_assets:
             EmailService.notify_support_approaching_expiry(expiring_assets)
+            NotificationService.emit(
+                db,
+                actor=current_user,
+                recipient_scope=f"ORG:{current_user.organization_id or '-'}",
+                event_type="LICENSE_EXPIRY_ALERT",
+                title="License/Warranty Expiry Alert",
+                message=f"{len(expiring_assets)} assets are expiring within 30 days.",
+                priority=NotificationPriority.HIGH,
+                dedup_key=f"expiry_alert:{current_user.organization_id}:{today.isoformat()}",
+                cooldown_hours=24,
+                metadata={"count": len(expiring_assets), "items": expiring_assets[:20]},
+            )
         
         return expiring_assets

@@ -12,14 +12,16 @@ from app.server.models.request import (
     RequestCrossBranchTransfer,
     RequestFormAssetOption,
     RequestFormOptions,
+    RequestHRValidation,
     RequestHRVerify,
     RequestManagerNotes,
     RequestResolve,
     RequestReview,
     RequestTriage,
+    RequestFilterOptions,
 )
-from app.server.schema.request import Request
-from app.server.schema.asset import Asset, AssetStatus
+from app.server.schema.request import Request, RequestStatus
+from app.server.schema.asset import Asset, AssetStatus, AssetInstance
 from app.server.schema.tracking import Tracking, MovementType, AllocationType
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.schema.organization import Branch, BranchStatus
@@ -28,11 +30,17 @@ from app.server.services.email_service import EmailService
 from app.server.services.stock_service import StockService
 from app.server.services.account_service import AccountService
 from app.server.services.audit_service import AuditService
+from app.server.services.notification_service import NotificationPriority, NotificationService
 from app.server.database.tenant import apply_tenant_filter
 
 
 class RequestService:
     FORM_CATEGORIES = ["Laptop", "Monitor", "Keyboard", "Mouse", "Printer", "Phone", "Accessory", "Software", "Other"]
+    FORM_REQUEST_TYPES = ["NEW", "SERVICE", "REPLACE"]
+    FORM_ACTION_TYPES = ["NEW", "SERVICE", "REPLACE"]
+    FORM_PRIORITIES = ["P1", "P2", "P3", "P4"]
+    FORM_SEVERITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    FORM_URGENCIES = ["LOW", "MEDIUM", "HIGH"]
     REASON_TEMPLATES = {
         "Laptop": [
             "Not powering on",
@@ -313,9 +321,10 @@ class RequestService:
         known_assets: list[RequestFormAssetOption] = []
         if current_user.role == EmployeeRole.EMPLOYEE:
             rows = (
-                db.query(Tracking, Asset, Category)
+                db.query(Tracking, Asset, Category, AssetInstance)
                 .join(Asset, Tracking.asset_id == Asset.asset_id)
                 .outerjoin(Category, Asset.category_id == Category.category_id)
+                .outerjoin(AssetInstance, Tracking.instance_id == AssetInstance.instance_id)
                 .filter(
                     Tracking.emp_id == current_user.employee_id,
                     Tracking.returned_at == None,
@@ -325,13 +334,15 @@ class RequestService:
             known_assets = [
                 RequestFormAssetOption(
                     asset_id=asset.asset_id,
+                    instance_id=tracking.instance_id,
+                    serial_number=instance.serial_number if instance else None,
                     asset_name=asset.name,
                     category=category.category_name if category else None,
                     sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
                     branch=asset.branch,
                     owned_by_requester=True,
                 )
-                for _, asset, category in rows
+                for tracking, asset, category, instance in rows
             ]
         else:
             query = apply_tenant_filter(db.query(Asset), current_user, Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
@@ -341,6 +352,8 @@ class RequestService:
             known_assets = [
                 RequestFormAssetOption(
                     asset_id=asset.asset_id,
+                    instance_id=None,
+                    serial_number=None,
                     asset_name=asset.name,
                     category=asset.category.category_name if asset.category else None,
                     sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
@@ -354,6 +367,41 @@ class RequestService:
             categories=categories,
             reasons_by_category=RequestService.REASON_TEMPLATES,
             known_assets=known_assets,
+            request_types=RequestService.FORM_REQUEST_TYPES,
+            priorities=RequestService.FORM_PRIORITIES,
+            severities=RequestService.FORM_SEVERITIES,
+            urgencies=RequestService.FORM_URGENCIES,
+            action_types=RequestService.FORM_ACTION_TYPES,
+        )
+
+    @staticmethod
+    def get_filter_options(db: Session, current_user: Employee) -> RequestFilterOptions:
+        query = (
+            apply_tenant_filter(db.query(Request), current_user, Request)
+            .join(Request.employee, isouter=True)
+            .join(Branch, Employee.branch_id == Branch.branch_id, isouter=True)
+        )
+
+        if current_user.role == EmployeeRole.EMPLOYEE:
+            query = query.filter(Request.emp_id == current_user.employee_id)
+        elif current_user.role in [EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR, EmployeeRole.MANAGER] and current_user.branch_id:
+            query = query.filter(Employee.branch_id == current_user.branch_id)
+
+        rows = query.with_entities(Request.status, Request.request_type, Branch.branch_name).all()
+        statuses = sorted({(r[0] or "").strip() for r in rows if r[0]})
+        request_types = sorted({(r[1] or "").strip().upper() for r in rows if r[1]})
+
+        branch_names = sorted({(row[2] or "").strip() for row in rows if row[2]})
+
+        if not request_types:
+            request_types = RequestService.FORM_REQUEST_TYPES
+
+        return RequestFilterOptions(
+            statuses=statuses,
+            request_types=request_types,
+            priorities=RequestService.FORM_PRIORITIES,
+            severities=RequestService.FORM_SEVERITIES,
+            branches=branch_names,
         )
 
     @staticmethod
@@ -371,8 +419,27 @@ class RequestService:
         page: int = 1,
         per_page: int = 20,
         request_type: Optional[str] = None,
+        search: Optional[str] = None,
     ):
         query = apply_tenant_filter(db.query(Request), current_user, Request).options(joinedload(Request.employee))
+        
+        if search:
+            search_filter = f"%{search}%"
+            query = query.join(Request.employee, isouter=True).join(Request.serviced_instance, isouter=True)
+            
+            query = query.filter(
+                or_(
+                    Request.request_id.ilike(search_filter),
+                    Employee.name.ilike(search_filter),
+                    Request.asset_name.ilike(search_filter),
+                    Request.serial_number.ilike(search_filter),
+                    AssetInstance.serial_number.ilike(search_filter),
+                    Request.status.ilike(search_filter),
+                    Request.priority.ilike(search_filter),
+                    Request.severity.ilike(search_filter),
+                    Request.request_type.ilike(search_filter),
+                )
+            )
         
         if current_user.role == EmployeeRole.SUPER_ADMIN:
             # Global admin: see everything.
@@ -558,15 +625,7 @@ class RequestService:
                 detail=f"Role {current_user.role} is not authorized to create requests.",
             )
 
-        if payload.action_type is not None or payload.priority is not None or payload.severity is not None or payload.urgency is not None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="action_type, priority, severity, and urgency are set automatically during request creation.",
-            )
-
-        # 2. Initialize Request: Start at HR Verification as planned, unless admin
-        initial_status = "APPROVED_FOR_SUPPORT" if current_user.role == EmployeeRole.SUPER_ADMIN else "PENDING_SUPPORT"
-        initial_stage = "READY" if current_user.role == EmployeeRole.SUPER_ADMIN else "HR_VERIFICATION"
+        # Employee submits request in SUBMITTED state
         req = Request(
             emp_id=current_user.employee_id,
             organization_id=current_user.organization_id,
@@ -574,46 +633,135 @@ class RequestService:
             asset_name=payload.asset_name,
             asset_category=payload.asset_category,
             reason=payload.reason,
-            action_type="NEW",
-            request_type="ASSET",
-            priority=None,
-            severity=None,
-            urgency=None,
-            status=initial_status,
-            stage=initial_stage,
+            request_type=payload.request_type.value,
+            instance_id=payload.instance_id,
+            serial_number=payload.serial_number,
+            status=RequestStatus.SUBMITTED,
+            sla_priority=payload.priority.value if payload.priority else "MEDIUM",
+            severity=payload.severity.value if payload.severity else "MEDIUM",
+            urgency=payload.urgency.value if payload.urgency else "MEDIUM",
         )
         db.add(req)
         db.commit()
         db.refresh(req)
         
-        audit_action = "AUTO_APPROVED" if current_user.role == EmployeeRole.SUPER_ADMIN else "USER_SUBMISSION"
+        # Calculate SLA due date (24 hours for MEDIUM, 1 hour for HIGH, 72 for LOW, 4 for CRITICAL)
+        from datetime import timedelta, timezone
+        sla_hours = {"CRITICAL": 1, "HIGH": 4, "MEDIUM": 24, "LOW": 72}
+        hours = sla_hours.get(req.sla_priority, 24)
+        req.sla_due = req.req_date + timedelta(hours=hours)
+        db.commit()
+        
         AuditService.log_change(db, "requests", req.request_id, "CREATE", current_user, None, {
             "status": req.status,
             "asset_name": req.asset_name,
-            "role": current_user.role
-        }, audit_action)
+            "request_type": req.request_type,
+        }, "REQUEST_SUBMISSION")
 
-        # 3. Immediate notifications to all higher authorities based on requester role hierarchy.
-        recipients = RequestService._get_higher_authority_emails_for_request(db, current_user, current_user)
+        # Notify HR
+        recipients = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.HR], current_user.branch, current_user)
         EmailService.notify_branch_stakeholders(current_user.name, payload.asset_name, recipients, current_user.role, current_user.branch)
-        EmailService.notify_request_stage_update(
-            employee_name=current_user.name,
-            asset_name=payload.asset_name,
-            branch=current_user.branch or "-",
-            stage_name=initial_stage,
-            recipients=recipients,
-        )
-        
-        # B. Notify Requester (Confirmation)
-        EmailService.notify_requester_confirmation(
-            EmailService.delivery_email(current_user), current_user.name, payload.asset_name, current_user.branch
+
+        requester_email = EmailService.delivery_email(current_user)
+        NotificationService.emit(
+            db,
+            actor=current_user,
+            recipient_scope=current_user.employee_id,
+            event_type="REQUEST_CREATED",
+            title="Request Submitted",
+            message=f"Your request for {payload.asset_name} has been submitted.",
+            priority=NotificationPriority.MEDIUM,
+            dedup_key=f"request_created:{req.request_id}",
+            cooldown_hours=1,
+            metadata={"request_id": req.request_id, "asset_name": payload.asset_name},
+            email_to=requester_email,
+            email_subject=f"Request Submitted: {payload.asset_name}",
+            email_html=EmailService._wrap_email(
+                "Request Submitted",
+                payload.asset_name,
+                f"<p>Your request <strong>{req.request_id}</strong> has been submitted and is pending review.</p>",
+                accent_color="#0284c7",
+            ),
         )
 
         db.refresh(req)
         return RequestService._serialize_request(req)
 
     @staticmethod
+    def validate_request_by_hr(db: Session, request_id: str, payload: RequestHRValidation, user: Employee):
+        """HR validates request eligibility. SUBMITTED -> HR_VALIDATED or HR_REJECTED."""
+        # Lock for update (SELECT FOR UPDATE)
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(
+            Request.request_id == request_id,
+            Request.status == RequestStatus.SUBMITTED,
+        ).with_for_update().first()
+        
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found or not in SUBMITTED state")
+        
+        if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
+            raise HTTPException(status_code=403, detail="HR can validate only requests from their own branch.")
+
+        old_status = req.status
+        
+        if payload.is_valid:
+            req.status = RequestStatus.HR_VALIDATED
+            req.hr_verified = True
+            req.hr_validated_at = datetime.now(timezone.utc)
+            # Move to triage
+        else:
+            req.status = RequestStatus.HR_REJECTED
+            req.hr_verified = False
+            req.rejected_at = datetime.now(timezone.utc)
+        
+        db.commit()
+        db.refresh(req)
+
+        AuditService.log_change(
+            db,
+            "requests",
+            request_id,
+            "UPDATE",
+            user,
+            {"status": old_status},
+            {"status": req.status, "hr_verified": req.hr_verified},
+            "HR_VALIDATION",
+        )
+
+        if payload.is_valid:
+            support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch, user)
+            EmailService.notify_hr_verified(req.employee.name, req.asset_name, True, support_emails)
+        else:
+            # Notify employee
+            requester_email = EmailService.delivery_email(req.employee)
+            if requester_email:
+                EmailService.notify_branch_stakeholders(user.name, f"Request {request_id} rejected", [requester_email], user.role, user.branch)
+            NotificationService.emit(
+                db,
+                actor=user,
+                recipient_scope=req.emp_id,
+                event_type="REQUEST_REJECTED",
+                title="Request Rejected",
+                message=f"Request {req.request_id} was rejected during HR validation.",
+                priority=NotificationPriority.HIGH,
+                dedup_key=f"request_rejected:{req.request_id}",
+                cooldown_hours=1,
+                metadata={"request_id": req.request_id, "asset_name": req.asset_name},
+                email_to=requester_email,
+                email_subject=f"Request Rejected: {req.asset_name}",
+                email_html=EmailService._wrap_email(
+                    "Request Rejected",
+                    req.asset_name,
+                    f"<p>Your request <strong>{req.request_id}</strong> was rejected during HR validation.</p>",
+                    accent_color="#dc2626",
+                ),
+            )
+        
+        return RequestService._serialize_request(req)
+
+    @staticmethod
     def review_request_by_hr(db: Session, request_id: str, payload: RequestHRVerify, user: Employee):
+        """Legacy HR review. Will be deprecated."""
         req = apply_tenant_filter(db.query(Request), user, Request).filter(
             Request.request_id == request_id,
             Request.stage == "HR_VERIFICATION",
@@ -666,159 +814,155 @@ class RequestService:
 
     @staticmethod
     def triage_asset_request(db: Session, request_id: str, payload: RequestTriage, user: Employee):
+        """Support triages request. HR_VALIDATED -> TRIAGED. Reserves instance with SELECT FOR UPDATE."""
+        # Lock for update (concurrency control)
         req = apply_tenant_filter(db.query(Request), user, Request).filter(
             Request.request_id == request_id,
-            Request.stage == "HELPDESK_TRIAGE",
+            Request.status == RequestStatus.HR_VALIDATED,
         ).with_for_update().first()
+        
         if not req:
-            raise HTTPException(status_code=404, detail="Request not found or not in Help Desk triage stage")
+            raise HTTPException(status_code=404, detail="Request not found or not in HR_VALIDATED state")
+        
         if user.role not in {EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN}:
-            raise HTTPException(status_code=403, detail="Only Support Team may set priority and severity.")
+            raise HTTPException(status_code=403, detail="Only Support Team may triage requests.")
+        
         if user.role != EmployeeRole.SUPER_ADMIN:
             if (req.employee.branch_id or "").strip() != (user.branch_id or "").strip():
                 raise HTTPException(status_code=403, detail="Support can triage only requests from their own branch.")
         
-        requested_action = (req.action_type or "NEW").strip().upper()
-        base_action = requested_action.split(":", 1)[0].strip() or "NEW"
-
-        local_stock = (
-            apply_tenant_filter(db.query(sql_func.sum(Asset.unused)), user, Asset)
-            .join(Category)
-            .filter(
-                Asset.branch_id == req.employee.branch_id,
-                Category.category_name == req.asset_category,
-            )
-            .scalar()
-            or 0
-        )
-
-        stock_msg = ""
-        if local_stock > 0:
-            req.status = f"Available in local branch: {req.employee.branch}"
-            stock_msg = req.status
-        else:
-            other_stocks = RequestService.get_inventory_across_branches(db, req.asset_category, user)
-            if not other_stocks:
-                req.status = "Unavailable in all branches"
-                stock_msg = req.status
-            else:
-                # Group presentation by branch for readability
-                # Result rows have: branch, brand, name, available_quantity
-                branch_details = {}
-                for s in other_stocks:
-                    brand_name = s.brand or 'Unknown Brand'
-                    detail = f"{s.available_quantity}x {brand_name} ({s.name})"
-                    if s.branch not in branch_details:
-                        branch_details[s.branch] = []
-                    branch_details[s.branch].append(detail)
-                
-                branches_info = ", ".join([f"{b} [{', '.join(details)}]" for b, details in branch_details.items()])
-                req.status = f"Unavailable locally. Available in: {branches_info}"
-                stock_msg = req.status
-
-        req.action_type = base_action
-        req.request_type = "SERVICE" if base_action == "SERVICE" else "ASSET"
-        req.severity = payload.severity.value
+        # Validate instance if required
+        resolved_instance_id = payload.instance_id or req.instance_id
+        instance = None
+        
+        if payload.request_type.value.upper() in {"SERVICE", "REPLACE", "TRANSFER"}:
+            if not resolved_instance_id and not payload.serial_number and not req.serial_number:
+                raise HTTPException(status_code=400, detail=f"instance_id or serial_number required for {payload.request_type.value}")
+            
+            # Lock instance (SELECT FOR UPDATE)
+            if resolved_instance_id:
+                instance = db.query(AssetInstance).filter(
+                    AssetInstance.instance_id == resolved_instance_id
+                ).with_for_update().first()
+            elif payload.serial_number or req.serial_number:
+                serial_lookup = (payload.serial_number or req.serial_number or "").strip()
+                instance = db.query(AssetInstance).filter(
+                    AssetInstance.serial_number == serial_lookup
+                ).with_for_update().first()
+            
+            if not instance:
+                raise HTTPException(status_code=404, detail="Asset instance not found")
+            
+            # Reserve instance
+            instance.status = "RESERVED"
+            req.instance_id = instance.instance_id
+            req.serial_number = instance.serial_number
+        
+        # Update request to TRIAGED state
+        req.status = RequestStatus.TRIAGED
+        req.request_type = payload.request_type.value
         req.priority = payload.priority.value
-        req.urgency = RequestService._derive_urgency(req, req.severity, 1, base_action)
-
-        if user.role == EmployeeRole.SUPER_ADMIN:
-            req.status = "APPROVED_FOR_SUPPORT"
-            req.stage = "READY"
-        else:
-            req.status = "PENDING_MANAGER"
-            req.stage = "MANAGER_APPROVAL"
-
+        req.severity = payload.severity.value
+        req.triaged_at = datetime.now(timezone.utc)
+        
+        # Lock request for next stage
+        req.request_locked = True
+        req.locked_at = datetime.now(timezone.utc)
+        req.locked_by = user.employee_id
+        
         db.commit()
         db.refresh(req)
         
         AuditService.log_change(db, "requests", request_id, "UPDATE", user, 
-                                {"status": "PENDING_SUPPORT"}, {"status": req.status, "action": req.action_type, "stage": req.stage}, "SUPPORT_TRIAGE")
+                                {"status": "HR_VALIDATED"}, {"status": req.status, "request_type": req.request_type}, "SUPPORT_TRIAGE")
 
-        if req.stage == "MANAGER_APPROVAL":
-            manager_email = RequestService.get_manager_email_for_branch(db, req.employee.branch, user)
-            EmailService.notify_stock_info_to_manager(req.employee.name, req.asset_name, manager_email, stock_msg)
+        # Notify manager
+        manager_email = RequestService.get_manager_email_for_branch(db, req.employee.branch or "", user)
+        if manager_email:
+            EmailService.notify_stock_info_to_manager(req.employee.name, req.asset_name, manager_email, "Request triaged")
 
-        stage_recipients = RequestService._get_higher_authority_emails_for_request(db, req.employee, user)
-        EmailService.notify_request_stage_update(
-            employee_name=req.employee.name,
-            asset_name=req.asset_name,
-            branch=req.employee.branch or "-",
-            stage_name=req.stage,
-            recipients=stage_recipients,
-        )
-        
         return RequestService._serialize_request(req)
+
 
     @staticmethod
     def review_request_by_manager(db: Session, request_id: str, payload: RequestReview, user: Employee):
-        req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
+        """Manager approves/rejects triaged request. TRIAGED -> APPROVED or REJECTED."""
+        # Lock request with SELECT FOR UPDATE
+        req = apply_tenant_filter(db.query(Request), user, Request).filter(
+            Request.request_id == request_id,
+            Request.status == RequestStatus.TRIAGED,
+        ).with_for_update().first()
+        
         if not req:
-            raise HTTPException(status_code=404, detail="Request not found")
+            raise HTTPException(status_code=404, detail="Request not found or not in TRIAGED state")
 
         if user.role != EmployeeRole.SUPER_ADMIN:
-            user_branch_id = (user.branch_id or "").strip()
-            user_branch_name = (user.branch or "").strip().lower()
-            requester_branch_id = (req.employee.branch_id or "").strip() if req.employee else ""
-            requester_branch_name = (req.employee.branch or "").strip().lower() if req.employee else ""
-
-            # Default rule: manager can review requests from their own branch.
-            can_review = bool(
-                (user_branch_id and requester_branch_id and user_branch_id == requester_branch_id)
-                or (user_branch_name and requester_branch_name and user_branch_name == requester_branch_name)
-            )
-
-            # Cross-branch transfer override: target branch manager can review.
-            action_text = (req.action_type or "").strip()
-            if not can_review and action_text.upper().startswith("TRANSFER:"):
-                target_branch_name = action_text.split(":", 1)[1].strip()
-                target_branch = RequestService._resolve_active_branch(db, target_branch_name, user)
-                target_branch_id = (target_branch.branch_id if target_branch else "").strip() if target_branch else ""
-                target_branch_name_norm = (target_branch.branch_name if target_branch else target_branch_name).strip().lower()
-                can_review = bool(
-                    (user_branch_id and target_branch_id and user_branch_id == target_branch_id)
-                    or (user_branch_name and target_branch_name_norm and user_branch_name == target_branch_name_norm)
-                )
-
-            if not can_review:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Managers can review only requests from their own branch unless they are the target manager for a transfer request.",
-                )
-
-        if req.hr_verified is False and payload.is_approved:
-            raise HTTPException(
-                status_code=400,
-                detail="Manager cannot approve a request that HR has explicitly rejected as NOT NEEDED.",
-            )
-
-        if req.stage != "MANAGER_APPROVAL":
-            raise HTTPException(status_code=404, detail="Request not found or not in Manager stage")
+            if (req.employee.branch_id or "").strip() != (user.branch_id or "").strip():
+                raise HTTPException(status_code=403, detail="Managers can review only requests from their own branch.")
 
         old_status = req.status
-        if not payload.is_approved:
-            req.status = "REJECTED"
-            req.stage = "REJECTED"
+        
+        if payload.is_approved:
+            req.status = RequestStatus.APPROVED
+            req.approved_at = datetime.now(timezone.utc)
         else:
-            req.status = "APPROVED_FOR_SUPPORT"
-            req.stage = "READY"
-
+            # ROLLBACK: Release reserved instance
+            if req.instance_id:
+                instance = db.query(AssetInstance).filter(
+                    AssetInstance.instance_id == req.instance_id
+                ).with_for_update().first()
+                
+                if instance:
+                    instance.status = "AVAILABLE"  # Rollback reserved instance
+            
+            req.status = RequestStatus.REJECTED
+            req.rejected_at = datetime.now(timezone.utc)
+        
+        req.request_locked = False
         db.commit()
         db.refresh(req)
-        AuditService.log_change(db, "requests", request_id, "UPDATE", user, {"status": old_status}, {"status": req.status}, "MANAGER_REVIEW")
         
-        # Fetch branch support emails from DB
+        AuditService.log_change(db, "requests", request_id, "UPDATE", user, 
+                                {"status": old_status}, {"status": req.status}, "MANAGER_APPROVAL")
+        
+        # Notify support
         support_emails = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.SUPPORT_TEAM], req.employee.branch, user)
         EmailService.notify_manager_decision(req.employee.name, req.asset_name, payload.is_approved, support_emails)
 
-        stage_recipients = RequestService._get_higher_authority_emails_for_request(db, req.employee, user)
-        EmailService.notify_request_stage_update(
-            employee_name=req.employee.name,
-            asset_name=req.asset_name,
-            branch=req.employee.branch or "-",
-            stage_name=req.stage,
-            recipients=stage_recipients,
+        requester_email = EmailService.delivery_email(req.employee)
+        NotificationService.emit(
+            db,
+            actor=user,
+            recipient_scope=req.emp_id,
+            event_type="REQUEST_APPROVED" if payload.is_approved else "REQUEST_REJECTED",
+            title="Request Approved" if payload.is_approved else "Request Rejected",
+            message=(
+                f"Request {req.request_id} for {req.asset_name} was approved by manager."
+                if payload.is_approved
+                else f"Request {req.request_id} for {req.asset_name} was rejected by manager."
+            ),
+            priority=NotificationPriority.HIGH,
+            dedup_key=f"request_manager_review:{req.request_id}:{'approved' if payload.is_approved else 'rejected'}",
+            cooldown_hours=1,
+            metadata={"request_id": req.request_id, "asset_name": req.asset_name, "approved": payload.is_approved},
+            email_to=requester_email,
+            email_subject=(
+                f"Request Approved: {req.asset_name}"
+                if payload.is_approved
+                else f"Request Rejected: {req.asset_name}"
+            ),
+            email_html=EmailService._wrap_email(
+                "Request Decision",
+                req.asset_name,
+                (
+                    f"<p>Your request <strong>{req.request_id}</strong> has been approved.</p>"
+                    if payload.is_approved
+                    else f"<p>Your request <strong>{req.request_id}</strong> has been rejected.</p>"
+                ),
+                accent_color="#16a34a" if payload.is_approved else "#dc2626",
+            ),
         )
+
         return RequestService._serialize_request(req)
 
     @staticmethod
@@ -887,33 +1031,86 @@ class RequestService:
         return RequestService._serialize_request(req)
 
     @staticmethod
-    def execute_asset_request(db: Session, request_id: str, provided_asset_id: str, broken_asset_id: Optional[str], user: Employee):
+    def execute_asset_request(
+        db: Session,
+        request_id: str,
+        provided_asset_id: Optional[str],
+        broken_asset_id: Optional[str],
+        user: Employee,
+        provided_instance_id: Optional[str] = None,
+        broken_instance_id: Optional[str] = None,
+    ):
         req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
         if not req: raise HTTPException(status_code=404)
         if user.role != EmployeeRole.SUPER_ADMIN and req.employee.branch != user.branch:
             raise HTTPException(status_code=403, detail="Support can execute only requests from their own branch.")
-        if req.status not in ["APPROVED_FOR_SUPPORT", "READY"] and req.stage != "READY":
+        # Accept both new (APPROVED) and legacy (APPROVED_FOR_SUPPORT, READY) statuses
+        if req.status not in [RequestStatus.APPROVED, "APPROVED_FOR_SUPPORT", "READY"] and req.stage != "READY":
             raise HTTPException(status_code=400, detail="Request not actionable")
 
-        if req.action_type in ["NEW", "REPLACE"]:
-            StockService.allocate_asset(db, provided_asset_id, req.emp_id, AllocationType.PERMANENT, user, f"FULFILL_REQ_{request_id}")
-            if req.action_type == "REPLACE" and broken_asset_id:
-                active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
+        decision = (req.request_type or req.action_type or "NEW").strip().upper()
+
+        provided_instance = None
+        if provided_instance_id:
+            provided_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == provided_instance_id).first()
+            if not provided_instance:
+                raise HTTPException(status_code=404, detail="Provided instance not found")
+
+        resolved_provided_asset_id = provided_asset_id or (provided_instance.asset_id if provided_instance else None)
+        if decision in ["NEW", "REPLACE"]:
+            if not resolved_provided_asset_id:
+                raise HTTPException(status_code=400, detail="provided_instance_id or provided_asset_id is required")
+
+            StockService.allocate_asset(
+                db,
+                resolved_provided_asset_id,
+                req.emp_id,
+                AllocationType.PERMANENT,
+                user,
+                f"FULFILL_REQ_{request_id}",
+                instance_id=provided_instance_id,
+            )
+
+            resolved_broken_asset_id = broken_asset_id
+            if not resolved_broken_asset_id and broken_instance_id:
+                broken_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == broken_instance_id).first()
+                if broken_instance:
+                    resolved_broken_asset_id = broken_instance.asset_id
+
+            if decision == "REPLACE" and resolved_broken_asset_id:
+                active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.asset_id == resolved_broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
                 if active_trk:
                     StockService.return_asset(db, active_trk.tracking_id, user, "REPLACEMENT_RETURN")
-            req.status = "COMPLETED"
-            req.stage = "COMPLETED"
-        elif req.action_type == "SERVICE":
-            active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.asset_id == broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
+            req.status = RequestStatus.ASSIGNED
+            req.assigned_at = datetime.now(timezone.utc)
+        elif decision == "SERVICE":
+            resolved_broken_instance_id = broken_instance_id or req.instance_id
+            resolved_broken_asset_id = broken_asset_id
+            if resolved_broken_instance_id and not resolved_broken_asset_id:
+                broken_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == resolved_broken_instance_id).first()
+                if broken_instance:
+                    resolved_broken_asset_id = broken_instance.asset_id
+
+            active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.asset_id == resolved_broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
             if not active_trk:
                 raise HTTPException(status_code=400, detail="Employee does not currently hold this asset")
-            asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == broken_asset_id).with_for_update().first()
+            asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == resolved_broken_asset_id).with_for_update().first()
             asset.asset_status = AssetStatus.IN_REPAIR
-            if provided_asset_id:
-                StockService.allocate_asset(db, provided_asset_id, req.emp_id, AllocationType.TEMPORARY, user, f"LOANER_FOR_REQ_{request_id}")
-            req.serviced_asset_id = broken_asset_id
-            req.status = "WIP_SERVICE"
-            req.stage = "IN_REPAIR"
+            if resolved_broken_instance_id:
+                req.instance_id = resolved_broken_instance_id
+            if provided_instance_id or resolved_provided_asset_id:
+                StockService.allocate_asset(
+                    db,
+                    resolved_provided_asset_id,
+                    req.emp_id,
+                    AllocationType.TEMPORARY,
+                    user,
+                    f"LOANER_FOR_REQ_{request_id}",
+                    instance_id=provided_instance_id,
+                )
+            req.serviced_asset_id = resolved_broken_asset_id
+            req.status = RequestStatus.ASSIGNED
+            req.assigned_at = datetime.now(timezone.utc)
         else:
             raise HTTPException(
                 status_code=400,
@@ -924,6 +1121,47 @@ class RequestService:
         db.refresh(req)
         EmailService.notify_asset_assigned(req.employee.name, req.asset_name, RequestService.get_manager_email_for_branch(db, req.employee.branch, user))
         return req
+
+    @staticmethod
+    def cancel_asset_request(db: Session, request_id: str, current_user: Employee):
+        """Cancel request. SUBMITTED or HR_VALIDATED -> CANCELLED. Rollback reserved instances."""
+        req = apply_tenant_filter(db.query(Request), current_user, Request).filter(
+            Request.request_id == request_id
+        ).with_for_update().first()
+        
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found")
+        
+        # Only allow cancellation from SUBMITTED, HR_VALIDATED, or TRIAGED
+        if req.status not in [RequestStatus.SUBMITTED, RequestStatus.HR_VALIDATED, RequestStatus.TRIAGED]:
+            raise HTTPException(status_code=400, detail=f"Cannot cancel request in {req.status} state")
+        
+        # Employee can only cancel their own request
+        if current_user.role == EmployeeRole.EMPLOYEE:
+            if req.emp_id != current_user.employee_id:
+                raise HTTPException(status_code=403, detail="You can only cancel your own requests")
+        
+        # If TRIAGED, rollback reserved instance
+        if req.status == RequestStatus.TRIAGED and req.instance_id:
+            instance = db.query(AssetInstance).filter(
+                AssetInstance.instance_id == req.instance_id
+            ).with_for_update().first()
+            
+            if instance and instance.status == "RESERVED":
+                instance.status = "AVAILABLE"  # Rollback
+        
+        old_status = req.status
+        req.status = RequestStatus.CANCELLED
+        req.cancelled_at = datetime.now(timezone.utc)
+        req.request_locked = False
+        
+        db.commit()
+        db.refresh(req)
+        
+        AuditService.log_change(db, "requests", request_id, "UPDATE", current_user,
+                                {"status": old_status}, {"status": req.status}, "REQUEST_CANCELLED")
+        
+        return RequestService._serialize_request(req)
 
     @staticmethod
     def resolve_service_request(db: Session, request_id: str, payload: RequestResolve, user: Employee):

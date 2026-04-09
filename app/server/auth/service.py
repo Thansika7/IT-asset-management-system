@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from typing import Optional, Set
@@ -116,6 +117,218 @@ ROLE_PERMISSION_TO_FLAGS = {
 }
 
 
+ROLE_HIERARCHY = [
+    EmployeeRole.EMPLOYEE,
+    EmployeeRole.SUPPORT_TEAM,
+    EmployeeRole.HR,
+    EmployeeRole.MANAGER,
+    EmployeeRole.ORG_ADMIN,
+    EmployeeRole.SUPER_ADMIN,
+]
+
+
+def _normalize_permission_token(value: str) -> str:
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+@lru_cache(maxsize=64)
+def _inherited_role_defaults(role: EmployeeRole) -> dict[str, dict[str, bool]]:
+    """Higher roles inherit all lower-role defaults from the defined hierarchy."""
+    try:
+        rank = ROLE_HIERARCHY.index(role)
+    except ValueError:
+        rank = 0
+
+    merged: dict[str, dict[str, bool]] = {}
+    for inherited_role in ROLE_HIERARCHY[: rank + 1]:
+        role_defaults = _normalize_permission_map(get_default_permission_json(inherited_role))
+        merged = _merge_permission_maps(merged, role_defaults)
+    return merged
+
+
+def get_default_permission_json(role: EmployeeRole) -> dict:
+    """Return a scoped JSON permission map for the given role."""
+    if role == EmployeeRole.SUPER_ADMIN:
+        return {
+            "assets": {"view": True, "create": True, "update": True, "delete": True},
+            "requests": {"view": True, "create": True, "approve": True, "reject": True, "triage": True},
+            "finance": {"view": True, "manage": True},
+            "tracking": {"view": True, "allocate": True, "transfer": True},
+            "analytics": {"view": True},
+            "cmdb": {"view": True, "create": True, "edit": True, "delete": True},
+            "branches": {"view": True, "create": True, "update": True},
+            "users": {"view": True, "manage": True, "permissions": True},
+            "reports": {"view": True}
+        }
+    if role == EmployeeRole.ORG_ADMIN:
+        return {
+            "assets": {"view": True, "create": True, "update": True, "delete": True},
+            "requests": {"view": True, "create": True, "approve": True, "reject": True, "triage": True},
+            "finance": {"view": True, "manage": True},
+            "tracking": {"view": True, "allocate": True, "transfer": True},
+            "analytics": {"view": True},
+            "cmdb": {"view": True, "create": True, "edit": True, "delete": True},
+            "branches": {"view": True, "create": True, "update": True},
+            "users": {"view": True, "manage": True, "permissions": True},
+            "reports": {"view": True}
+        }
+    if role == EmployeeRole.MANAGER:
+        return {
+            "assets": {"view": True, "create": True, "update": True},
+            "requests": {"view": True, "create": True, "approve": True, "reject": True},
+            "tracking": {"view": True},
+            "finance": {"view": True},
+            "analytics": {"view": True},
+            "cmdb": {"view": True, "create": True, "edit": True},
+            "users": {"view": True}
+        }
+    if role == EmployeeRole.HR:
+        return {
+            "assets": {"view": True},
+            "requests": {"view": True},
+            "finance": {"view": True},
+            "tracking": {"view": True},
+            "analytics": {"view": True},
+            "cmdb": {"view": True},
+            "users": {"view": True, "manage": True},
+            "reports": {"view": True}
+        }
+    if role == EmployeeRole.SUPPORT_TEAM:
+        return {
+            "assets": {"view": True, "create": True, "update": True},
+            "requests": {"view": True, "triage": True, "execute": True},
+            "tracking": {"view": True, "allocate": True, "transfer": True},
+            "finance": {"view": True},
+            "analytics": {"view": True},
+            "cmdb": {"view": True},
+        }
+    if role == EmployeeRole.EMPLOYEE:
+        return {
+            "assets": {"view_own": True},
+            "requests": {"view_own": True, "create": True},
+            "tracking": {"view_own": True},
+            "analytics": {"view": True},
+        }
+    return {}
+
+
+def _normalize_permission_map(raw: dict | None) -> dict[str, dict[str, bool]]:
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized: dict[str, dict[str, bool]] = {}
+    for module, actions in raw.items():
+        if not isinstance(actions, dict):
+            continue
+
+        module_key = _normalize_permission_token(str(module))
+        if not module_key:
+            continue
+
+        module_actions: dict[str, bool] = {}
+        for action, allowed in actions.items():
+            action_key = _normalize_permission_token(str(action))
+            if not action_key:
+                continue
+            module_actions[action_key] = bool(allowed)
+
+        if module_actions:
+            normalized[module_key] = module_actions
+
+    return normalized
+
+
+def _merge_permission_maps(base: dict[str, dict[str, bool]], override: dict[str, dict[str, bool]]) -> dict[str, dict[str, bool]]:
+    merged: dict[str, dict[str, bool]] = {module: dict(actions) for module, actions in base.items()}
+
+    for module, actions in override.items():
+        existing = merged.setdefault(module, {})
+        for action, allowed in actions.items():
+            existing[action] = bool(allowed)
+
+    return merged
+
+
+def _is_temporary_permission_active(user: Employee) -> bool:
+    permission_row = getattr(user, "permissions", None)
+    if not permission_row:
+        return False
+
+    now = datetime.now(timezone.utc)
+    valid_from = getattr(permission_row, "valid_from", None)
+    valid_until = getattr(permission_row, "valid_until", None)
+
+    if valid_from is not None:
+        from_time = valid_from.replace(tzinfo=timezone.utc) if valid_from.tzinfo is None else valid_from
+        if now < from_time:
+            return False
+
+    if valid_until is not None:
+        until_time = valid_until.replace(tzinfo=timezone.utc) if valid_until.tzinfo is None else valid_until
+        if now > until_time:
+            return False
+
+    return True
+
+
+def create_default_permissions(role: EmployeeRole, user_override: dict | None = None) -> dict[str, dict[str, bool]]:
+    role_defaults = _normalize_permission_map(get_default_permission_json(role))
+    override = _normalize_permission_map(user_override)
+    return _merge_permission_maps(role_defaults, override)
+
+
+def get_effective_permissions(user: Employee) -> dict[str, dict[str, bool]]:
+    role_defaults = _inherited_role_defaults(user.role)
+
+    permission_row = getattr(user, "permissions", None)
+    user_override = _normalize_permission_map(getattr(permission_row, "permissions_json", None) if permission_row else None)
+
+    effective = _merge_permission_maps(role_defaults, user_override)
+
+    if permission_row and _is_temporary_permission_active(user):
+        temporary_override = _normalize_permission_map(getattr(permission_row, "temporary_permissions_json", None))
+        effective = _merge_permission_maps(effective, temporary_override)
+
+    return effective
+
+
+def has_permission(user: Employee, module: str, action: str) -> bool:
+    if user.role == EmployeeRole.SUPER_ADMIN:
+        return True
+    if user.role == EmployeeRole.ORG_ADMIN:
+        return True
+
+    effective = get_effective_permissions(user)
+    module_key = _normalize_permission_token(module)
+    action_key = _normalize_permission_token(action)
+    if not module_key or not action_key:
+        return False
+
+    module_scope = effective.get(module_key)
+    if not isinstance(module_scope, dict):
+        return False
+    if bool(module_scope.get(action_key, False)):
+        return True
+
+    action_aliases = {
+        "edit": "update",
+        "update": "edit",
+        "manage": "view",
+        "view_own": "view",
+        "view": "view_own",
+        "approve": "review",
+        "review": "approve",
+    }
+    alias = action_aliases.get(action_key)
+    if alias and bool(module_scope.get(alias, False)):
+        return True
+
+    # Backward compatibility: grant module-level if a generic manage permission exists.
+    if bool(module_scope.get("manage", False)):
+        return True
+
+    return False
+
 def _build_default_role_permissions() -> dict[EmployeeRole, dict[str, bool]]:
     defaults: dict[EmployeeRole, dict[str, bool]] = {}
     for role, permissions in ROLE_PERMISSIONS.items():
@@ -150,11 +363,86 @@ PERMISSION_FLAG_FIELDS = [
     "can_manage_permissions",
 ]
 
-
 def get_default_permission_flags(role: EmployeeRole) -> dict[str, bool]:
-    """Return a full permission map for the given role with explicit True/False values."""
+    """LEGACY: Return a flat permission map for backward compatibility."""
     role_defaults = DEFAULT_ROLE_PERMISSIONS.get(role, {})
     return {flag: bool(role_defaults.get(flag, False)) for flag in PERMISSION_FLAG_FIELDS}
+
+
+JSON_PERMISSION_TO_LEGACY_FLAG = {
+    ("assets", "view"): "can_view_assets",
+    ("assets", "create"): "can_create_assets",
+    ("assets", "update"): "can_update_assets",
+    ("assets", "delete"): "can_delete_assets",
+    ("requests", "create"): "can_create_request",
+    ("requests", "approve"): "can_approve_request",
+    ("requests", "reject"): "can_reject_request",
+    ("finance", "view"): "can_view_finance",
+    ("finance", "manage"): "can_manage_finance",
+    ("tracking", "view"): "can_view_tracking",
+    ("tracking", "allocate"): "can_allocate_asset",
+    ("tracking", "transfer"): "can_transfer_asset",
+    ("branches", "view"): "can_view_branch",
+    ("branches", "create"): "can_create_branch",
+    ("branches", "update"): "can_update_branch",
+    ("reports", "view"): "can_view_reports",
+    ("users", "manage"): "can_manage_users",
+    ("users", "permissions"): "can_manage_permissions",
+}
+
+
+def permission_json_to_legacy_flags(permissions_json: dict) -> dict[str, bool]:
+    """Map scoped JSON permissions to legacy boolean columns for compatibility."""
+    result = {flag: False for flag in PERMISSION_FLAG_FIELDS}
+    if not isinstance(permissions_json, dict):
+        return result
+    for module, actions in permissions_json.items():
+        if not isinstance(actions, dict):
+            continue
+        for action, allowed in actions.items():
+            if not allowed:
+                continue
+            flag = JSON_PERMISSION_TO_LEGACY_FLAG.get(
+                (_normalize_permission_token(str(module)), _normalize_permission_token(str(action)))
+            )
+            if flag:
+                result[flag] = True
+    return result
+
+
+def _humanize_permission_key(value: str) -> str:
+    return str(value).replace("_", " ").strip().title()
+
+
+def get_permission_catalog() -> list[dict]:
+    """Union of role defaults as module/action metadata for dynamic permission UIs."""
+    union_map: dict[str, set[str]] = {}
+    for role in EmployeeRole:
+        perms = get_default_permission_json(role)
+        if not isinstance(perms, dict):
+            continue
+        for module, actions in perms.items():
+            if not isinstance(actions, dict):
+                continue
+            module_key = str(module)
+            module_actions = union_map.setdefault(module_key, set())
+            for action in actions.keys():
+                module_actions.add(str(action))
+
+    modules = []
+    for module_key in sorted(union_map.keys()):
+        actions = [
+            {"key": action_key, "label": _humanize_permission_key(action_key)}
+            for action_key in sorted(union_map[module_key])
+        ]
+        modules.append({
+            "key": module_key,
+            "label": _humanize_permission_key(module_key),
+            "actions": actions,
+        })
+    return modules
+
+
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -327,12 +615,13 @@ def get_current_user(
                 detail="Super Admin is restricted to organization management endpoints.",
             )
         
+    # Only block users if organization subscription is SUSPENDED (not just inactive)
     if user.organization and user.role.value != "super_admin":
         from app.server.schema.organization import SubscriptionStatus
-        if user.organization.subscription_status == SubscriptionStatus.INACTIVE:
+        if user.organization.subscription_status == SubscriptionStatus.SUSPENDED:
             raise HTTPException(
                 status_code=403,
-                detail="Organization subscription is inactive. Contact support."
+                detail="Organization subscription is suspended. Contact support."
             )
             
     return user

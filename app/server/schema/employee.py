@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, ForeignKey
+from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.server.database.database import Base
@@ -58,6 +58,7 @@ class EmployeePermission(Base):
     id=Column(Integer, primary_key=True, index=True)
     employee_id=Column(String(50), ForeignKey("employees.employee_id", ondelete="CASCADE"), unique=True, nullable=False)
     
+    # Legacy individual columns for backward compatibility during migration
     can_view_assets=Column(Boolean, default=False)
     can_create_assets=Column(Boolean, default=False)
     can_update_assets=Column(Boolean, default=False)
@@ -83,4 +84,11 @@ class EmployeePermission(Base):
     can_manage_users=Column(Boolean, default=False)
     can_manage_permissions=Column(Boolean, default=False)
 
+    # New JSON column for scalable permissions
+    permissions_json=Column(JSON, nullable=True)
+    temporary_permissions_json=Column(JSON, nullable=True)
+    valid_from=Column(DateTime(timezone=True), nullable=True)
+    valid_until=Column(DateTime(timezone=True), nullable=True)
+
     employee=relationship("Employee", back_populates="permissions")
+
