@@ -658,16 +658,6 @@ class StockService:
             "total": old_inventory.total,
         }
         
-<<<<<<< HEAD
-        AuditService.log_change(db, "assets", asset_id, "UPDATE", user, old_val, new_val, reason)
-
-        if cost is not None:
-            from app.server.services.account_service import AccountService
-            AccountService.update_procurement(
-                db, asset_id, cost, vendor_name, vendor_contact, invoice_number, user, "PROCUREMENT_VIA_STOCK_ADD"
-            )
-
-=======
         # Create instances
         if instances:
             for inst_data in instances:
@@ -735,7 +725,6 @@ class StockService:
             db, "assets", asset_id, "UPDATE", user, old_val, new_val, reason
         )
         
->>>>>>> develop/prabhu
         return asset
 
     @staticmethod
@@ -958,15 +947,10 @@ class StockService:
             movement_reason=reason
         )
         db.add(trk)
-<<<<<<< HEAD
-        db.flush() 
-        AuditService.log_change(
-=======
         db.flush()
         
         # Log lifecycle event
         LifecycleService.log_event(
->>>>>>> develop/prabhu
             db,
             instance_id=target_instance.instance_id,
             asset_id=asset_id,
@@ -978,15 +962,6 @@ class StockService:
             tracking_id=trk.tracking_id,
             organization_id=asset.organization_id
         )
-<<<<<<< HEAD
-    
-        actual_threshold = asset.low_stock_threshold if asset.low_stock_threshold else 10
-        previous_unused = old_asset_val["unused"]
-        normalized_branch = (asset.branch or "").strip()
-        is_low_stock_now = asset.unused <= actual_threshold
-        moved_deeper_into_low_stock = previous_unused > actual_threshold or asset.unused < previous_unused
-=======
->>>>>>> develop/prabhu
 
         from app.server.services.email_service import EmailService
 
