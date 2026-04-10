@@ -1,11 +1,8 @@
 """
-Request Workflow Management
+Deprecated compatibility wrapper for request workflow helpers.
 
-Handles request lifecycle:
-PENDING → TRIAGED (instance reserved) → APPROVED → ASSIGNED (instance ASSIGNED) → COMPLETED
-                  ↘ REJECTED (instance released)
-                  
-CANCELLATION: PENDING → CANCELLED
+RequestService is the canonical source of truth for lifecycle behavior.
+This module keeps helper methods aligned with the current lifecycle states.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -97,21 +94,25 @@ class RequestWorkflow:
         """
         Get valid next states from current status.
         
-        PENDING → TRIAGED, CANCELLED
+        SUBMITTED → HR_VALIDATED, HR_REJECTED, CANCELLED
+        HR_VALIDATED → TRIAGED
         TRIAGED → APPROVED, REJECTED
         APPROVED → ASSIGNED, REJECTED, CLOSED
         ASSIGNED → COMPLETED, REJECTED
+        HR_REJECTED → (terminal)
         REJECTED → (terminal)
         CANCELLED → (terminal)
         COMPLETED → CLOSED
         CLOSED → (terminal)
         """
         transitions = {
-            RequestStatus.PENDING: {RequestStatus.TRIAGED, RequestStatus.CANCELLED},
+            RequestStatus.SUBMITTED: {RequestStatus.HR_VALIDATED, RequestStatus.HR_REJECTED, RequestStatus.CANCELLED},
+            RequestStatus.HR_VALIDATED: {RequestStatus.TRIAGED},
             RequestStatus.TRIAGED: {RequestStatus.APPROVED, RequestStatus.REJECTED},
             RequestStatus.APPROVED: {RequestStatus.ASSIGNED, RequestStatus.REJECTED, RequestStatus.CLOSED},
             RequestStatus.ASSIGNED: {RequestStatus.COMPLETED, RequestStatus.REJECTED},
             RequestStatus.COMPLETED: {RequestStatus.CLOSED},
+            RequestStatus.HR_REJECTED: set(),   # Terminal
             RequestStatus.REJECTED: set(),      # Terminal
             RequestStatus.CANCELLED: set(),     # Terminal
             RequestStatus.CLOSED: set(),        # Terminal

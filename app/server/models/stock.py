@@ -1,7 +1,7 @@
-from pydantic import BaseModel, ConfigDict, field_validator, Field
+from pydantic import BaseModel, ConfigDict, field_validator, Field, model_validator
 from typing import Optional, List
 from app.server.schema.asset import AssetStatus
-from app.server.schema.tracking import MovementType, AllocationType
+from app.server.schema.tracking import MovementType, AllocationType, LifecycleEvent
 from datetime import date, datetime
 from app.server.schema.employee import EmployeeRole
 
@@ -34,8 +34,8 @@ class AssetCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_id: Optional[str] = None
     name: str
-    brand: str
-    model: str
+    brand: Optional[str] = None
+    model: Optional[str] = None
     category_id: Optional[str] = None
     category_name: Optional[str] = None
     asset_behavior: Optional[str] = None
@@ -49,6 +49,7 @@ class AssetCreate(BaseModel):
     vendor_name: Optional[str] = None
     vendor_contact: Optional[str] = None
     invoice_number: Optional[str] = None
+    warranty_expiry: Optional[date] = None
     expiry_date: Optional[date] = None
     subscription_term: Optional[str] = None
     instance_metadata: Optional[dict] = None
@@ -57,7 +58,7 @@ class AssetCreate(BaseModel):
     useful_life_years: int = 5
     specifications: List[AssetSpecificationInput] = Field(default_factory=list)
 
-    @field_validator("name", "brand", "model")
+    @field_validator("name")
     @classmethod
     def validate_text_fields(cls, v: str) -> str:
         if not isinstance(v, str):
@@ -66,6 +67,14 @@ class AssetCreate(BaseModel):
         if not value:
             raise ValueError("Value must not be blank")
         return value
+
+    @field_validator("brand", "model")
+    @classmethod
+    def validate_optional_model_fields(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
 
     @field_validator("category_name", "sub_category_name", "vendor_name", "vendor_contact", "invoice_number", "asset_behavior", "subscription_term")
     @classmethod
@@ -99,6 +108,18 @@ class AssetCreate(BaseModel):
             raise ValueError("Quantity fields cannot be negative")
         return v
 
+    @model_validator(mode="after")
+    def validate_create_payload(self):
+        if not (self.category_id or self.category_name):
+            raise ValueError("Either category_id or category_name is required")
+        if not (self.sub_category_id or self.sub_category_name):
+            raise ValueError("Either sub_category_id or sub_category_name is required")
+        if self.total_quantity <= 0:
+            raise ValueError("total_quantity must be greater than zero")
+        if self.unused == 0:
+            self.unused = self.total_quantity
+        return self
+
 class AssetInstanceCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_id: str  # Link to Model
@@ -119,6 +140,77 @@ class StockAdd(BaseModel):
     cost: Optional[float] = None
     vendor_name: Optional[str] = None
     invoice_number: Optional[str] = None
+
+
+class AssetAttributeUpdateItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attribute_id: Optional[str] = None
+    attribute_name: Optional[str] = None
+    new_value: Optional[str] = None
+
+    @field_validator("attribute_id", "attribute_name")
+    @classmethod
+    def validate_optional_identifier(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
+    @field_validator("new_value")
+    @classmethod
+    def normalize_new_value(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def validate_attribute_target(self):
+        if not self.attribute_id and not self.attribute_name:
+            raise ValueError("Either attribute_id or attribute_name is required")
+        return self
+
+
+class AssetAttributeUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    changes: List[AssetAttributeUpdateItem] = Field(default_factory=list)
+    event_type: LifecycleEvent = LifecycleEvent.ATTRIBUTE_UPDATED
+    reason: Optional[str] = None
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
+    @model_validator(mode="after")
+    def validate_changes(self):
+        if not self.changes:
+            raise ValueError("At least one attribute change is required")
+        return self
+
+
+class AssetAttributeUpdateResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attribute_id: str
+    attribute_name: str
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    value_id: str
+    lifecycle_id: str
+    event_type: str
+
+
+class AssetAttributeUpdateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_id: str
+    asset_id: str
+    event_type: str
+    reason: Optional[str] = None
+    updated_count: int
+    updates: List[AssetAttributeUpdateResult]
 
 class AssetInstanceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -219,6 +311,16 @@ class FilterOption(BaseModel):
     model_config = ConfigDict(extra="forbid")
     value: str
     label: str
+    id: Optional[str] = None
+    name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def set_standardized_fields(self):
+        if not self.id:
+            self.id = self.value
+        if not self.name:
+            self.name = self.label
+        return self
 
 
 class AssetInstanceFilterOptionsResponse(BaseModel):

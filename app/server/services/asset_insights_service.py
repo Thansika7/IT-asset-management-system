@@ -186,7 +186,8 @@ class AssetInsightsService:
         performance_penalty = performance_issues_count * 5
 
         warranty_expiry = instance.warranty_expiry or AssetInsightsService._get_warranty_expiry(db, instance.asset_id)
-        warranty_expired = bool(warranty_expiry is None or warranty_expiry < date.today())
+        # Unknown warranty should not degrade health; only expired known dates do.
+        warranty_expired = bool(warranty_expiry is not None and warranty_expiry < date.today())
         warranty_penalty = 10 if warranty_expired else 0
 
         status_penalty_map = {
@@ -306,11 +307,8 @@ class AssetInsightsService:
         current_user: Employee,
         *,
         search: Optional[str] = None,
-        category: Optional[str] = None,
         category_id: Optional[str] = None,
-        sub_category: Optional[str] = None,
         sub_category_id: Optional[str] = None,
-        branch: Optional[str] = None,
         branch_id: Optional[str] = None,
         status: Optional[str] = None,
         available_only: bool = False,
@@ -324,16 +322,10 @@ class AssetInsightsService:
         
         if category_id:
             query = query.filter(Asset.category_id == category_id)
-        if category:
-            query = query.filter(Category.category_name.ilike(f"%{category.strip()}%"))
         if sub_category_id:
             query = query.filter(Asset.sub_category_id == sub_category_id)
-        if sub_category:
-            query = query.filter(SubCategory.sub_category_name.ilike(f"%{sub_category.strip()}%"))
         if branch_id:
             query = query.filter(Asset.branch_id == branch_id)
-        if branch:
-            query = query.filter(Branch.branch_name.ilike(f"%{branch.strip()}%"))
 
         if status:
             normalized = status.strip().lower()
@@ -430,35 +422,22 @@ class AssetInsightsService:
         asset: Asset,
         *,
         search: Optional[str] = None,
-        category: Optional[str] = None,
-        sub_category: Optional[str] = None,
-        branch: Optional[str] = None,
         status: Optional[str] = None,
         available_only: bool = False,
         allocated_only: bool = False,
         low_stock_only: bool = False,
     ) -> bool:
-        category_name = asset.category.category_name if asset.category else ""
-        sub_category_name = asset.sub_category.sub_category_name if asset.sub_category else ""
-        asset_status = asset.asset_status.value if asset.asset_status else ""
-
-        if category and category.strip().lower() not in category_name.lower():
-            return False
-        if sub_category and sub_category.strip().lower() not in sub_category_name.lower():
-            return False
-        if branch and branch.strip().lower() not in (asset.branch or "").lower():
-            return False
-
         if status:
             normalized = status.strip().lower()
-            if normalized == "available" and asset.unused <= 0:
-                return False
-            if normalized == "allocated" and asset.used <= 0:
-                return False
-            if normalized == "low_stock" and asset.unused > (asset.low_stock_threshold or 0):
-                return False
-            if normalized not in {"available", "allocated", "low_stock"} and normalized != asset_status.lower():
-                return False
+            if normalized == "available":
+                if asset.unused <= 0: return False
+            elif normalized == "allocated":
+                if asset.used <= 0: return False
+            elif normalized == "low_stock":
+                if asset.unused > (asset.low_stock_threshold or 0): return False
+            else:
+                if (asset.asset_status.value if asset.asset_status else "").upper() != status.strip().upper():
+                    return False
 
         if available_only and asset.unused <= 0:
             return False
@@ -469,22 +448,20 @@ class AssetInsightsService:
 
         if search:
             needle = search.strip().lower()
-            haystacks = [
-                asset.asset_id or "",
-                asset.name or "",
-                category_name,
-                sub_category_name,
-                asset.branch or "",
-                asset_status,
-                asset.brand or "",
-                asset.vendor_name or "",
-                asset.vendor_contact or "",
-                asset.invoice_number or "",
+            haystack = [
+                asset.asset_id,
+                asset.name,
+                asset.brand,
+                asset.model,
+                asset.category.category_name if asset.category else "",
+                asset.sub_category.sub_category_name if asset.sub_category else "",
+                asset.vendor_name,
+                asset.invoice_number,
+                asset.branch_rel.branch_name if asset.branch_rel else "",
             ]
-            if not any(needle in value.lower() for value in haystacks):
-                return False
-
+            return any(needle in (str(h).lower()) for h in haystack if h)
         return True
+
 
     @staticmethod
     def _get_warranty_expiry(db: Session, asset_id: str) -> Optional[date]:
@@ -634,11 +611,11 @@ class AssetInsightsService:
     def get_finance_report(
         db: Session,
         current_user: Employee,
-        branch: Optional[str] = None,
+        branch_id: Optional[str] = None,
         *,
         search: Optional[str] = None,
-        category: Optional[str] = None,
-        sub_category: Optional[str] = None,
+        category_id: Optional[str] = None,
+        sub_category_id: Optional[str] = None,
         status: Optional[str] = None,
         available_only: bool = False,
         allocated_only: bool = False,
@@ -653,20 +630,26 @@ class AssetInsightsService:
         per_page: int = 20,
     ) -> AssetFinanceReportRead:
         query = AssetInsightsService._base_asset_query(db, current_user)
+        
+        if branch_id:
+            query = query.filter(Asset.branch_id == branch_id)
+        if category_id:
+            query = query.filter(Asset.category_id == category_id)
+        if sub_category_id:
+            query = query.filter(Asset.sub_category_id == sub_category_id)
+        
         assets = [
             asset for asset in query.all()
             if AssetInsightsService._matches_asset_filters(
                 asset,
                 search=search,
-                category=category,
-                sub_category=sub_category,
-                branch=branch,
                 status=status,
                 available_only=available_only,
                 allocated_only=allocated_only,
                 low_stock_only=low_stock_only,
             )
         ]
+
 
         all_items = [AssetInsightsService._build_finance_monitor_item(db, asset, current_user) for asset in assets]
         if recommendation:
@@ -707,7 +690,7 @@ class AssetInsightsService:
         items = all_items[(page - 1) * per_page : page * per_page]
 
         return AssetFinanceReportRead(
-            branch=branch,
+            branch=branch_id,
             asset_count=total,
             total_purchase_cost=round(sum(row.purchase_cost for row in all_items), 2),
             total_maintenance_cost=round(sum(row.maintenance_cost for row in all_items), 2),
@@ -859,10 +842,10 @@ class AssetInsightsService:
     def get_health_report(
         db: Session,
         current_user: Employee,
+        branch_id: Optional[str] = None,
         *,
-        branch: Optional[str] = None,
         search: Optional[str] = None,
-        category: Optional[str] = None,
+        category_id: Optional[str] = None,
         min_health_score: Optional[int] = None,
         max_health_score: Optional[int] = None,
         health_range: Optional[str] = None,
@@ -871,10 +854,10 @@ class AssetInsightsService:
         critical_only: bool = False,
     ) -> AssetHealthReportRead:
         query = AssetInsightsService._base_instance_query(db, current_user)
-        if branch:
-            query = query.filter(func.lower(func.coalesce(Branch.branch_name, "")) == branch.strip().lower())
-        if category:
-            query = query.filter(Category.category_name.ilike(f"%{category.strip()}%"))
+        if branch_id:
+            query = query.filter(AssetInstance.branch_id == branch_id)
+        if category_id:
+            query = query.join(Asset).filter(Asset.category_id == category_id)
         if search:
             needle = f"%{search.strip()}%"
             query = query.filter(
@@ -1159,8 +1142,14 @@ class AssetInsightsService:
         return out
 
     @staticmethod
-    def list_categories(db: Session) -> list[CategoryRead]:
-        rows = db.query(Category).order_by(Category.category_name.asc()).all()
+    def list_categories(db: Session, current_user: Employee) -> list[CategoryRead]:
+        from app.server.database.tenant import apply_tenant_filter
+
+        rows = (
+            apply_tenant_filter(db.query(Category), current_user, Category)
+            .order_by(Category.category_name.asc())
+            .all()
+        )
         return [
             CategoryRead(
                 category_id=r.category_id,
@@ -1171,9 +1160,11 @@ class AssetInsightsService:
         ]
 
     @staticmethod
-    def list_subcategories(db: Session, category_id: str) -> list[SubCategoryRead]:
+    def list_subcategories(db: Session, current_user: Employee, category_id: str) -> list[SubCategoryRead]:
+        from app.server.database.tenant import apply_tenant_filter
+
         rows = (
-            db.query(SubCategory)
+            apply_tenant_filter(db.query(SubCategory), current_user, SubCategory)
             .filter(SubCategory.category_id == category_id)
             .order_by(SubCategory.sub_category_name.asc())
             .all()

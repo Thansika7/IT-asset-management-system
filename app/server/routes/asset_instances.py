@@ -16,7 +16,7 @@ from app.server.models.stock import (
 from app.server.schema.asset import Asset, AssetInstance, AssetStatus
 from app.server.schema.category import Category
 from app.server.schema.employee import Employee, EmployeeRole
-from app.server.schema.organization import Branch
+from app.server.schema.organization import Branch, BranchStatus
 
 
 router = APIRouter(prefix="/asset-instances", tags=["asset_instances"])
@@ -128,6 +128,7 @@ def list_asset_instance_options(
 	branches = (
 		apply_tenant_filter(db.query(Branch), current_user, Branch)
 		.filter(Branch.branch_id.in_(branch_ids))
+		.filter(Branch.status == BranchStatus.ACTIVE)
 		.order_by(Branch.branch_name.asc())
 		.all()
 		if branch_ids

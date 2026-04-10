@@ -71,7 +71,7 @@ class Request(Base):
             name="ck_requests_urgency_valid",
         ),
         CheckConstraint(
-            "status IN ('PENDING','TRIAGED','APPROVED','REJECTED','ASSIGNED','COMPLETED','CANCELLED','CLOSED')",
+            "status IN ('SUBMITTED','HR_VALIDATED','HR_REJECTED','TRIAGED','APPROVED','REJECTED','ASSIGNED','COMPLETED','CANCELLED','CLOSED','PENDING','PENDING_SUPPORT','PENDING_SUPPORT_TRIAGE','PENDING_MANAGER','APPROVED_FOR_SUPPORT','READY','WIP_SERVICE','IN_REPAIR','AWAITING_TRANSFER')",
             name="ck_requests_status_valid",
         ),
         CheckConstraint(

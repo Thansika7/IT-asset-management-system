@@ -23,6 +23,7 @@ import { NAV, labelForRole } from '@/lib/roles'
 
 const navDef = [
   { to: '/organizations', label: 'Organizations', icon: Building2, show: NAV.organizations },
+  { to: '/branches', label: 'Branches', icon: GitBranch, show: NAV.branches },
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, show: NAV.dashboard },
   { to: '/my-assets', label: 'My assets', icon: Laptop, show: NAV.myAssets },
   { to: '/requests', label: 'Requests', icon: FileStack, show: NAV.requests },

@@ -14,6 +14,7 @@ class TenantContext:
 
 
 BRANCH_SCOPED_ROLES = {
+    EmployeeRole.MANAGER,
     EmployeeRole.HR,
     EmployeeRole.SUPPORT_TEAM,
     EmployeeRole.EMPLOYEE,
@@ -36,24 +37,27 @@ def apply_org_filter(query: Query, current_user: Employee, model: Type[T]) -> Qu
     return query
 
 
-def apply_branch_filter(query: Query, current_user: Employee, model: Type[T]) -> Query:
+def apply_branch_filter(query: Query, current_user: Employee, model: Type[T], allow_cross_branch: bool = False) -> Query:
     """
     Applies branch scope for branch-restricted roles.
 
-    SUPER_ADMIN, ORG_ADMIN and MANAGER can see all branches within org scope.
-    HR, SUPPORT_TEAM and EMPLOYEE are restricted to their branch (when model supports branch_id).
+    SUPER_ADMIN and ORG_ADMIN can see all branches within org scope.
+    MANAGER, HR, SUPPORT_TEAM and EMPLOYEE are restricted to their branch (when model supports branch_id)
+    unless allow_cross_branch=True.
     """
-    if current_user.role in {EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER}:
+    if current_user.role in {EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN}:
+        return query
+    if allow_cross_branch:
         return query
     if current_user.role in BRANCH_SCOPED_ROLES and hasattr(model, "branch_id") and current_user.branch_id:
         return query.filter(model.branch_id == current_user.branch_id)
     return query
 
-def apply_tenant_filter(query: Query, current_user: Employee, model: Type[T]) -> Query:
+def apply_tenant_filter(query: Query, current_user: Employee, model: Type[T], allow_cross_branch: bool = False) -> Query:
     """
     Applies the organization_id filter if the current user is not a SUPER_ADMIN.
     Expects the model to have an organization_id column.
     """
     query = apply_org_filter(query, current_user, model)
-    query = apply_branch_filter(query, current_user, model)
+    query = apply_branch_filter(query, current_user, model, allow_cross_branch=allow_cross_branch)
     return query

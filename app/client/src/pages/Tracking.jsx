@@ -8,6 +8,7 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 import { apiFetch } from '@/lib/api'
+import { normalizeOptions } from '@/lib/options'
 import { RefreshCw } from 'lucide-react'
 
 function formatDate(value) {
@@ -74,7 +75,9 @@ export default function Tracking() {
   const [status, setStatus] = useState('')
   const [branchId, setBranchId] = useState('')
   const [employeeId, setEmployeeId] = useState('')
-  const [category, setCategory] = useState('')
+  const [categoryId, setCategoryId] = useState('')
+  const [movementType, setMovementType] = useState('')
+  const [transferStatus, setTransferStatus] = useState('')
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({
@@ -85,9 +88,11 @@ export default function Tracking() {
     if (status) params.set('status', status)
     if (branchId) params.set('branch_id', branchId)
     if (employeeId) params.set('employee_id', employeeId)
-    if (category) params.set('category', category)
+    if (categoryId) params.set('category_id', categoryId)
+    if (movementType) params.set('movement_type', movementType)
+    if (transferStatus) params.set('transfer_status', transferStatus)
     return params.toString()
-  }, [page, search, status, branchId, employeeId, category])
+  }, [page, search, status, branchId, employeeId, categoryId, movementType, transferStatus])
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['tracking', queryString],
@@ -100,9 +105,9 @@ export default function Tracking() {
   })
 
   const statusOptions = options?.statuses || []
-  const branchOptions = options?.branches || []
-  const employeeOptions = options?.employees || []
-  const categoryOptions = options?.categories || []
+  const branchOptions = normalizeOptions(options?.branches || [])
+  const employeeOptions = normalizeOptions(options?.employees || [])
+  const categoryOptions = normalizeOptions(options?.categories || [])
 
   const trackingData = data?.items || []
   const totalItems = data?.total || 0
@@ -229,7 +234,7 @@ export default function Tracking() {
           >
             <option value="">All branches</option>
             {branchOptions.map((b) => (
-              <option key={b.value} value={b.value}>{b.label}</option>
+              <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
           <select
@@ -242,20 +247,46 @@ export default function Tracking() {
           >
             <option value="">All employees</option>
             {employeeOptions.map((item) => (
-              <option key={item.value} value={item.value}>{item.label}</option>
+              <option key={item.id} value={item.id}>{item.name}</option>
             ))}
           </select>
           <select
             className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            value={category}
+            value={categoryId}
             onChange={(e) => {
-              setCategory(e.target.value)
+              setCategoryId(e.target.value)
               setPage(1)
             }}
           >
             <option value="">All categories</option>
             {categoryOptions.map((item) => (
-              <option key={item} value={item}>{item}</option>
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={movementType}
+            onChange={(e) => {
+              setMovementType(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All movements</option>
+            {['ALLOCATION', 'RETURN', 'TRANSFER', 'SERVICE'].map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={transferStatus}
+            onChange={(e) => {
+              setTransferStatus(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All transfers</option>
+            {['PENDING', 'IN_TRANSIT', 'RECEIVED', 'CANCELLED'].map((ts) => (
+              <option key={ts} value={ts}>{ts}</option>
             ))}
           </select>
         </div>

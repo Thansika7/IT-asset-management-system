@@ -20,7 +20,7 @@ from app.server.models.organization import (
     OrganizationCreate, OrganizationUpdate, OrganizationResponse, OrganizationOnboardResponse,
     OrganizationListResponse, BranchCreate, BranchUpdate, BranchResponse, BranchListResponse
 )
-from app.server.middlewares.auth import require_roles, RequirePermission
+from app.server.middlewares.auth import require_roles
 from app.server.services.email_service import EmailService
 from app.server.services.provisioning_service import generate_temp_password
 from app.server.services.organization_delete_service import purge_organization
@@ -308,11 +308,10 @@ def create_branch(
     org_id: str,
     payload: BranchCreate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(RequirePermission("can_create_branch"))
+    current_user: Employee = Depends(require_roles(EmployeeRole.ORG_ADMIN))
 ):
-    if current_user.role != EmployeeRole.SUPER_ADMIN:
-        if current_user.organization_id != org_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot create branch for another organization")
+    if current_user.organization_id != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot create branch for another organization")
 
     branch = Branch(**payload.model_dump(), organization_id=org_id)
     db.add(branch)
@@ -328,7 +327,7 @@ def get_branches(
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(RequirePermission("can_view_branch"))
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
     if current_user.role != EmployeeRole.SUPER_ADMIN:
         if current_user.organization_id != org_id:
@@ -366,11 +365,10 @@ def update_branch(
     branch_id: str,
     payload: BranchUpdate,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(RequirePermission("can_update_branch"))
+    current_user: Employee = Depends(require_roles(EmployeeRole.ORG_ADMIN))
 ):
-    if current_user.role != EmployeeRole.SUPER_ADMIN:
-        if current_user.organization_id != org_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot update branch of another organization")
+    if current_user.organization_id != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot update branch of another organization")
             
     branch = db.query(Branch).filter(Branch.branch_id == branch_id, Branch.organization_id == org_id).first()
     if not branch:
@@ -396,11 +394,10 @@ def delete_branch(
     org_id: str,
     branch_id: str,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(RequirePermission("can_update_branch")),
+    current_user: Employee = Depends(require_roles(EmployeeRole.ORG_ADMIN)),
 ):
-    if current_user.role != EmployeeRole.SUPER_ADMIN:
-        if current_user.organization_id != org_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete branch of another organization")
+    if current_user.organization_id != org_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete branch of another organization")
 
     branch = db.query(Branch).filter(Branch.branch_id == branch_id, Branch.organization_id == org_id).first()
     if not branch:

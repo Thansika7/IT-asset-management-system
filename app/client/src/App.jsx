@@ -20,6 +20,7 @@ import AssetUsage from './pages/AssetUsage'
 import ChangePassword from './pages/ChangePassword'
 import Organizations from './pages/Organizations'
 import AuditLogs from './pages/AuditLogs'
+import Branches from './pages/Branches'
 import MainLayout from './layouts/MainLayout'
 
 const APP_ROLES = [R.SUPER_ADMIN, R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM, R.EMPLOYEE]
@@ -41,7 +42,8 @@ export default function App() {
       <Route element={<ProtectedShell anyOfRoles={APP_ROLES} />}>
         <Route element={<MainLayout />}>
           <Route index element={<DefaultRoute />} />
-          <Route path="organizations" element={<RoleGate roles={[R.SUPER_ADMIN, R.ORG_ADMIN]}><Organizations /></RoleGate>} />
+          <Route path="organizations" element={<RoleGate roles={[R.SUPER_ADMIN]}><Organizations /></RoleGate>} />
+          <Route path="branches" element={<RoleGate roles={[R.ORG_ADMIN]}><Branches /></RoleGate>} />
           <Route path="my-assets" element={<RoleGate roles={BUSINESS_ROLES}><MyAssets /></RoleGate>} />
           <Route path="requests" element={<RoleGate roles={BUSINESS_ROLES}><Requests /></RoleGate>} />
           <Route path="stock" element={<RoleGate roles={[R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM]}><Stock /></RoleGate>} />
@@ -70,7 +72,7 @@ export default function App() {
           <Route
             path="health-analytics"
             element={
-              <RoleGate roles={[R.SUPER_ADMIN, R.ORG_ADMIN, R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM]}>
+              <RoleGate roles={[R.ORG_ADMIN, R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM]}>
                 <HealthAnalytics />
               </RoleGate>
             }
@@ -94,7 +96,7 @@ export default function App() {
           <Route
             path="audit-logs"
             element={
-              <RoleGate roles={[R.SUPER_ADMIN, R.ORG_ADMIN, R.MANAGER]}>
+              <RoleGate roles={[R.ORG_ADMIN, R.MANAGER]}>
                 <AuditLogs />
               </RoleGate>
             }

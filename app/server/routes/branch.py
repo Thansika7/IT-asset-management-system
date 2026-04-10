@@ -8,7 +8,7 @@ from app.server.auth.service import get_current_user
 from app.server.database.database import get_db
 from app.server.database.tenant import apply_tenant_filter
 from app.server.schema.employee import Employee
-from app.server.schema.organization import Branch
+from app.server.schema.organization import Branch, BranchStatus
 
 
 router = APIRouter(prefix="/branches", tags=["branches"])
@@ -17,10 +17,13 @@ router = APIRouter(prefix="/branches", tags=["branches"])
 @router.get("/")
 def list_branches(
     search: Optional[str] = None,
+    active_only: bool = True,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
     query = apply_tenant_filter(db.query(Branch), current_user, Branch)
+    if active_only:
+        query = query.filter(Branch.status == BranchStatus.ACTIVE)
     if search:
         needle = f"%{search.strip()}%"
         query = query.filter(

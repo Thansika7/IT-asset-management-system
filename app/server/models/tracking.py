@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 class TrackingRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -46,6 +46,16 @@ class TrackingOptionItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     value: str
     label: str
+    id: Optional[str] = None
+    name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def set_standardized_fields(self):
+        if not self.id:
+            self.id = self.value
+        if not self.name:
+            self.name = self.label
+        return self
 
 
 class TrackingFilterOptionsResponse(BaseModel):

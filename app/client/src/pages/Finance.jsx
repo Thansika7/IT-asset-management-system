@@ -25,14 +25,14 @@ export default function Finance() {
 
   const initialFilters = {
     search: '',
-    category: '',
-    subCategory: '',
-    branch: user.branch || '',
+    category_id: '',
+    sub_category_id: '',
+    branch_id: user.branch_id || '',
     status: '',
     recommendation: '',
     availableOnly: false,
     allocatedOnly: false,
-    lowStockOnly: false,
+    low_stockOnly: false,
     minTco: '',
     maxTco: '',
     minHealth: '',
@@ -52,27 +52,28 @@ export default function Finance() {
     queryFn: () => apiFetch('/stock/branches-list'),
   })
 
+  const { data: statuses = [] } = useQuery({
+    queryKey: ['finance-statuses'],
+    queryFn: () => apiFetch('/stock/statuses'),
+  })
+
   const { data: financeOptions = { sort_options: [] } } = useQuery({
     queryKey: ['finance-options'],
     queryFn: () => apiFetch('/assets/finance/options'),
   })
 
-  const selectedCategory = useMemo(() => {
-    return categories.find((item) => String(item.category_name) === String(draftFilters.category)) || null
-  }, [categories, draftFilters.category])
-
   const { data: subCategories = [] } = useQuery({
-    queryKey: ['finance-sub-categories', selectedCategory?.category_id],
-    queryFn: () => apiFetch(`/stock/sub-categories?category_id=${selectedCategory.category_id}`),
-    enabled: Boolean(selectedCategory?.category_id),
+    queryKey: ['finance-sub-categories', draftFilters.category_id],
+    queryFn: () => apiFetch(`/stock/sub-categories?category_id=${draftFilters.category_id}`),
+    enabled: Boolean(draftFilters.category_id),
   })
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), per_page: String(PAGE_SIZE) })
     if (appliedFilters.search.trim()) params.set('search', appliedFilters.search.trim())
-    if (appliedFilters.category.trim()) params.set('category', appliedFilters.category.trim())
-    if (appliedFilters.subCategory.trim()) params.set('sub_category', appliedFilters.subCategory.trim())
-    if (appliedFilters.branch.trim()) params.set('branch', appliedFilters.branch.trim())
+    if (appliedFilters.category_id.trim()) params.set('category_id', appliedFilters.category_id.trim())
+    if (appliedFilters.sub_category_id.trim()) params.set('sub_category_id', appliedFilters.sub_category_id.trim())
+    if (appliedFilters.branch_id.trim()) params.set('branch_id', appliedFilters.branch_id.trim())
     if (appliedFilters.status) params.set('status', appliedFilters.status)
     if (appliedFilters.recommendation) params.set('recommendation', appliedFilters.recommendation)
     if (appliedFilters.availableOnly) params.set('available_only', 'true')
@@ -94,11 +95,6 @@ export default function Finance() {
   const items = data?.items || []
   const totalItems = data?.total || 0
   const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
-
-  const statusOptions = useMemo(() => {
-    const values = new Set(items.map((item) => item.status).filter(Boolean))
-    return [...values].sort((a, b) => String(a).localeCompare(String(b)))
-  }, [items])
 
   const recommendationOptions = useMemo(() => {
     const values = new Set(items.map((item) => item.replacement_recommendation).filter(Boolean))
@@ -149,23 +145,24 @@ export default function Finance() {
           <h2 className="text-sm font-bold uppercase tracking-[0.16em]">Search and Filters</h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Search asset, category, vendor, branch..." value={draftFilters.search} onChange={(e) => setDraftFilters((prev) => ({ ...prev, search: e.target.value }))} />
-          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.category} onChange={(e) => setDraftFilters((prev) => ({ ...prev, category: e.target.value, subCategory: '' }))}>
+          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Search asset, vendor, brand..." value={draftFilters.search} onChange={(e) => setDraftFilters((prev) => ({ ...prev, search: e.target.value }))} />
+          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.category_id} onChange={(e) => setDraftFilters((prev) => ({ ...prev, category_id: e.target.value, sub_category_id: '' }))}>
             <option value="">All categories</option>
-            {categories.map((item) => <option key={item.category_id} value={item.category_name}>{item.category_name}</option>)}
+            {categories.map((item) => <option key={item.category_id} value={item.category_id}>{item.category_name}</option>)}
           </select>
-          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.subCategory} onChange={(e) => setDraftFilters((prev) => ({ ...prev, subCategory: e.target.value }))} disabled={!selectedCategory}>
+          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.sub_category_id} onChange={(e) => setDraftFilters((prev) => ({ ...prev, sub_category_id: e.target.value }))} disabled={!draftFilters.category_id}>
             <option value="">All sub-categories</option>
-            {subCategories.map((item) => <option key={item.sub_category_id} value={item.sub_category_name}>{item.sub_category_name}</option>)}
+            {subCategories.map((item) => <option key={item.sub_category_id} value={item.sub_category_id}>{item.sub_category_name}</option>)}
           </select>
-          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.branch} onChange={(e) => setDraftFilters((prev) => ({ ...prev, branch: e.target.value }))} disabled={Boolean(user.branch && user.role !== 'manager')}>
+          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.branch_id} onChange={(e) => setDraftFilters((prev) => ({ ...prev, branch_id: e.target.value }))} disabled={Boolean(user.branch_id && user.role !== 'manager' && user.role !== 'super_admin' && user.role !== 'org_admin')}>
             <option value="">All branches</option>
-            {branches.map((item) => <option key={item.branch_id} value={item.branch_name}>{item.branch_name}</option>)}
+            {branches.map((item) => <option key={item.branch_id} value={item.branch_id}>{item.branch_name}</option>)}
           </select>
           <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.status} onChange={(e) => setDraftFilters((prev) => ({ ...prev, status: e.target.value }))}>
             <option value="">All statuses</option>
-            {statusOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+            {statuses.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
+
           <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.recommendation} onChange={(e) => setDraftFilters((prev) => ({ ...prev, recommendation: e.target.value }))}>
             <option value="">All recommendations</option>
             {recommendationOptions.map((item) => <option key={item} value={item}>{item}</option>)}

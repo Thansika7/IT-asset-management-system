@@ -5,6 +5,9 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.server.database.database import Base
 class AssetStatus(str, enum.Enum):
+    ACTIVE="ACTIVE"
+    INACTIVE="INACTIVE"
+    DISPOSED="DISPOSED"
     NEW="NEW"
     AVAILABLE="AVAILABLE"
     RESERVED="RESERVED"
@@ -58,7 +61,7 @@ class Asset(Base):
     total_quantity=Column(Integer, nullable=False, default=0)
     used=Column(Integer, nullable=False, default=0)
     unused=Column(Integer, nullable=False, default=0)
-    asset_status=Column(Enum(AssetStatus, name="asset_status"), nullable=False, default=AssetStatus.AVAILABLE)
+    asset_status=Column(Enum(AssetStatus, name="asset_status"), nullable=False, default=AssetStatus.ACTIVE)
     created_at=Column(DateTime(timezone=True), server_default=func.now())
     
     organization=relationship("Organization", back_populates="assets")

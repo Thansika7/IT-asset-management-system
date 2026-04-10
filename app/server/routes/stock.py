@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, func, or_, and_
 from typing import List, Optional
 from uuid import uuid4
 
@@ -10,7 +10,7 @@ from app.server.models.stock import AssetCreate, StockAdd, StockResponse, Alloca
 from app.server.schema.asset import Asset, AssetInstance, AssetStatus
 from app.server.schema.category import Category, SubCategory, AssetBehavior
 from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
-from app.server.schema.organization import Branch
+from app.server.schema.organization import Branch, BranchStatus
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.middlewares.auth import require_roles, RequirePermission
 from app.server.services.stock_service import StockService
@@ -201,17 +201,59 @@ def create_asset_entry(
     
     # Start transaction
     try:
+        resolved_org_id = payload.organization_id or current_user.organization_id
+        resolved_branch_id = payload.branch_id
+        if resolved_branch_id:
+            branch_obj = apply_tenant_filter(db.query(Branch), current_user, Branch).filter(Branch.branch_id == resolved_branch_id).first()
+            if not branch_obj:
+                raise HTTPException(status_code=400, detail="Invalid branch_id")
+            resolved_org_id = branch_obj.organization_id
+
+        if current_user.role != EmployeeRole.SUPER_ADMIN:
+            resolved_org_id = current_user.organization_id
+            if resolved_branch_id and current_user.branch_id and resolved_branch_id != current_user.branch_id:
+                raise HTTPException(status_code=403, detail="Support can create assets only in their own branch")
+        elif not resolved_org_id:
+            raise HTTPException(status_code=400, detail="organization_id is required for asset creation")
+
+        spec_map = {}
+        for spec in payload.specifications:
+            if spec.attribute_name:
+                spec_map[spec.attribute_name.strip().lower()] = spec.value.strip()
+
+        asset_brand = payload.brand or spec_map.get("brand")
+        asset_model = payload.model or spec_map.get("model")
+
         cat = None
         if payload.category_id:
-            cat = db.query(Category).filter(Category.category_id == payload.category_id).first()
+            cat = apply_tenant_filter(
+                db.query(Category),
+                current_user,
+                Category,
+                allow_cross_branch=True,
+            ).filter(Category.category_id == payload.category_id).first()
             if not cat:
                 raise HTTPException(status_code=400, detail="Invalid category_id")
         elif payload.category_name:
-            cat = db.query(Category).filter(Category.category_name == payload.category_name).first()
+            normalized_category_name = payload.category_name.strip()
+            cat = apply_tenant_filter(
+                db.query(Category),
+                current_user,
+                Category,
+                allow_cross_branch=True,
+            ).filter(func.lower(Category.category_name) == normalized_category_name.lower()).first()
+            if not cat:
+                # Fallback for globally seeded categories (organization_id is NULL).
+                cat = db.query(Category).filter(
+                    func.lower(Category.category_name) == normalized_category_name.lower(),
+                    Category.organization_id.is_(None),
+                ).first()
             if not cat:
                 cat = Category(
-                    category_name=payload.category_name,
+                    category_name=normalized_category_name,
                     asset_behavior=(payload.asset_behavior or AssetBehavior.INSTANCE_BASED.value),
+                    organization_id=resolved_org_id,
+                    branch_id=resolved_branch_id or current_user.branch_id,
                 )
                 db.add(cat)
                 db.flush()
@@ -222,42 +264,47 @@ def create_asset_entry(
 
         sub_category = None
         if payload.sub_category_id:
-            sub_category = db.query(SubCategory).filter(
+            sub_category = apply_tenant_filter(
+                db.query(SubCategory),
+                current_user,
+                SubCategory,
+                allow_cross_branch=True,
+            ).filter(
                 SubCategory.sub_category_id == payload.sub_category_id,
                 SubCategory.category_id == cat.category_id,
             ).first()
             if not sub_category:
                 raise HTTPException(status_code=400, detail="Invalid sub_category_id for selected category")
         elif payload.sub_category_name:
-            sub_category = db.query(SubCategory).filter(
+            normalized_sub_category_name = payload.sub_category_name.strip()
+            sub_category = apply_tenant_filter(
+                db.query(SubCategory),
+                current_user,
+                SubCategory,
+                allow_cross_branch=True,
+            ).filter(
                 SubCategory.category_id == cat.category_id,
-                SubCategory.sub_category_name == payload.sub_category_name,
+                func.lower(SubCategory.sub_category_name) == normalized_sub_category_name.lower(),
             ).first()
+            if not sub_category:
+                # Fallback for globally seeded sub-categories linked to global categories.
+                sub_category = db.query(SubCategory).filter(
+                    SubCategory.category_id == cat.category_id,
+                    func.lower(SubCategory.sub_category_name) == normalized_sub_category_name.lower(),
+                    or_(SubCategory.organization_id == resolved_org_id, SubCategory.organization_id.is_(None)),
+                ).first()
             if not sub_category:
                 sub_category = SubCategory(
                     category_id=cat.category_id,
-                    sub_category_name=payload.sub_category_name,
+                    sub_category_name=normalized_sub_category_name,
+                    organization_id=resolved_org_id,
+                    branch_id=resolved_branch_id or current_user.branch_id,
                 )
                 db.add(sub_category)
                 db.flush()
 
-        resolved_branch_id = payload.branch_id
         if not resolved_branch_id and current_user.role == EmployeeRole.SUPPORT_TEAM:
             resolved_branch_id = current_user.branch_id
-
-        branch_obj = None
-        resolved_org_id = current_user.organization_id if current_user.role != EmployeeRole.SUPER_ADMIN else None
-        if resolved_branch_id:
-            branch_obj = db.query(Branch).filter(Branch.branch_id == resolved_branch_id).first()
-            if not branch_obj:
-                raise HTTPException(status_code=400, detail="Invalid branch_id")
-            resolved_org_id = branch_obj.organization_id
-
-        if current_user.role != EmployeeRole.SUPER_ADMIN:
-            if not resolved_org_id or resolved_org_id != current_user.organization_id:
-                raise HTTPException(status_code=403, detail="Cannot create assets in another organization")
-            if current_user.role == EmployeeRole.SUPPORT_TEAM and current_user.branch_id and resolved_branch_id != current_user.branch_id:
-                raise HTTPException(status_code=403, detail="Support can create assets only in their own branch")
 
         # Create Asset with vendor information
         asset_kwargs = {
@@ -267,8 +314,8 @@ def create_asset_entry(
             "sub_category_id": sub_category.sub_category_id if sub_category else None,
             "organization_id": resolved_org_id,
             "branch_id": resolved_branch_id,
-            "brand": payload.brand,
-            "model": payload.model,
+            "brand": asset_brand,
+            "model": asset_model,
             "purchased_date": payload.purchased_date,
             "purchase_cost": payload.purchase_cost,
             "salvage_value": payload.salvage_value,
@@ -292,7 +339,12 @@ def create_asset_entry(
             for spec in payload.specifications:
                 attribute = None
                 if spec.attribute_id:
-                    attribute_query = apply_tenant_filter(db.query(AssetAttribute), current_user, AssetAttribute)
+                    attribute_query = apply_tenant_filter(
+                        db.query(AssetAttribute),
+                        current_user,
+                        AssetAttribute,
+                        allow_cross_branch=True,
+                    )
                     attribute = attribute_query.filter(AssetAttribute.attribute_id == spec.attribute_id).first()
                     if not attribute:
                         raise HTTPException(status_code=400, detail=f"Invalid attribute_id: {spec.attribute_id}")
@@ -302,7 +354,12 @@ def create_asset_entry(
                     if not sub_category:
                         raise HTTPException(status_code=400, detail="Sub-category is required to create a new attribute")
 
-                    existing_attribute = apply_tenant_filter(db.query(AssetAttribute), current_user, AssetAttribute).filter(
+                    existing_attribute = apply_tenant_filter(
+                        db.query(AssetAttribute),
+                        current_user,
+                        AssetAttribute,
+                        allow_cross_branch=True,
+                    ).filter(
                         AssetAttribute.sub_category_id == sub_category.sub_category_id,
                         AssetAttribute.attribute_name.ilike(spec.attribute_name),
                     ).first()
@@ -349,6 +406,7 @@ def create_asset_entry(
                     # Purchase data per instance
                     purchase_date=payload.purchased_date,
                     purchase_cost=payload.purchase_cost,
+                    warranty_expiry=payload.warranty_expiry or payload.expiry_date,
                     expiry_date=payload.expiry_date,
                     subscription_term=payload.subscription_term,
                     license_key=(f"LIC-{uuid4().hex[:12].upper()}" if behavior == AssetBehavior.LICENSE_BASED.value else None),
@@ -712,7 +770,7 @@ def trigger_expiration_check(
     Manually triggers the daily scan for Warranty and License expirations.
     In production, this could be pinged by a cron job at midnight.
     """
-    result = CronService.check_and_notify_expirations(db)
+    result = CronService.check_and_notify_expirations(db, current_user)
     return result
 
 @router.get("/categories")
@@ -720,8 +778,22 @@ def get_categories(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    from app.server.database.tenant import apply_tenant_filter
-    return apply_tenant_filter(db.query(Category), current_user, Category).all()
+    rows = apply_tenant_filter(db.query(Category), current_user, Category, allow_cross_branch=True)
+    if current_user.role != EmployeeRole.SUPER_ADMIN:
+        rows = rows.filter(or_(Category.organization_id == current_user.organization_id, Category.organization_id.is_(None)))
+    rows = rows.order_by(Category.category_name.asc()).all()
+    if not rows and current_user.role == EmployeeRole.ORG_ADMIN:
+        rows = db.query(Category).order_by(Category.category_name.asc()).all()
+    return [
+        {
+            "id": row.category_id,
+            "name": row.category_name,
+            "category_id": row.category_id,
+            "category_name": row.category_name,
+            "description": row.description,
+        }
+        for row in rows
+    ]
 
 @router.get("/sub-categories")
 def get_sub_categories(
@@ -729,11 +801,28 @@ def get_sub_categories(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    from app.server.database.tenant import apply_tenant_filter
-    query = apply_tenant_filter(db.query(SubCategory), current_user, SubCategory)
+    query = apply_tenant_filter(db.query(SubCategory), current_user, SubCategory, allow_cross_branch=True)
+    if current_user.role != EmployeeRole.SUPER_ADMIN:
+        query = query.filter(or_(SubCategory.organization_id == current_user.organization_id, SubCategory.organization_id.is_(None)))
     if category_id:
         query = query.filter(SubCategory.category_id == category_id)
-    return query.all()
+    rows = query.order_by(SubCategory.sub_category_name.asc()).all()
+    if not rows and current_user.role == EmployeeRole.ORG_ADMIN:
+        fallback_query = db.query(SubCategory)
+        if category_id:
+            fallback_query = fallback_query.filter(SubCategory.category_id == category_id)
+        rows = fallback_query.order_by(SubCategory.sub_category_name.asc()).all()
+    return [
+        {
+            "id": row.sub_category_id,
+            "name": row.sub_category_name,
+            "sub_category_id": row.sub_category_id,
+            "sub_category_name": row.sub_category_name,
+            "category_id": row.category_id,
+            "description": row.description,
+        }
+        for row in rows
+    ]
 
 
 @router.get("/attributes/options")
@@ -742,11 +831,18 @@ def get_attribute_options(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    query = apply_tenant_filter(db.query(AssetAttribute), current_user, AssetAttribute)
+    query = apply_tenant_filter(db.query(AssetAttribute), current_user, AssetAttribute, allow_cross_branch=True)
+    if current_user.role != EmployeeRole.SUPER_ADMIN:
+        query = query.filter(or_(AssetAttribute.organization_id == current_user.organization_id, AssetAttribute.organization_id.is_(None)))
     if sub_category_id:
         query = query.filter(AssetAttribute.sub_category_id == sub_category_id)
 
     attributes = query.order_by(AssetAttribute.attribute_name.asc()).all()
+    if not attributes and current_user.role == EmployeeRole.ORG_ADMIN:
+        fallback_query = db.query(AssetAttribute)
+        if sub_category_id:
+            fallback_query = fallback_query.filter(AssetAttribute.sub_category_id == sub_category_id)
+        attributes = fallback_query.order_by(AssetAttribute.attribute_name.asc()).all()
     return [
         {
             "attribute_id": item.attribute_id,
@@ -758,10 +854,31 @@ def get_attribute_options(
         for item in attributes
     ]
 
+@router.get("/statuses")
+def get_asset_statuses():
+    return [s.value for s in AssetStatus]
+
+
 @router.get("/branches-list")
+
 def get_branches_list(
+    active_only: bool = True,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    from app.server.database.tenant import apply_tenant_filter
-    return apply_tenant_filter(db.query(Branch), current_user, Branch).all()
+    query = apply_tenant_filter(db.query(Branch), current_user, Branch)
+    if active_only:
+        query = query.filter(Branch.status == BranchStatus.ACTIVE)
+    rows = query.order_by(Branch.branch_name.asc()).all()
+    return [
+        {
+            "id": row.branch_id,
+            "name": row.branch_name,
+            "branch_id": row.branch_id,
+            "branch_name": row.branch_name,
+            "organization_id": row.organization_id,
+            "status": row.status.value if hasattr(row.status, "value") else str(row.status),
+            "location": row.location,
+        }
+        for row in rows
+    ]

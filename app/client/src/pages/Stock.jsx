@@ -3,6 +3,7 @@ import Pagination from '@/components/Pagination'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
+import { normalizeOptions } from '@/lib/options'
 import { canManageStockWrites } from '@/lib/roles'
 import {
   useReactTable,
@@ -47,7 +48,7 @@ export default function Stock() {
       if (subCategoryFilter) params.set('sub_category_id', subCategoryFilter)
       if (branchFilter) params.set('branch_id', branchFilter)
       if (statusFilter) params.set('status', statusFilter)
-      return apiFetch(`/assets?${params.toString()}`)
+      return apiFetch(`/assets/?${params.toString()}`)
     },
   })
 
@@ -56,47 +57,32 @@ export default function Stock() {
     queryFn: () => apiFetch('/assets/options'),
   })
 
-  const categoryOptions = useMemo(() => {
-    const seen = new Map()
-    for (const item of modelOptions) {
-      if (item.category_id && item.category && !seen.has(item.category_id)) {
-        seen.set(item.category_id, item.category)
-      }
-    }
-    return [...seen.entries()]
-      .map(([id, name]) => ({ category_id: id, category_name: name }))
-      .sort((a, b) => String(a.category_name).localeCompare(String(b.category_name)))
-  }, [modelOptions])
+  const { data: stockCategoriesRaw = [] } = useQuery({
+    queryKey: ['stock-categories-list'],
+    queryFn: () => apiFetch('/stock/categories'),
+  })
 
-  const subCategoryOptions = useMemo(() => {
-    const seen = new Map()
-    for (const item of modelOptions) {
-      if (categoryFilter && item.category_id !== categoryFilter) continue
-      if (item.sub_category_id && item.sub_category && !seen.has(item.sub_category_id)) {
-        seen.set(item.sub_category_id, item.sub_category)
-      }
-    }
-    return [...seen.entries()]
-      .map(([id, name]) => ({ sub_category_id: id, sub_category_name: name }))
-      .sort((a, b) => String(a.sub_category_name).localeCompare(String(b.sub_category_name)))
-  }, [modelOptions, categoryFilter])
+  const { data: tenantBranchesRaw = [] } = useQuery({
+    queryKey: ['tenant-branches-list'],
+    queryFn: () => apiFetch('/stock/branches-list'),
+  })
 
-  const branchOptions = useMemo(() => {
-    const seen = new Map()
-    for (const item of modelOptions) {
-      if (item.branch_id && item.branch && !seen.has(item.branch_id)) {
-        seen.set(item.branch_id, item.branch)
-      }
-    }
-    return [...seen.entries()]
-      .map(([id, name]) => ({ branch_id: id, branch_name: name }))
-      .sort((a, b) => String(a.branch_name).localeCompare(String(b.branch_name)))
-  }, [modelOptions])
+  const { data: statusOptionsRaw = [] } = useQuery({
+    queryKey: ['asset-statuses-list'],
+    queryFn: () => apiFetch('/stock/statuses'),
+  })
 
-  const statusOptions = useMemo(() => {
-    const setValues = new Set(modelOptions.map((item) => item.status).filter(Boolean))
-    return [...setValues].sort((a, b) => String(a).localeCompare(String(b)))
-  }, [modelOptions])
+  const categoryOptions = useMemo(() => normalizeOptions(stockCategoriesRaw), [stockCategoriesRaw])
+  const branchOptions = useMemo(() => normalizeOptions(tenantBranchesRaw), [tenantBranchesRaw])
+  const statusOptions = useMemo(() => statusOptionsRaw, [statusOptionsRaw])
+
+  const { data: subCategoriesFilterRaw = [] } = useQuery({
+    queryKey: ['stock-sub-categories-filter', categoryFilter],
+    queryFn: () => apiFetch(`/stock/sub-categories?category_id=${categoryFilter}`),
+    enabled: Boolean(categoryFilter),
+  })
+
+  const subCategoryOptions = useMemo(() => normalizeOptions(subCategoriesFilterRaw), [subCategoriesFilterRaw])
 
   const { data: instanceOptions } = useQuery({
     queryKey: ['asset-instance-options'],
@@ -125,10 +111,12 @@ export default function Stock() {
   const instanceItems = instanceData?.items || []
   const instanceTotal = instanceData?.total || 0
   const instanceTotalPages = Math.max(1, Math.ceil(instanceTotal / PAGE_SIZE))
-  const instanceStatusOptions = instanceOptions?.statuses || []
-  const instanceBranchOptions = instanceOptions?.branches || []
-  const instanceCategoryOptions = instanceOptions?.categories || []
-  const instanceAssigneeOptions = instanceOptions?.assignees || []
+  const instanceStatusOptions = statusOptions
+  const instanceBranchOptions = branchOptions
+  const instanceCategoryOptions = categoryOptions
+  const instanceAssigneeOptions = normalizeOptions(instanceOptions?.assignees || [])
+
+
 
   const selectedStockAsset = useMemo(() => {
     return items.find((item) => item.asset_id === selectedAssetId) || null
@@ -216,16 +204,17 @@ export default function Stock() {
               </div>
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1) }}>
                 <option value="">All Categories</option>
-                {categoryOptions.map(c => <option key={c.category_id} value={c.category_id}>{c.category_name}</option>)}
+                {categoryOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={subCategoryFilter} onChange={(e) => { setSubCategoryFilter(e.target.value); setPage(1) }} disabled={!categoryFilter}>
                 <option value="">All Sub-categories</option>
-                {subCategoryOptions.map(s => <option key={s.sub_category_id} value={s.sub_category_id}>{s.sub_category_name}</option>)}
+                {subCategoryOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setPage(1) }}>
                 <option value="">All Branches</option>
-                {branchOptions.map(b => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}
+                {branchOptions.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
+
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}>
                 <option value="">All Statuses</option>
                 {statusOptions.map((item) => <option key={item} value={item}>{item}</option>)}
@@ -299,11 +288,11 @@ export default function Stock() {
               />
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={instanceCategoryId} onChange={(e) => { setInstanceCategoryId(e.target.value); setInstancePage(1) }}>
                 <option value="">All Categories</option>
-                {instanceCategoryOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                {instanceCategoryOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={instanceBranchId} onChange={(e) => { setInstanceBranchId(e.target.value); setInstancePage(1) }}>
                 <option value="">All Branches</option>
-                {instanceBranchOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                {instanceBranchOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={instanceStatus} onChange={(e) => { setInstanceStatus(e.target.value); setInstancePage(1) }}>
                 <option value="">All Statuses</option>
@@ -311,7 +300,7 @@ export default function Stock() {
               </select>
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={instanceAssignedToId} onChange={(e) => { setInstanceAssignedToId(e.target.value); setInstancePage(1) }}>
                 <option value="">All Assignees</option>
-                {instanceAssigneeOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                {instanceAssigneeOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </div>
           </div>
@@ -392,6 +381,8 @@ export default function Stock() {
 
 function StockForms({ createMut, categories, branches }) {
   const NEW_OPTION_VALUE = '__new__'
+  const PRESET_PREFIX = '__preset__:'
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
 
   const newSpecRow = () => ({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -400,16 +391,34 @@ function StockForms({ createMut, categories, branches }) {
     value: '',
   })
 
-  const [cname, setCname] = useState('')
-  const [cbrand, setCbrand] = useState('')
-  const [cmodel, setCmodel] = useState('')
+  const [assetName, setAssetName] = useState('')
   const [ccat, setCcat] = useState('')
   const [cnewCategoryName, setCnewCategoryName] = useState('')
   const [csub, setCsub] = useState('')
   const [cnewSubCategoryName, setCnewSubCategoryName] = useState('')
   const [cbranchId, setCbranchId] = useState('')
-  const [cqty, setCqty] = useState('1')
+  const [quantity, setQuantity] = useState('1')
+  const [purchaseDate, setPurchaseDate] = useState(today)
+  const [purchaseCost, setPurchaseCost] = useState('')
+  const [vendorName, setVendorName] = useState('')
+  const [vendorContact, setVendorContact] = useState('')
+  const [invoiceNumber, setInvoiceNumber] = useState('')
+  const [expiryDate, setExpiryDate] = useState('')
+  const [usefulLifeYears, setUsefulLifeYears] = useState('5')
   const [specRows, setSpecRows] = useState([newSpecRow()])
+
+  const selectedCategory = categories.find((item) => item.id === ccat)
+  const selectedCategoryName = (selectedCategory?.name || '').toLowerCase()
+  const commonSpecs = useMemo(() => {
+    if (!ccat) return []
+    if (selectedCategoryName.includes('software') || selectedCategoryName.includes('license')) {
+      return ['Vendor', 'Version', 'License Key']
+    }
+    if (selectedCategoryName.includes('hardware') || selectedCategoryName.includes('laptop') || selectedCategoryName.includes('desktop') || selectedCategoryName.includes('server')) {
+      return ['Brand', 'Model', 'RAM', 'CPU', 'Storage', 'Serial Number']
+    }
+    return ['Brand', 'Model', 'Serial Number']
+  }, [ccat, selectedCategoryName])
 
   const { data: subCategories = [] } = useQuery({
     queryKey: ['stock-sub-categories', ccat],
@@ -420,43 +429,41 @@ function StockForms({ createMut, categories, branches }) {
   const { data: attributeOptions = [] } = useQuery({
     queryKey: ['stock-attribute-options', csub],
     queryFn: () => apiFetch(`/stock/attributes/options?sub_category_id=${csub}`),
-    enabled: Boolean(csub),
+    enabled: Boolean(csub) && csub !== NEW_OPTION_VALUE,
   })
 
   const updateSpecRow = (rowId, patch) => {
     setSpecRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)))
   }
 
-  const addSpecRow = () => {
-    setSpecRows((prev) => [...prev, newSpecRow()])
-  }
+  const addSpecRow = () => setSpecRows((prev) => [...prev, newSpecRow()])
 
   const removeSpecRow = (rowId) => {
-    setSpecRows((prev) => {
-      if (prev.length <= 1) {
-        return [newSpecRow()]
-      }
-      return prev.filter((row) => row.id !== rowId)
-    })
+    setSpecRows((prev) => (prev.length <= 1 ? [newSpecRow()] : prev.filter((row) => row.id !== rowId)))
   }
 
   const resetForm = () => {
-    setCname('')
-    setCbrand('')
-    setCmodel('')
+    setAssetName('')
     setCcat('')
     setCnewCategoryName('')
     setCsub('')
     setCnewSubCategoryName('')
     setCbranchId('')
-    setCqty('1')
+    setQuantity('1')
+    setPurchaseDate(today)
+    setPurchaseCost('')
+    setVendorName('')
+    setVendorContact('')
+    setInvoiceNumber('')
+    setExpiryDate('')
+    setUsefulLifeYears('5')
     setSpecRows([newSpecRow()])
   }
 
   return (
     <div className="grid grid-cols-1 gap-4">
       <form
-        className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3 shadow-sm"
+        className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm"
         onSubmit={(e) => {
           e.preventDefault()
 
@@ -465,20 +472,23 @@ function StockForms({ createMut, categories, branches }) {
           const categoryName = cnewCategoryName.trim()
           const subCategoryName = cnewSubCategoryName.trim()
 
-          if (isNewCategory && !categoryName) {
-            return
-          }
-
-          if (isNewSubCategory && !subCategoryName) {
-            return
-          }
+          if (!assetName.trim()) return
+          if (!quantity || Number(quantity) <= 0) return
+          if (isNewCategory && !categoryName) return
+          if (isNewSubCategory && !subCategoryName) return
 
           const specifications = specRows
             .map((row) => {
               const value = row.value.trim()
               if (!value) return null
 
-              if (row.attributeRef === '__new__') {
+              if (row.attributeRef.startsWith(PRESET_PREFIX)) {
+                const attributeName = row.attributeRef.slice(PRESET_PREFIX.length).trim()
+                if (!attributeName) return null
+                return { attribute_name: attributeName, value }
+              }
+
+              if (row.attributeRef === NEW_OPTION_VALUE) {
                 const attributeName = row.newAttributeName.trim()
                 if (!attributeName) return null
                 return { attribute_name: attributeName, value }
@@ -492,30 +502,43 @@ function StockForms({ createMut, categories, branches }) {
             })
             .filter(Boolean)
 
-          createMut.mutate({
-            name: cname,
-            brand: cbrand,
-            model: cmodel,
-            category_id: isNewCategory ? null : ccat,
-            category_name: isNewCategory ? categoryName : null,
-            sub_category_id: isNewSubCategory || isNewCategory ? null : csub || null,
-            sub_category_name: isNewSubCategory ? subCategoryName : (isNewCategory && subCategoryName ? subCategoryName : null),
-            branch_id: cbranchId || null,
-            total_quantity: parseInt(cqty, 10) || 1,
-            unused: parseInt(cqty, 10) || 1,
-            specifications,
-          }, {
-            onSuccess: () => {
-              resetForm()
+          createMut.mutate(
+            {
+              name: assetName.trim(),
+              category_id: isNewCategory ? null : ccat || null,
+              category_name: isNewCategory ? categoryName : null,
+              sub_category_id: isNewSubCategory || isNewCategory ? null : csub || null,
+              sub_category_name: isNewSubCategory ? subCategoryName : isNewCategory && subCategoryName ? subCategoryName : null,
+              branch_id: cbranchId || null,
+              purchased_date: purchaseDate || null,
+              purchase_cost: purchaseCost ? Number(purchaseCost) : null,
+              vendor_name: vendorName.trim() || null,
+              vendor_contact: vendorContact.trim() || null,
+              invoice_number: invoiceNumber.trim() || null,
+              expiry_date: expiryDate || null,
+              useful_life_years: Number(usefulLifeYears) || 5,
+              total_quantity: Number(quantity) || 1,
+              unused: Number(quantity) || 1,
+              specifications,
             },
-          })
+            {
+              onSuccess: () => resetForm(),
+            },
+          )
         }}
       >
-        <h3 className="font-bold text-slate-900">Register catalog asset</h3>
-        <div className="grid grid-cols-2 gap-2">
-          <input required className="rounded-lg border border-slate-200 px-3 py-2 text-sm col-span-2" placeholder="Display name" value={cname} onChange={(e) => setCname(e.target.value)} />
-          <input required className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Brand" value={cbrand} onChange={(e) => setCbrand(e.target.value)} />
-          <input required className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Model" value={cmodel} onChange={(e) => setCmodel(e.target.value)} />
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-slate-900">Register catalog asset</h3>
+            <p className="text-xs text-slate-500 mt-1">Organization is resolved from your session. Brand, model, and other specs are captured as dynamic attributes.</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="md:col-span-2 text-xs font-medium text-slate-600">
+            Asset name
+            <input required className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Asset name" value={assetName} onChange={(e) => setAssetName(e.target.value)} />
+          </label>
           <select
             required
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
@@ -526,19 +549,26 @@ function StockForms({ createMut, categories, branches }) {
               setCnewSubCategoryName('')
             }}
           >
-            <option value="">Select Category</option>
-            {categories.map((c) => <option key={c.category_id} value={c.category_id}>{c.category_name}</option>)}
+            <option value="">Select category</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
             <option value={NEW_OPTION_VALUE}>Add new category</option>
           </select>
 
           {ccat === NEW_OPTION_VALUE ? (
-            <input
-              required
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              placeholder="New category name"
-              value={cnewCategoryName}
-              onChange={(e) => setCnewCategoryName(e.target.value)}
-            />
+            <label className="text-xs font-medium text-slate-600">
+              New category name
+              <input
+                required
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                placeholder="New category name"
+                value={cnewCategoryName}
+                onChange={(e) => setCnewCategoryName(e.target.value)}
+              />
+            </label>
           ) : (
             <select
               className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
@@ -546,101 +576,151 @@ function StockForms({ createMut, categories, branches }) {
               onChange={(e) => setCsub(e.target.value)}
               disabled={!ccat}
             >
-              <option value="">Select Sub-category</option>
-              {subCategories.map((s) => <option key={s.sub_category_id} value={s.sub_category_id}>{s.sub_category_name}</option>)}
+              <option value="">Select sub-category</option>
+              {subCategories.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
               <option value={NEW_OPTION_VALUE}>Add new sub-category</option>
             </select>
           )}
 
           {ccat === NEW_OPTION_VALUE || csub === NEW_OPTION_VALUE ? (
-            <input
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              placeholder="New sub-category name (optional)"
-              value={cnewSubCategoryName}
-              onChange={(e) => setCnewSubCategoryName(e.target.value)}
-            />
+            <label className="md:col-span-2 text-xs font-medium text-slate-600">
+              New sub-category name
+              <input
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                placeholder="New sub-category name"
+                value={cnewSubCategoryName}
+                onChange={(e) => setCnewSubCategoryName(e.target.value)}
+              />
+            </label>
           ) : null}
 
-          <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={cbranchId} onChange={(e) => setCbranchId(e.target.value)}>
-            <option value="">Select branch (optional)</option>
-            {branches.map((b) => (
-              <option key={b.branch_id} value={b.branch_id}>
-                {b.branch_name}
-              </option>
-            ))}
-          </select>
-          <input required type="number" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Initial quantity" value={cqty} onChange={(e) => setCqty(e.target.value)} />
+          <label className="text-xs font-medium text-slate-600">
+            Branch
+            <select className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={cbranchId} onChange={(e) => setCbranchId(e.target.value)}>
+              <option value="">Branch (optional)</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="text-xs font-medium text-slate-600">
+            Quantity
+            <input required type="number" min="1" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            Purchase date
+            <input type="date" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            Purchase cost
+            <input type="number" step="0.01" min="0" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Purchase cost" value={purchaseCost} onChange={(e) => setPurchaseCost(e.target.value)} />
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            Vendor name
+            <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Vendor name" value={vendorName} onChange={(e) => setVendorName(e.target.value)} />
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            Vendor contact
+            <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Vendor contact" value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} />
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            Invoice number
+            <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Invoice number" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} />
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            Expiry date
+            <input type="date" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+          </label>
+          <label className="md:col-span-2 text-xs font-medium text-slate-600">
+            Useful life in years
+            <input type="number" min="1" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Useful life in years" value={usefulLifeYears} onChange={(e) => setUsefulLifeYears(e.target.value)} />
+          </label>
         </div>
 
         <div className="rounded-xl border border-slate-200 p-3 space-y-3 bg-slate-50/50">
           <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold text-slate-800">Specifications</h4>
-            <button
-              type="button"
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
-              onClick={addSpecRow}
-            >
+            <div>
+              <h4 className="text-sm font-semibold text-slate-800">Specifications</h4>
+              <p className="text-xs text-slate-500">Use dynamic attributes for the selected category. Expiry is captured directly in the form now.</p>
+            </div>
+            <button type="button" className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700" onClick={addSpecRow}>
               Add spec row
             </button>
           </div>
 
-          <p className="text-xs text-slate-500">
-            Choose an existing attribute or select Add new attribute and enter a name. This works like multi-upload rows in Swagger UI.
-          </p>
-
           {specRows.map((row) => (
             <div key={row.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-start">
-              <select
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-5 bg-white"
-                value={row.attributeRef}
-                onChange={(e) => updateSpecRow(row.id, { attributeRef: e.target.value, newAttributeName: e.target.value === '__new__' ? row.newAttributeName : '' })}
-                disabled={!csub}
-              >
-                <option value="">Select attribute</option>
-                {attributeOptions.map((item) => (
-                  <option key={item.attribute_id} value={item.attribute_id}>
-                    {item.attribute_name}
-                  </option>
-                ))}
-                <option value="__new__">Add new attribute</option>
-              </select>
+              <label className="text-xs font-medium text-slate-600 md:col-span-5">
+                Attribute
+                <select
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
+                  value={row.attributeRef}
+                  onChange={(e) => updateSpecRow(row.id, { attributeRef: e.target.value, newAttributeName: e.target.value === NEW_OPTION_VALUE ? row.newAttributeName : '' })}
+                  disabled={!ccat}
+                >
+                  <option value="">Select attribute</option>
+                  {commonSpecs.map((name) => (
+                    <option key={name} value={`${PRESET_PREFIX}${name}`}>
+                      {name}
+                    </option>
+                  ))}
+                  {attributeOptions.map((item) => (
+                    <option key={item.attribute_id} value={item.attribute_id}>
+                      {item.attribute_name}
+                    </option>
+                  ))}
+                  <option value={NEW_OPTION_VALUE}>Add new attribute</option>
+                </select>
+              </label>
 
-              {row.attributeRef === '__new__' ? (
-                <input
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-3"
-                  placeholder="New attribute name"
-                  value={row.newAttributeName}
-                  onChange={(e) => updateSpecRow(row.id, { newAttributeName: e.target.value })}
-                />
+              {row.attributeRef === NEW_OPTION_VALUE ? (
+                <label className="text-xs font-medium text-slate-600 md:col-span-3">
+                  New attribute name
+                  <input
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    placeholder="New attribute name"
+                    value={row.newAttributeName}
+                    onChange={(e) => updateSpecRow(row.id, { newAttributeName: e.target.value })}
+                  />
+                </label>
               ) : (
                 <div className="md:col-span-3" />
               )}
 
-              <input
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-3"
-                placeholder="Value"
-                value={row.value}
-                onChange={(e) => updateSpecRow(row.id, { value: e.target.value })}
-              />
+              <label className="text-xs font-medium text-slate-600 md:col-span-3">
+                Value
+                <input
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  placeholder="Value"
+                  value={row.value}
+                  onChange={(e) => updateSpecRow(row.id, { value: e.target.value })}
+                />
+              </label>
 
-              <button
-                type="button"
-                className="rounded-lg border border-rose-200 px-2 py-2 text-xs font-medium text-rose-700 md:col-span-1 bg-white"
-                onClick={() => removeSpecRow(row.id)}
-                aria-label="Remove specification row"
-              >
+              <button type="button" className="rounded-lg border border-rose-200 px-2 py-2 text-xs font-medium text-rose-700 md:col-span-1 bg-white" onClick={() => removeSpecRow(row.id)} aria-label="Remove specification row">
                 Remove
               </button>
             </div>
           ))}
 
-          {!csub ? (
+          {!ccat ? (
+            <p className="text-xs text-amber-700">Select a category first. Fields and attribute presets change with the selected category.</p>
+          ) : csub === NEW_OPTION_VALUE ? (
+            <p className="text-xs text-slate-600">New sub-category selected. Use preset attributes or add custom attributes.</p>
+          ) : !csub ? (
             <p className="text-xs text-amber-700">Select a sub-category to load existing attribute options.</p>
           ) : null}
         </div>
 
         <button type="submit" disabled={createMut.isPending} className="rounded-xl bg-slate-900 text-white text-sm font-medium px-4 py-2 w-full disabled:opacity-50">
-          Create
+          Create asset
         </button>
         {createMut.isError ? <p className="text-xs text-rose-600">{createMut.error?.message}</p> : null}
       </form>

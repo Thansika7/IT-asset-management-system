@@ -244,6 +244,8 @@ class CMDBService:
 
         if source.organization_id and target.organization_id and source.organization_id != target.organization_id:
             raise ValueError("Cross-organization CI relationships are not allowed")
+        if source.branch_id and target.branch_id and source.branch_id != target.branch_id:
+            raise ValueError("Cross-branch CI relationships are not allowed")
 
         rt = CMDBService._normalize_relationship_type(relationship_type)
 
@@ -264,7 +266,7 @@ class CMDBService:
             target_ci=target_ci, 
             relationship_type=rt,
             organization_id=source.organization_id or current_user.organization_id,
-            branch_id=source.branch_id or current_user.branch_id,
+            branch_id=source.branch_id or target.branch_id or current_user.branch_id,
         )
         db.add(row)
         db.flush()

@@ -23,6 +23,8 @@ function formatDt(iso) {
 export default function Organizations() {
   const { user } = useAuth()
   const isSuperAdmin = user?.role === 'super_admin'
+  const isOrgAdmin = user?.role === 'org_admin'
+  const canManageBranches = isOrgAdmin
   const qc = useQueryClient()
   const [name, setName] = useState('')
   const [domain, setDomain] = useState('')
@@ -482,7 +484,12 @@ export default function Organizations() {
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Branches</h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">Branches</h3>
+                {!canManageBranches ? (
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">View only</span>
+                ) : null}
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <input
                   className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
@@ -507,40 +514,42 @@ export default function Organizations() {
                   ))}
                 </select>
               </div>
-              <form
-                className="flex flex-wrap gap-2 items-end border-b border-slate-100 pb-3"
-                onSubmit={(ev) => {
-                  ev.preventDefault()
-                  if (!branchForm.branch_name.trim()) return
-                  createBranchMut.mutate({
-                    orgId: selectedOrgId,
-                    body: {
-                      branch_name: branchForm.branch_name.trim(),
-                      location: branchForm.location.trim() || null,
-                    },
-                  })
-                }}
-              >
-                <input
-                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs flex-1 min-w-[120px]"
-                  placeholder="Branch name"
-                  value={branchForm.branch_name}
-                  onChange={(ev) => setBranchForm((f) => ({ ...f, branch_name: ev.target.value }))}
-                />
-                <input
-                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs flex-1 min-w-[120px]"
-                  placeholder="Location (optional)"
-                  value={branchForm.location}
-                  onChange={(ev) => setBranchForm((f) => ({ ...f, location: ev.target.value }))}
-                />
-                <button
-                  type="submit"
-                  disabled={createBranchMut.isPending}
-                  className="rounded-lg bg-slate-900 text-white text-xs px-3 py-1.5 disabled:opacity-50"
+              {canManageBranches ? (
+                <form
+                  className="flex flex-wrap gap-2 items-end border-b border-slate-100 pb-3"
+                  onSubmit={(ev) => {
+                    ev.preventDefault()
+                    if (!branchForm.branch_name.trim()) return
+                    createBranchMut.mutate({
+                      orgId: selectedOrgId,
+                      body: {
+                        branch_name: branchForm.branch_name.trim(),
+                        location: branchForm.location.trim() || null,
+                      },
+                    })
+                  }}
                 >
-                  Add branch
-                </button>
-              </form>
+                  <input
+                    className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs flex-1 min-w-[120px]"
+                    placeholder="Branch name"
+                    value={branchForm.branch_name}
+                    onChange={(ev) => setBranchForm((f) => ({ ...f, branch_name: ev.target.value }))}
+                  />
+                  <input
+                    className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs flex-1 min-w-[120px]"
+                    placeholder="Location (optional)"
+                    value={branchForm.location}
+                    onChange={(ev) => setBranchForm((f) => ({ ...f, location: ev.target.value }))}
+                  />
+                  <button
+                    type="submit"
+                    disabled={createBranchMut.isPending}
+                    className="rounded-lg bg-slate-900 text-white text-xs px-3 py-1.5 disabled:opacity-50"
+                  >
+                    Add branch
+                  </button>
+                </form>
+              ) : null}
               {createBranchMut.isError ? (
                 <p className="text-xs text-rose-600">{createBranchMut.error?.message}</p>
               ) : null}
@@ -611,35 +620,37 @@ export default function Organizations() {
                             {b.branch_id} · {b.location || 'No location'} · {b.status}
                           </p>
                         </div>
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            className="text-xs rounded border border-slate-200 bg-white px-2 py-1"
-                            onClick={() =>
-                              setEditingBranch({
-                                branch_id: b.branch_id,
-                                branch_name: b.branch_name,
-                                location: b.location || '',
-                                status: b.status,
-                              })
-                            }
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="text-xs rounded border border-rose-200 bg-rose-50 px-2 py-1 text-rose-800"
-                            onClick={() =>
-                              setRemoveBranchTarget({
-                                orgId: selectedOrgId,
-                                branchId: b.branch_id,
-                                name: b.branch_name,
-                              })
-                            }
-                          >
-                            Delete
-                          </button>
-                        </div>
+                        {canManageBranches ? (
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              className="text-xs rounded border border-slate-200 bg-white px-2 py-1"
+                              onClick={() =>
+                                setEditingBranch({
+                                  branch_id: b.branch_id,
+                                  branch_name: b.branch_name,
+                                  location: b.location || '',
+                                  status: b.status,
+                                })
+                              }
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="text-xs rounded border border-rose-200 bg-rose-50 px-2 py-1 text-rose-800"
+                              onClick={() =>
+                                setRemoveBranchTarget({
+                                  orgId: selectedOrgId,
+                                  branchId: b.branch_id,
+                                  name: b.branch_name,
+                                })
+                              }
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        ) : null}
                       </li>
                     ),
                   )}

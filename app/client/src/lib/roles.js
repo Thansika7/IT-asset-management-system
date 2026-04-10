@@ -43,7 +43,8 @@ export const NAV = {
   myAssets: (r) => r !== R.SUPER_ADMIN,
   requests: (r) => r !== R.SUPER_ADMIN,
   tracking: (r) => r !== R.SUPER_ADMIN,
-  organizations: (r) => [R.SUPER_ADMIN, R.ORG_ADMIN].includes(r),
+  organizations: (r) => [R.SUPER_ADMIN].includes(r),
+  branches: (r) => [R.ORG_ADMIN].includes(r),
   employees: (r, p) =>
     [R.ADMIN, R.ORG_ADMIN, R.HR, R.MANAGER].includes(r) ||
     hasJsonPermission(p, 'users', 'manage') ||
@@ -57,10 +58,10 @@ export const NAV = {
     [R.ADMIN, R.MANAGER].includes(r) ||
     hasJsonPermission(p, 'finance', 'view') ||
     hasJsonPermission(p, 'finance', 'manage'),
-  healthAnalytics: (r) => [R.SUPER_ADMIN, R.ORG_ADMIN, R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
+  healthAnalytics: (r) => [R.ORG_ADMIN, R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   /** CMDB items & relationships — matches backend GET /cmdb/* */
   cmdb: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
-  auditLogs: (r) => [R.SUPER_ADMIN, R.ORG_ADMIN, R.MANAGER].includes(r),
+  auditLogs: (r) => [R.ORG_ADMIN, R.MANAGER].includes(r),
 }
 
 export function canManageStockWrites(r) {

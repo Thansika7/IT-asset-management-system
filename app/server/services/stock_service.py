@@ -6,12 +6,14 @@ from app.server.schema.asset import Asset, AssetStatus, AssetInstance
 from app.server.schema.tracking import Tracking, MovementType, AllocationType, LifecycleEvent
 from app.server.schema.employee import Employee
 from app.server.schema.organization import Branch
+from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
 from app.server.exceptions.base import InsufficientStockError, InvalidStateError, ResourceNotFoundError
 from app.server.services.audit_service import AuditService
 from app.server.services.lifecycle_service import LifecycleService
 from app.server.services.notification_service import NotificationPriority, NotificationService
 from app.server.database.tenant import apply_tenant_filter
 from typing import Dict
+from app.server.models.stock import AssetAttributeUpdateItem, AssetAttributeUpdateResponse, AssetAttributeUpdateResult
 
 class InventorySnapshot:
     """Read-only snapshot of inventory counts for an asset."""
@@ -88,50 +90,58 @@ class StockService:
         
         Returns: InventorySnapshot with counts by status
         """
-        instances = db.query(AssetInstance).filter(
-            AssetInstance.asset_id == asset_id
-        ).all()
-        
+        grouped = (
+            db.query(AssetInstance.status, func.count(AssetInstance.instance_id))
+            .filter(AssetInstance.asset_id == asset_id)
+            .group_by(AssetInstance.status)
+            .all()
+        )
+
         snapshot = InventorySnapshot()
-        
-        for inst in instances:
-            if inst.status == AssetStatus.AVAILABLE or inst.status == AssetStatus.NEW:
-                snapshot.available += 1
-            elif inst.status == AssetStatus.ASSIGNED or inst.status == AssetStatus.USED:
-                snapshot.assigned += 1
-            elif inst.status == AssetStatus.IN_REPAIR or inst.status == AssetStatus.WARRANTY:
-                snapshot.in_repair += 1
-            elif inst.status in [AssetStatus.NOT_USABLE, AssetStatus.DAMAGED, AssetStatus.LOST]:
-                snapshot.not_usable += 1
-            elif inst.status == AssetStatus.RETIRED:
-                snapshot.retired += 1
-        
-        snapshot.total = len(instances) - snapshot.retired
+
+        for status, count in grouped:
+            if status in {AssetStatus.AVAILABLE, AssetStatus.NEW}:
+                snapshot.available += int(count)
+            elif status in {AssetStatus.ASSIGNED, AssetStatus.USED}:
+                snapshot.assigned += int(count)
+            elif status in {AssetStatus.IN_REPAIR, AssetStatus.WARRANTY}:
+                snapshot.in_repair += int(count)
+            elif status in {AssetStatus.NOT_USABLE, AssetStatus.DAMAGED, AssetStatus.LOST}:
+                snapshot.not_usable += int(count)
+            elif status == AssetStatus.RETIRED:
+                snapshot.retired += int(count)
+
+        snapshot.total = snapshot.available + snapshot.assigned + snapshot.in_repair + snapshot.not_usable
         return snapshot
 
     @staticmethod
     def get_inventory_for_branch(db: Session, asset_id: str, branch_id: str) -> InventorySnapshot:
         """Get inventory filtered to a specific branch."""
-        instances = db.query(AssetInstance).filter(
-            AssetInstance.asset_id == asset_id,
-            AssetInstance.branch_id == branch_id
-        ).all()
-        
+        grouped = (
+            db.query(AssetInstance.status, func.count(AssetInstance.instance_id))
+            .filter(
+                AssetInstance.asset_id == asset_id,
+                AssetInstance.branch_id == branch_id,
+            )
+            .group_by(AssetInstance.status)
+            .all()
+        )
+
         snapshot = InventorySnapshot()
-        
-        for inst in instances:
-            if inst.status == AssetStatus.AVAILABLE or inst.status == AssetStatus.NEW:
-                snapshot.available += 1
-            elif inst.status == AssetStatus.ASSIGNED or inst.status == AssetStatus.USED:
-                snapshot.assigned += 1
-            elif inst.status == AssetStatus.IN_REPAIR or inst.status == AssetStatus.WARRANTY:
-                snapshot.in_repair += 1
-            elif inst.status in [AssetStatus.NOT_USABLE, AssetStatus.DAMAGED, AssetStatus.LOST]:
-                snapshot.not_usable += 1
-            elif inst.status == AssetStatus.RETIRED:
-                snapshot.retired += 1
-        
-        snapshot.total = len(instances) - snapshot.retired
+
+        for status, count in grouped:
+            if status in {AssetStatus.AVAILABLE, AssetStatus.NEW}:
+                snapshot.available += int(count)
+            elif status in {AssetStatus.ASSIGNED, AssetStatus.USED}:
+                snapshot.assigned += int(count)
+            elif status in {AssetStatus.IN_REPAIR, AssetStatus.WARRANTY}:
+                snapshot.in_repair += int(count)
+            elif status in {AssetStatus.NOT_USABLE, AssetStatus.DAMAGED, AssetStatus.LOST}:
+                snapshot.not_usable += int(count)
+            elif status == AssetStatus.RETIRED:
+                snapshot.retired += int(count)
+
+        snapshot.total = snapshot.available + snapshot.assigned + snapshot.in_repair + snapshot.not_usable
         return snapshot
 
     @staticmethod
@@ -640,7 +650,7 @@ class StockService:
         
         # Update asset status based on available quantity
         if new_inventory.available > 0:
-            asset.asset_status = AssetStatus.AVAILABLE
+            asset.asset_status = AssetStatus.ACTIVE
         elif new_inventory.assigned > 0:
             asset.asset_status = AssetStatus.ASSIGNED
         else:
@@ -819,12 +829,12 @@ class StockService:
         
         asset.unused += 1
         asset.used = max(0, asset.used - 1)
-        asset.asset_status = AssetStatus.AVAILABLE
+        asset.asset_status = AssetStatus.ACTIVE
         
         new_asset_val = {
             "unused": asset.unused,
             "used": asset.used,
-            "asset_status": AssetStatus.AVAILABLE.value
+            "asset_status": AssetStatus.ACTIVE.value
         }
         
         AuditService.log_change(
@@ -1003,5 +1013,152 @@ class StockService:
         )
         
         return instance
+
+    @staticmethod
+    def update_asset_attributes(
+        db: Session,
+        instance_id: str,
+        updates: list[AssetAttributeUpdateItem],
+        user: Employee,
+        event_type: LifecycleEvent = LifecycleEvent.ATTRIBUTE_UPDATED,
+        reason: str | None = None,
+    ) -> AssetAttributeUpdateResponse:
+        """Update tracked asset attribute values and record lifecycle/audit entries."""
+        instance = (
+            apply_tenant_filter(db.query(AssetInstance), user, AssetInstance)
+            .filter(AssetInstance.instance_id == instance_id)
+            .with_for_update()
+            .first()
+        )
+        if not instance:
+            raise ResourceNotFoundError("AssetInstance", instance_id)
+
+        asset = (
+            apply_tenant_filter(db.query(Asset), user, Asset)
+            .filter(Asset.asset_id == instance.asset_id)
+            .with_for_update()
+            .first()
+        )
+        if not asset:
+            raise ResourceNotFoundError("Asset", instance.asset_id)
+        if not asset.sub_category_id:
+            raise InvalidStateError("Asset must have a sub-category before attribute updates can be tracked")
+
+        resolved_reason = reason or event_type.value
+        update_results: list[AssetAttributeUpdateResult] = []
+
+        for update in updates:
+            attribute_query = apply_tenant_filter(
+                db.query(AssetAttribute),
+                user,
+                AssetAttribute,
+                allow_cross_branch=True,
+            ).filter(AssetAttribute.sub_category_id == asset.sub_category_id)
+
+            attribute = None
+            if update.attribute_id:
+                attribute = attribute_query.filter(AssetAttribute.attribute_id == update.attribute_id).first()
+            elif update.attribute_name:
+                attribute = attribute_query.filter(AssetAttribute.attribute_name.ilike(update.attribute_name)).first()
+
+            if not attribute:
+                target = update.attribute_id or update.attribute_name or "unknown"
+                raise ResourceNotFoundError("AssetAttribute", target)
+
+            value_row = (
+                db.query(AssetAttributeValue)
+                .filter(
+                    AssetAttributeValue.asset_id == asset.asset_id,
+                    AssetAttributeValue.attribute_id == attribute.attribute_id,
+                )
+                .with_for_update()
+                .first()
+            )
+
+            old_value = value_row.value if value_row else None
+            new_value = update.new_value
+            if old_value == new_value:
+                continue
+
+            if value_row:
+                value_row.value = new_value
+            else:
+                value_row = AssetAttributeValue(
+                    organization_id=asset.organization_id,
+                    branch_id=asset.branch_id,
+                    asset_id=asset.asset_id,
+                    attribute_id=attribute.attribute_id,
+                    value=new_value,
+                )
+                db.add(value_row)
+
+            db.flush()
+
+            AuditService.log_change(
+                db,
+                "asset_attribute_values",
+                value_row.value_id,
+                "UPDATE",
+                user,
+                {
+                    "asset_id": asset.asset_id,
+                    "instance_id": instance.instance_id,
+                    "attribute_id": attribute.attribute_id,
+                    "attribute_name": attribute.attribute_name,
+                    "value": old_value,
+                },
+                {
+                    "asset_id": asset.asset_id,
+                    "instance_id": instance.instance_id,
+                    "attribute_id": attribute.attribute_id,
+                    "attribute_name": attribute.attribute_name,
+                    "value": new_value,
+                },
+                resolved_reason,
+            )
+
+            lifecycle_event = LifecycleService.log_event(
+                db,
+                instance_id=instance.instance_id,
+                asset_id=asset.asset_id,
+                event_type=event_type,
+                performed_by=user,
+                old_status=instance.status.value if instance.status else None,
+                new_status=instance.status.value if instance.status else None,
+                notes=resolved_reason,
+                organization_id=instance.organization_id,
+                metadata={
+                    "attribute_id": attribute.attribute_id,
+                    "attribute_name": attribute.attribute_name,
+                    "old_value": old_value,
+                    "new_value": new_value,
+                    "instance_id": instance.instance_id,
+                    "asset_id": asset.asset_id,
+                },
+            )
+
+            update_results.append(
+                AssetAttributeUpdateResult(
+                    attribute_id=attribute.attribute_id,
+                    attribute_name=attribute.attribute_name,
+                    old_value=old_value,
+                    new_value=new_value,
+                    value_id=value_row.value_id,
+                    lifecycle_id=lifecycle_event.lifecycle_id,
+                    event_type=event_type.value,
+                )
+            )
+
+        if not update_results:
+            raise InvalidStateError("No attribute values changed")
+
+        return AssetAttributeUpdateResponse(
+            instance_id=instance.instance_id,
+            asset_id=asset.asset_id,
+            event_type=event_type.value,
+            reason=resolved_reason,
+            updated_count=len(update_results),
+            updates=update_results,
+        )
 
 

@@ -112,7 +112,7 @@ class TrackingService:
         status: Optional[str] = None,
         branch_id: Optional[str] = None,
         employee_id: Optional[str] = None,
-        category: Optional[str] = None,
+        category_id: Optional[str] = None,
         movement_type: Optional[str] = None,
         transfer_status: Optional[str] = None,
         page: int = 1,
@@ -136,8 +136,8 @@ class TrackingService:
         if employee_id:
             query = query.filter(Tracking.emp_id == employee_id)
 
-        if category:
-            query = query.outerjoin(Asset.category).filter(Category.category_name.ilike(f"%{category.strip()}%"))
+        if category_id:
+            query = query.filter(Asset.category_id == category_id)
 
         if status:
             normalized = status.strip().upper()
@@ -182,6 +182,7 @@ class TrackingService:
     @staticmethod
     def get_filter_options(db: Session, current_user: Employee) -> dict:
         from app.server.schema.organization import Branch
+        from app.server.schema.organization import BranchStatus
         from app.server.schema.category import Category
 
         scoped = apply_tenant_filter(db.query(Tracking), current_user, Tracking)
@@ -197,7 +198,10 @@ class TrackingService:
 
         branch_map = {
             b.branch_id: b.branch_name
-            for b in apply_tenant_filter(db.query(Branch), current_user, Branch).filter(Branch.branch_id.in_(branch_ids)).all()
+            for b in apply_tenant_filter(db.query(Branch), current_user, Branch)
+            .filter(Branch.branch_id.in_(branch_ids))
+            .filter(Branch.status == BranchStatus.ACTIVE)
+            .all()
         } if branch_ids else {}
 
         employee_map = {
@@ -206,9 +210,8 @@ class TrackingService:
         } if employee_ids else {}
 
         categories = [
-            row[0]
-            for row in apply_tenant_filter(db.query(Category.category_name), current_user, Category).order_by(Category.category_name.asc()).all()
-            if row[0]
+            {"id": c.category_id, "name": c.category_name}
+            for c in apply_tenant_filter(db.query(Category), current_user, Category).order_by(Category.category_name.asc()).all()
         ]
 
         statuses = [status.value for status in AssetStatus if status.value in {"NEW", "ASSIGNED", "IN_REPAIR", "NOT_USABLE"}]

@@ -17,7 +17,7 @@ router = APIRouter(prefix="/audit", tags=["audit"])
 @router.get("/tables", response_model=list[str])
 def get_audit_table_names(
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER))
+    current_user: Employee = Depends(require_roles(EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER))
 ):
     query = apply_tenant_filter(db.query(AuditLog.table_name), current_user, AuditLog)
     rows = query.distinct().order_by(AuditLog.table_name.asc()).all()
@@ -30,7 +30,7 @@ def get_audit_logs(
     page: int = 1,
     per_page: int = 20,
     db: Session = Depends(get_db),
-    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER))
+    current_user: Employee = Depends(require_roles(EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER))
 ):
     """
     Retrieve system audit logs with filtering and pagination.

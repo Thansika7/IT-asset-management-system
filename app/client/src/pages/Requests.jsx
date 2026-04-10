@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
+import { normalizeOptions } from '@/lib/options'
 import {
   R,
   canTriage,
@@ -564,7 +565,7 @@ function RequestFilters({ draft, onChange, onApply, onClear, count, optionSets }
   const requestTypeOptions = optionSets?.request_types || []
   const priorityOptions = optionSets?.priorities || []
   const severityOptions = optionSets?.severities || []
-  const branchOptions = optionSets?.branches || []
+  const branchOptions = normalizeOptions(optionSets?.branches || [])
 
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm space-y-4 motion-fade-up motion-delay-1">
@@ -623,7 +624,7 @@ function RequestFilters({ draft, onChange, onApply, onClear, count, optionSets }
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draft.branch} onChange={(e) => onChange('branch', e.target.value)}>
             <option value="">All</option>
             {branchOptions.map((item) => (
-              <option key={item} value={item}>{item}</option>
+              <option key={item.id} value={item.id}>{item.name}</option>
             ))}
           </select>
         </div>

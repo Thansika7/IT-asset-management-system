@@ -8,6 +8,7 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 import { apiFetch } from '@/lib/api'
+import { normalizeOptions } from '@/lib/options'
 import { R, canRegisterEmployees, canDeactivateEmployees, labelForRole, canManagePermissions } from '@/lib/roles'
 import { useAuth } from '@/context/AuthContext'
 import { RefreshCw, UserPlus, X, UserMinus, Shield, Pencil } from 'lucide-react'
@@ -46,9 +47,9 @@ export default function Employees() {
     queryFn: () => apiFetch(`/employees/?${queryString}`),
   })
 
-  const { data: branchOptions = [] } = useQuery({
+  const { data: branchOptionsRaw = [] } = useQuery({
     queryKey: ['employee-filter-branches'],
-    queryFn: () => apiFetch('/branches'),
+    queryFn: () => apiFetch('/stock/branches-list'),
   })
 
   const { data: orgOptionsRaw = { items: [] } } = useQuery({
@@ -56,7 +57,9 @@ export default function Employees() {
     queryFn: () => apiFetch('/organizations?page=1&per_page=200'),
   })
 
-  const orgOptions = orgOptionsRaw?.items || []
+  const branchOptions = useMemo(() => normalizeOptions(branchOptionsRaw), [branchOptionsRaw])
+  const orgOptions = useMemo(() => normalizeOptions(orgOptionsRaw?.items || []), [orgOptionsRaw])
+
 
   const { data: employeeFilterOptions = { roles: [], statuses: [] } } = useQuery({
     queryKey: ['employee-filter-options'],
@@ -330,7 +333,7 @@ export default function Employees() {
           >
             <option value="">All branches</option>
             {branchOptions.map((b) => (
-              <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>
+              <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
           <select
@@ -356,7 +359,7 @@ export default function Employees() {
           >
             <option value="">All organizations</option>
             {orgOptions.map((org) => (
-              <option key={org.organization_id} value={org.organization_id}>{org.organization_name}</option>
+              <option key={org.id} value={org.id}>{org.name}</option>
             ))}
           </select>
         </div>
@@ -471,7 +474,8 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
   const [extraIds, setExtraIds] = useState('')
   const formRef = useRef(null)
 
-  const orgOptions = orgOptionsRaw?.items || []
+  const orgOptions = normalizeOptions(orgOptionsRaw?.items || [])
+  const branchOptions = normalizeOptions(branches)
   const roleOptions = filterOptions.roles || []
   const statusOptions = filterOptions.statuses || []
   const stock = stockRaw?.items || []
@@ -479,9 +483,9 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
   const availableStock = useMemo(() => stock.filter((a) => a.unused > 0), [stock])
 
   const filteredBranches = useMemo(() => {
-    if (!organizationId) return branches
-    return branches.filter((b) => b.organization_id === organizationId)
-  }, [branches, organizationId])
+    if (!organizationId) return branchOptions
+    return branchOptions.filter((b) => (b.raw?.organization_id || '') === organizationId)
+  }, [branchOptions, organizationId])
 
   useEffect(() => {
     if (!roleOptions.length) return
@@ -491,9 +495,9 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
   }, [roleOptions, role])
 
   const selectedBranchName = useMemo(() => {
-    const selected = branches.find((b) => b.branch_id === branchId)
-    return selected?.branch_name || ''
-  }, [branches, branchId])
+    const selected = branchOptions.find((b) => b.id === branchId)
+    return selected?.name || ''
+  }, [branchOptions, branchId])
 
   const compatiblePresets = useMemo(() => {
     const eb = selectedBranchName.trim()
@@ -591,8 +595,8 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
           >
             <option value="">Select branch</option>
             {filteredBranches.map((b) => (
-              <option key={b.branch_id} value={b.branch_id}>
-                {b.branch_name}
+              <option key={b.id} value={b.id}>
+                {b.name}
               </option>
             ))}
           </select>
@@ -607,7 +611,7 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
           >
             <option value="">Select organization</option>
             {orgOptions.map((org) => (
-              <option key={org.organization_id} value={org.organization_id}>{org.organization_name}</option>
+              <option key={org.id} value={org.id}>{org.name}</option>
             ))}
           </select>
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
@@ -752,7 +756,8 @@ function EditEmployeeModal({ empId, name, onClose, onSaved }) {
   const [role, setRole] = useState('')
   const [status, setStatus] = useState('active')
 
-  const orgOptions = orgOptionsRaw?.items || []
+  const orgOptions = normalizeOptions(orgOptionsRaw?.items || [])
+  const branchOptions = normalizeOptions(branches)
   const roleOptions = filterOptions.roles || []
   const statusOptions = filterOptions.statuses || []
 
@@ -768,9 +773,9 @@ function EditEmployeeModal({ empId, name, onClose, onSaved }) {
   }, [employee, user?.organizationId])
 
   const filteredBranches = useMemo(() => {
-    if (!organizationId) return branches
-    return branches.filter((b) => b.organization_id === organizationId)
-  }, [branches, organizationId])
+    if (!organizationId) return branchOptions
+    return branchOptions.filter((b) => (b.raw?.organization_id || '') === organizationId)
+  }, [branchOptions, organizationId])
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -800,13 +805,13 @@ function EditEmployeeModal({ empId, name, onClose, onSaved }) {
             >
               <option value="">Select organization</option>
               {orgOptions.map((org) => (
-                <option key={org.organization_id} value={org.organization_id}>{org.organization_name}</option>
+                <option key={org.id} value={org.id}>{org.name}</option>
               ))}
             </select>
             <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
               <option value="">Select branch</option>
               {filteredBranches.map((b) => (
-                <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>
+                <option key={b.id} value={b.id}>{b.name}</option>
               ))}
             </select>
             <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>

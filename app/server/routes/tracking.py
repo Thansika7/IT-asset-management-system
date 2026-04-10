@@ -22,7 +22,7 @@ def get_tracking_records(
     status: Optional[str] = None,
     branch_id: Optional[str] = None,
     employee_id: Optional[str] = None,
-    category: Optional[str] = None,
+    category_id: Optional[str] = None,
     movement_type: Optional[str] = None,
     transfer_status: Optional[str] = None,
     page: int = 1,
@@ -38,12 +38,13 @@ def get_tracking_records(
         status=status,
         branch_id=branch_id,
         employee_id=employee_id,
-        category=category,
+        category_id=category_id,
         movement_type=movement_type,
         transfer_status=transfer_status,
         page=page,
         per_page=per_page
     )
+
 
 
 @router.get("/options", response_model=TrackingFilterOptionsResponse)

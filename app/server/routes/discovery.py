@@ -60,7 +60,7 @@ def list_categories(
         require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
     ),
 ):
-    return AssetInsightsService.list_categories(db)
+    return AssetInsightsService.list_categories(db, current_user)
 
 
 @router.get("/categories/{category_id}/subcategories", response_model=List[SubCategoryRead])
@@ -71,7 +71,7 @@ def list_subcategories(
         require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
     ),
 ):
-    return AssetInsightsService.list_subcategories(db, category_id)
+    return AssetInsightsService.list_subcategories(db, current_user, category_id)
 
 
 @router.get("/subcategories/{sub_category_id}/assets", response_model=List[AssetListItem])

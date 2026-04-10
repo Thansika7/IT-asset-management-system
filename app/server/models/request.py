@@ -318,7 +318,7 @@ class RequestFilterOptions(BaseModel):
     request_types: list[str]
     priorities: list[str]
     severities: list[str]
-    branches: list[str]
+    branches: list[dict]
 
 
 class AssetNecessityRecommendationInput(BaseModel):
