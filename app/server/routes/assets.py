@@ -18,9 +18,9 @@ from app.server.models.asset_insights import (
     AssetListItem,
     AssetListResponse,
     AssetRecommendationRead,
-
 )
-from app.server.models.stock import AssetAttributeUpdateRequest, AssetAttributeUpdateResponse
+from app.server.models.stock import AssetAttributeUpdateRequest, AssetAttributeUpdateResponse, AssetQuantityAddRequest, AssetTemplateRead, InventorySnapshot, StockResponse
+from app.server.models.stock import AssetDetailsRead
 from app.server.models.api import EmployeeAssetOwnerResponse
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.schema.asset import AssetStatus
@@ -97,6 +97,72 @@ def list_asset_options(
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     return AssetInsightsService.list_asset_options(db, current_user)
+
+
+@router.get("/templates", response_model=list[AssetTemplateRead])
+def list_asset_templates(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return [AssetInsightsService.get_asset_template(db, asset.asset_id, current_user) for asset in AssetInsightsService.list_asset_options(db, current_user)]
+
+
+@router.get("/{asset_id}/specs", response_model=AssetTemplateRead)
+def get_asset_specs(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return AssetInsightsService.get_asset_template(db, asset_id, current_user)
+
+
+@router.get("/{asset_id}/details", response_model=AssetDetailsRead)
+def get_asset_details(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return AssetInsightsService.get_asset_details(db, asset_id, current_user)
+
+
+@router.post("/{asset_id}/add-quantity", response_model=StockResponse)
+def add_asset_quantity(
+    asset_id: str,
+    payload: AssetQuantityAddRequest,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.SUPPORT_TEAM)),
+):
+    asset, created_instances = StockService.add_asset_quantity(
+        db,
+        asset_id=asset_id,
+        quantity=payload.quantity,
+        user=current_user,
+        branch_id=payload.branch_id,
+        purchased_date=payload.purchased_date,
+        purchase_cost=payload.purchase_cost,
+        vendor_name=payload.vendor_name,
+        vendor_contact=payload.vendor_contact,
+        invoice_number=payload.invoice_number,
+        warranty_expiry=payload.warranty_expiry,
+        expiry_date=payload.expiry_date,
+        subscription_term=payload.subscription_term,
+        specifications=payload.specifications,
+        instance_metadata=payload.instance_metadata,
+    )
+    db.commit()
+    db.refresh(asset)
+    inventory_snapshot = StockService.get_inventory(db, asset.asset_id)
+    return {
+        "asset_id": asset.asset_id,
+        "name": asset.name,
+        "brand": asset.brand,
+        "model": asset.model,
+        "total_quantity": asset.total_quantity,
+        "used": asset.used,
+        "unused": asset.unused,
+        "inventory": InventorySnapshot.from_service(inventory_snapshot),
+        "instances": created_instances,
+    }
 
 
 @router.get("/{instance_id}/owner", response_model=EmployeeAssetOwnerResponse)

@@ -28,6 +28,8 @@ from app.server.models.asset_insights import (
     SubCategoryRead,
     UtilizationItem,
 )
+from app.server.models.stock import AssetTemplateRead, AssetTemplateSpecRead, InventorySnapshot
+from app.server.models.stock import AssetDetailsRead, AssetDetailAttributeRead
 from app.server.schema.employee import Employee
 from app.server.schema.request import Request
 from app.server.schema.asset import Asset, AssetInstance, AssetStatus
@@ -415,6 +417,122 @@ class AssetInsightsService:
             )
             for asset in assets
         ]
+
+    @staticmethod
+    def get_asset_template(db: Session, asset_id: str, current_user: Employee) -> AssetTemplateRead:
+        asset = AssetInsightsService._base_asset_query(db, current_user).filter(Asset.asset_id == asset_id).first()
+        if not asset:
+            raise ResourceNotFoundError("Asset", asset_id)
+
+        from app.server.services.stock_service import StockService
+
+        inventory = StockService.get_inventory(db, asset_id)
+        first_instance = (
+            db.query(AssetInstance)
+            .filter(AssetInstance.asset_id == asset_id)
+            .order_by(AssetInstance.created_at.asc())
+            .first()
+        )
+        spec_rows = (
+            db.query(
+                AssetAttribute.attribute_id,
+                AssetAttribute.attribute_name,
+                AssetAttribute.data_type,
+                AssetAttribute.is_required,
+                AssetAttributeValue.value,
+            )
+            .join(AssetAttributeValue, AssetAttribute.attribute_id == AssetAttributeValue.attribute_id)
+            .filter(AssetAttributeValue.asset_id == asset_id)
+            .order_by(AssetAttribute.attribute_name.asc())
+            .all()
+        )
+
+        return AssetTemplateRead(
+            asset_id=asset.asset_id,
+            name=asset.name,
+            category_id=asset.category_id,
+            category=asset.category.category_name if asset.category else None,
+            sub_category_id=asset.sub_category_id,
+            sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+            branch_id=asset.branch_id,
+            branch=asset.branch,
+            brand=asset.brand,
+            model=asset.model,
+            vendor_name=asset.vendor_name or (first_instance.vendor_name if first_instance else None),
+            vendor_contact=asset.vendor_contact or (first_instance.vendor_contact if first_instance else None),
+            invoice_number=asset.invoice_number or (first_instance.invoice_number if first_instance else None),
+            purchased_date=asset.purchased_date or (first_instance.purchase_date if first_instance else None),
+            purchase_cost=asset.purchase_cost if asset.purchase_cost is not None else (first_instance.purchase_cost if first_instance else None),
+            salvage_value=asset.salvage_value,
+            warranty_expiry=first_instance.warranty_expiry if first_instance else None,
+            expiry_date=first_instance.expiry_date if first_instance else None,
+            subscription_term=first_instance.subscription_term if first_instance else None,
+            useful_life_years=asset.useful_life_years,
+            total_quantity=asset.total_quantity,
+            used=asset.used,
+            unused=asset.unused,
+            inventory=InventorySnapshot.from_service(inventory),
+            specifications=[
+                AssetTemplateSpecRead(
+                    attribute_id=row.attribute_id,
+                    attribute_name=row.attribute_name,
+                    value=row.value,
+                    data_type=row.data_type or "text",
+                    is_required=bool(row.is_required),
+                )
+                for row in spec_rows
+            ],
+        )
+
+    @staticmethod
+    def get_asset_details(db: Session, asset_id: str, current_user: Employee) -> AssetDetailsRead:
+        asset = AssetInsightsService._base_asset_query(db, current_user).filter(Asset.asset_id == asset_id).first()
+        if not asset:
+            raise ResourceNotFoundError("Asset", asset_id)
+
+        from app.server.services.stock_service import StockService
+        from app.server.schema.attribute import AssetAttributeValue
+
+        inventory = StockService.get_inventory(db, asset_id)
+
+        attribute_rows = (
+            db.query(
+                AssetAttributeValue.attribute_id,
+                AssetAttribute.attribute_name,
+                AssetAttributeValue.value,
+            )
+            .join(AssetAttribute, AssetAttribute.attribute_id == AssetAttributeValue.attribute_id)
+            .filter(AssetAttributeValue.asset_id == asset_id)
+            .order_by(AssetAttribute.attribute_name.asc())
+            .all()
+        )
+
+        return AssetDetailsRead(
+            asset_id=asset.asset_id,
+            asset_name=asset.name,
+            category_id=asset.category_id,
+            category=asset.category.category_name if asset.category else None,
+            sub_category_id=asset.sub_category_id,
+            sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+            branch_id=asset.branch_id,
+            branch=asset.branch,
+            vendor_name=asset.vendor_name,
+            vendor_contact=asset.vendor_contact,
+            purchase_cost=asset.purchase_cost,
+            warranty_expiry=asset.instances[0].warranty_expiry if asset.instances else None,
+            purchased_date=asset.purchased_date,
+            expiry_date=asset.instances[0].expiry_date if asset.instances else None,
+            invoice_number=asset.invoice_number,
+            inventory=InventorySnapshot.from_service(inventory),
+            attributes=[
+                AssetDetailAttributeRead(
+                    attribute_id=row.attribute_id,
+                    name=row.attribute_name,
+                    value=row.value,
+                )
+                for row in attribute_rows
+            ],
+        )
 
 
     @staticmethod
