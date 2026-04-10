@@ -25,7 +25,7 @@ function formatCurrency(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
-export default function AssetDetailPanel({ asset, title = 'Asset Details', subtitle = 'Click any asset to inspect full details.' }) {
+export default function AssetDetailPanel({ asset, instances = [], title = 'Asset Details', subtitle = 'Click any asset to inspect full details.' }) {
   if (!asset) {
     return (
       <aside className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-8 text-center text-slate-500 text-sm">
@@ -37,6 +37,8 @@ export default function AssetDetailPanel({ asset, title = 'Asset Details', subti
   const healthScore = Number(asset.health_score)
   const safeHealthScore = Number.isNaN(healthScore) ? 0 : healthScore
   const healthClass = getHealthClass(asset)
+  const serialNumbers = [...new Set((instances || []).map((item) => item.serial_number).filter(Boolean))]
+  const serialDisplay = serialNumbers.length ? serialNumbers.join(', ') : '-'
 
   return (
     <aside className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
@@ -50,7 +52,9 @@ export default function AssetDetailPanel({ asset, title = 'Asset Details', subti
         <DetailItem label="Category" value={asset.category} />
         <DetailItem label="Sub Category" value={asset.sub_category} />
         <DetailItem label="Brand" value={asset.brand} />
+        <DetailItem label="Model" value={asset.model} />
         <DetailItem label="Branch" value={asset.branch} />
+        <DetailItem label="Serial Numbers" value={serialDisplay} />
         <DetailItem label="Status" value={asset.status} />
         <DetailItem label="Health Score" value={`${safeHealthScore}/100`} />
         <DetailItem label="Health Class" value={healthClass} />

@@ -477,6 +477,18 @@ def add_new_stock(
         "instances": []
     }
 
+
+@router.delete("/{asset_id}")
+def delete_asset_entry(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN)),
+):
+    """Delete an asset model from inventory if it has no active/history links."""
+    StockService.delete_asset(db, asset_id, current_user)
+    db.commit()
+    return {"status": "deleted", "asset_id": asset_id}
+
 @router.post("/allocate_manual_override")
 def manual_allocate(
     payload: AllocateRequest, 

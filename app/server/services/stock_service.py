@@ -4,6 +4,7 @@ from sqlalchemy import and_
 import os
 from app.server.schema.asset import Asset, AssetStatus, AssetInstance
 from app.server.schema.tracking import Tracking, MovementType, AllocationType, LifecycleEvent
+from app.server.schema.request import Request
 from app.server.schema.employee import Employee
 from app.server.schema.organization import Branch
 from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
@@ -73,6 +74,80 @@ class InstanceStateMachine:
 
 class StockService:
     REPAIR_BUDGET_ALERT_THRESHOLD = float(os.getenv("REPAIR_BUDGET_ALERT_THRESHOLD", "5000"))
+
+    @staticmethod
+    def delete_asset(db: Session, asset_id: str, user: Employee) -> None:
+        """Delete an asset model only when it has no active usage or historical links."""
+        asset = (
+            apply_tenant_filter(db.query(Asset), user, Asset)
+            .filter(Asset.asset_id == asset_id)
+            .with_for_update()
+            .first()
+        )
+        if not asset:
+            raise ResourceNotFoundError("Asset", asset_id)
+
+        assigned_count = (
+            apply_tenant_filter(db.query(AssetInstance), user, AssetInstance)
+            .filter(
+                AssetInstance.asset_id == asset_id,
+                AssetInstance.assigned_to_id.isnot(None),
+            )
+            .count()
+        )
+        if assigned_count > 0:
+            raise InvalidStateError("Cannot delete asset while one or more instances are assigned")
+
+        active_tracking_count = (
+            apply_tenant_filter(db.query(Tracking), user, Tracking)
+            .filter(
+                Tracking.asset_id == asset_id,
+                Tracking.returned_at.is_(None),
+            )
+            .count()
+        )
+        if active_tracking_count > 0:
+            raise InvalidStateError("Cannot delete asset with active tracking records")
+
+        historical_tracking_count = (
+            apply_tenant_filter(db.query(Tracking), user, Tracking)
+            .filter(Tracking.asset_id == asset_id)
+            .count()
+        )
+        if historical_tracking_count > 0:
+            raise InvalidStateError("Cannot delete asset with historical tracking records")
+
+        linked_request_count = (
+            apply_tenant_filter(db.query(Request), user, Request)
+            .filter(Request.asset_id == asset_id)
+            .count()
+        )
+        if linked_request_count > 0:
+            raise InvalidStateError("Cannot delete asset with linked requests")
+
+        snapshot = {
+            "asset_id": asset.asset_id,
+            "name": asset.name,
+            "category_id": asset.category_id,
+            "sub_category_id": asset.sub_category_id,
+            "total_quantity": asset.total_quantity,
+            "used": asset.used,
+            "unused": asset.unused,
+            "status": asset.asset_status.value if asset.asset_status else None,
+        }
+
+        AuditService.log_change(
+            db,
+            "assets",
+            asset.asset_id,
+            "DELETE",
+            user,
+            snapshot,
+            None,
+            "ASSET_DELETE",
+        )
+
+        db.delete(asset)
 
     # ============================================================================
     # DYNAMIC INVENTORY CALCULATION HELPERS

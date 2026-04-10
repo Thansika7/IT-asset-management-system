@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import Pagination from '@/components/Pagination'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
@@ -19,8 +20,10 @@ export default function Stock() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const canWrite = canManageStockWrites(user.role)
+  const canDeleteAsset = user.role === 'super_admin' || user.role === 'org_admin'
   const [selectedAssetId, setSelectedAssetId] = useState(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 15
   const [searchInput, setSearchInput] = useState('')
@@ -128,6 +131,12 @@ export default function Stock() {
     enabled: Boolean(selectedStockAsset?.asset_id),
   })
 
+  const selectedAssetInstancesQuery = useQuery({
+    queryKey: ['asset-detail-instances', selectedStockAsset?.asset_id],
+    queryFn: () => apiFetch(`/stock/instances?asset_id=${selectedStockAsset.asset_id}&page=1&per_page=200`),
+    enabled: Boolean(selectedStockAsset?.asset_id),
+  })
+
   const invalidateStockRelated = () => {
     qc.invalidateQueries({ queryKey: ['assets'] })
     qc.invalidateQueries({ queryKey: ['asset-model-options'] })
@@ -140,12 +149,23 @@ export default function Stock() {
     onSuccess: invalidateStockRelated,
   })
 
+  const deleteMut = useMutation({
+    mutationFn: (assetId) => apiFetch(`/stock/${assetId}`, { method: 'DELETE' }),
+    onSuccess: (_, assetId) => {
+      if (selectedAssetId === assetId) {
+        setDetailsOpen(false)
+        setSelectedAssetId(null)
+      }
+      setDeleteTarget(null)
+      invalidateStockRelated()
+    },
+  })
+
   const columns = useMemo(
     () => [
       { header: 'Asset ID', accessorKey: 'asset_id', cell: (c) => <span className="font-mono text-xs">{c.getValue()}</span> },
       { header: 'Name', accessorKey: 'name', cell: (c) => <span className="font-semibold text-slate-800">{c.getValue()}</span> },
       { header: 'Brand', accessorKey: 'brand', cell: (c) => c.getValue() || '—' },
-      { header: 'Model', accessorKey: 'model', cell: (c) => c.getValue() || '—' },
       { header: 'Total', accessorKey: 'total_quantity' },
       { header: 'Used', accessorKey: 'used' },
       { header: 'Available', accessorKey: 'unused' },
@@ -156,8 +176,28 @@ export default function Stock() {
           <span className="text-xs font-semibold uppercase text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">{String(c.getValue())}</span>
         ),
       },
+      {
+        header: 'Actions',
+        id: 'actions',
+        cell: ({ row }) => (
+          canDeleteAsset ? (
+            <button
+              type="button"
+              className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100"
+              onClick={(event) => {
+                event.stopPropagation()
+                setDeleteTarget({ asset_id: row.original.asset_id, name: row.original.name })
+              }}
+            >
+              Remove
+            </button>
+          ) : (
+            <span className="text-xs text-slate-400">—</span>
+          )
+        ),
+      },
     ],
-    [],
+    [canDeleteAsset],
   )
 
   const table = useReactTable({
@@ -282,7 +322,7 @@ export default function Stock() {
             <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
               <input
                 className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white md:col-span-2"
-                placeholder="Search instance id, serial number, asset name, or assigned employee..."
+                placeholder="Search instance id, asset name, or assigned employee..."
                 value={instanceSearch}
                 onChange={(e) => { setInstanceSearch(e.target.value); setInstancePage(1) }}
               />
@@ -317,9 +357,7 @@ export default function Stock() {
                     <th className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Instance ID</th>
                     <th className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Asset Name</th>
                     <th className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Brand</th>
-                    <th className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Model</th>
                     <th className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Branch</th>
-                    <th className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Serial Number</th>
                     <th className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Status</th>
                     <th className="p-4 font-semibold text-slate-600 text-xs uppercase tracking-wider">Assigned To</th>
                   </tr>
@@ -330,9 +368,7 @@ export default function Stock() {
                       <td className="p-4 font-mono text-xs text-slate-700">{row.instance_id}</td>
                       <td className="p-4 text-slate-700">{row.asset_name || '—'}</td>
                       <td className="p-4 text-slate-700">{row.brand || '—'}</td>
-                      <td className="p-4 text-slate-700">{row.model || '—'}</td>
                       <td className="p-4 text-slate-700">{row.branch || '—'}</td>
-                      <td className="p-4 text-slate-700">{row.serial_number || '—'}</td>
                       <td className="p-4">
                         <span className="text-xs font-semibold uppercase text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">{row.status || '—'}</span>
                       </td>
@@ -341,7 +377,7 @@ export default function Stock() {
                   ))}
                   {instanceItems.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="p-16 text-center text-slate-400">No asset instances found</td>
+                      <td colSpan={6} className="p-16 text-center text-slate-400">No asset instances found</td>
                     </tr>
                   )}
                 </tbody>
@@ -367,6 +403,7 @@ export default function Stock() {
               <div className="space-y-6">
                 <AssetDetailPanel
                   asset={assetDetailQuery.data}
+                  instances={selectedAssetInstancesQuery.data?.items || []}
                   title="Inventory Asset"
                   subtitle={assetDetailQuery.isLoading ? 'Loading selected asset details...' : 'Selected asset details.'}
                 />
@@ -375,6 +412,19 @@ export default function Stock() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={deleteTarget ? `Remove asset ${deleteTarget.name}?` : ''}
+        description="This deletes the asset model only if it has no assignments, tracking history, or linked requests."
+        confirmLabel="Remove asset"
+        busy={deleteMut.isPending}
+        onCancel={() => { if (!deleteMut.isPending) setDeleteTarget(null) }}
+        onConfirm={() => {
+          if (!deleteTarget || deleteMut.isPending) return
+          deleteMut.mutate(deleteTarget.asset_id)
+        }}
+      />
     </div>
   )
 }
