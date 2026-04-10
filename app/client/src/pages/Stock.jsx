@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import Pagination from '@/components/Pagination'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -226,7 +226,7 @@ export default function Stock() {
         </button>
       </div>
 
-      {canWrite ? <StockForms createMut={createMut} categories={categoryOptions} branches={branchOptions} /> : null}
+      {canWrite ? <StockForms createMut={createMut} invalidateStockRelated={invalidateStockRelated} categories={categoryOptions} branches={branchOptions} /> : null}
 
       <div className="grid gap-6">
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
@@ -429,7 +429,7 @@ export default function Stock() {
   )
 }
 
-function StockForms({ createMut, categories, branches }) {
+function StockForms({ createMut, invalidateStockRelated, categories, branches }) {
   const NEW_OPTION_VALUE = '__new__'
   const PRESET_PREFIX = '__preset__:'
   const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
@@ -456,6 +456,19 @@ function StockForms({ createMut, categories, branches }) {
   const [expiryDate, setExpiryDate] = useState('')
   const [usefulLifeYears, setUsefulLifeYears] = useState('5')
   const [specRows, setSpecRows] = useState([newSpecRow()])
+  const [restockAssetId, setRestockAssetId] = useState('')
+  const [restockQuantity, setRestockQuantity] = useState('1')
+  const [restockBranchId, setRestockBranchId] = useState('')
+  const [restockPurchaseDate, setRestockPurchaseDate] = useState(today)
+  const [restockPurchaseCost, setRestockPurchaseCost] = useState('')
+  const [restockVendorName, setRestockVendorName] = useState('')
+  const [restockVendorContact, setRestockVendorContact] = useState('')
+  const [restockInvoiceNumber, setRestockInvoiceNumber] = useState('')
+  const [restockWarrantyExpiry, setRestockWarrantyExpiry] = useState('')
+  const [restockExpiryDate, setRestockExpiryDate] = useState('')
+  const [restockSubscriptionTerm, setRestockSubscriptionTerm] = useState('')
+  const [restockSpecRows, setRestockSpecRows] = useState([newSpecRow()])
+  const [restockNotes, setRestockNotes] = useState('')
 
   const selectedCategory = categories.find((item) => item.id === ccat)
   const selectedCategoryName = (selectedCategory?.name || '').toLowerCase()
@@ -470,6 +483,36 @@ function StockForms({ createMut, categories, branches }) {
     return ['Brand', 'Model', 'Serial Number']
   }, [ccat, selectedCategoryName])
 
+  const { data: assetTemplatesRaw = [] } = useQuery({
+    queryKey: ['asset-templates'],
+    queryFn: () => apiFetch('/assets/templates'),
+  })
+
+  const assetTemplateOptions = useMemo(() => normalizeOptions(assetTemplatesRaw), [assetTemplatesRaw])
+
+  const selectedRestockTemplate = useMemo(() => {
+    return assetTemplatesRaw.find((item) => item.asset_id === restockAssetId) || null
+  }, [assetTemplatesRaw, restockAssetId])
+
+  const { data: selectedRestockDetailsData } = useQuery({
+    queryKey: ['asset-details', restockAssetId],
+    queryFn: () => apiFetch(`/assets/${restockAssetId}/details`),
+    enabled: Boolean(restockAssetId) && restockAssetId !== NEW_OPTION_VALUE,
+  })
+
+  const { data: restockAttributeOptionsRaw = [] } = useQuery({
+    queryKey: ['restock-attribute-options', selectedRestockDetailsData?.sub_category_id],
+    queryFn: () => apiFetch(`/stock/attributes/options?sub_category_id=${selectedRestockDetailsData?.sub_category_id}`),
+    enabled: Boolean(selectedRestockDetailsData?.sub_category_id) && restockAssetId !== NEW_OPTION_VALUE,
+  })
+
+  const restockAttributeOptions = useMemo(() => normalizeOptions(restockAttributeOptionsRaw), [restockAttributeOptionsRaw])
+
+  const restockSeed = useMemo(() => {
+    if (restockAssetId === NEW_OPTION_VALUE) return null
+    return selectedRestockDetailsData || selectedRestockTemplate || null
+  }, [restockAssetId, selectedRestockDetailsData, selectedRestockTemplate])
+
   const { data: subCategories = [] } = useQuery({
     queryKey: ['stock-sub-categories', ccat],
     queryFn: () => apiFetch(`/stock/sub-categories?category_id=${ccat}`),
@@ -482,6 +525,11 @@ function StockForms({ createMut, categories, branches }) {
     enabled: Boolean(csub) && csub !== NEW_OPTION_VALUE,
   })
 
+  const restockMut = useMutation({
+    mutationFn: ({ assetId, body }) => apiFetch(`/assets/${assetId}/add-quantity`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: invalidateStockRelated,
+  })
+
   const updateSpecRow = (rowId, patch) => {
     setSpecRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)))
   }
@@ -490,6 +538,16 @@ function StockForms({ createMut, categories, branches }) {
 
   const removeSpecRow = (rowId) => {
     setSpecRows((prev) => (prev.length <= 1 ? [newSpecRow()] : prev.filter((row) => row.id !== rowId)))
+  }
+
+  const updateRestockSpecRow = (rowId, patch) => {
+    setRestockSpecRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)))
+  }
+
+  const addRestockSpecRow = () => setRestockSpecRows((prev) => [...prev, newSpecRow()])
+
+  const removeRestockSpecRow = (rowId) => {
+    setRestockSpecRows((prev) => (prev.length <= 1 ? [newSpecRow()] : prev.filter((row) => row.id !== rowId)))
   }
 
   const resetForm = () => {
@@ -510,8 +568,278 @@ function StockForms({ createMut, categories, branches }) {
     setSpecRows([newSpecRow()])
   }
 
+  const resetRestockForm = () => {
+    setRestockQuantity('1')
+    setRestockBranchId('')
+    setRestockPurchaseDate(today)
+    setRestockPurchaseCost('')
+    setRestockVendorName('')
+    setRestockVendorContact('')
+    setRestockInvoiceNumber('')
+    setRestockWarrantyExpiry('')
+    setRestockExpiryDate('')
+    setRestockSubscriptionTerm('')
+    setRestockSpecRows([newSpecRow()])
+    setRestockNotes('')
+  }
+
+  const hydrateRestockForm = (source) => {
+    if (!source || restockAssetId === NEW_OPTION_VALUE) return
+
+    setRestockBranchId(source.branch_id || '')
+    setRestockPurchaseDate(source.purchased_date || today)
+    setRestockPurchaseCost(source.purchase_cost != null ? String(source.purchase_cost) : '')
+    setRestockVendorName(source.vendor_name || '')
+    setRestockVendorContact(source.vendor_contact || '')
+    setRestockInvoiceNumber(source.invoice_number || '')
+    setRestockWarrantyExpiry(source.warranty_expiry || '')
+    setRestockExpiryDate(source.expiry_date || '')
+    setRestockSubscriptionTerm(source.subscription_term || '')
+    const detailAttributes = source.attributes || source.specifications || []
+    setRestockSpecRows(
+      detailAttributes.length
+        ? detailAttributes.map((spec) => ({
+            id: `${spec.attribute_id}-${Math.random().toString(36).slice(2, 8)}`,
+            attributeRef: spec.attribute_id || '',
+            newAttributeName: '',
+            value: spec.value || '',
+          }))
+        : restockAttributeOptions.length
+          ? restockAttributeOptions.map((item) => ({
+              id: `${item.id}-${Math.random().toString(36).slice(2, 8)}`,
+              attributeRef: item.id,
+              newAttributeName: '',
+              value: '',
+            }))
+          : [newSpecRow()],
+    )
+  }
+
+  const handleRestockAssetChange = (assetId) => {
+    setRestockAssetId(assetId)
+    if (!assetId || assetId === NEW_OPTION_VALUE) {
+      return
+    }
+  }
+
+  useEffect(() => {
+    if (!restockSeed || restockAssetId === NEW_OPTION_VALUE) return
+    hydrateRestockForm(restockSeed)
+  }, [restockSeed, restockAssetId, today, restockAttributeOptions])
+
+  useEffect(() => {
+    if (restockAssetId !== NEW_OPTION_VALUE) return
+    resetRestockForm()
+  }, [restockAssetId, today])
+
   return (
     <div className="grid grid-cols-1 gap-4">
+      <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-white p-5 shadow-sm space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h3 className="font-bold text-slate-900">Smart restock existing asset</h3>
+            <p className="text-xs text-slate-500 mt-1">Pick an existing asset template, autofill its details, and add only new instances.</p>
+          </div>
+          <select
+            className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-sm md:min-w-[320px]"
+            value={restockAssetId}
+            onChange={(e) => handleRestockAssetChange(e.target.value)}
+          >
+            <option value="">Select an existing asset</option>
+            {assetTemplateOptions.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+            <option value={NEW_OPTION_VALUE}>Add New</option>
+          </select>
+        </div>
+
+        {restockAssetId && restockAssetId !== NEW_OPTION_VALUE ? (
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!restockAssetId || restockAssetId === NEW_OPTION_VALUE) return
+              if (!restockQuantity || Number(restockQuantity) <= 0) return
+
+              const specifications = restockSpecRows
+                .map((row) => {
+                  const value = row.value.trim()
+                  if (!value) return null
+
+                  if (row.attributeRef.startsWith(PRESET_PREFIX)) {
+                    const attributeName = row.attributeRef.slice(PRESET_PREFIX.length).trim()
+                    if (!attributeName) return null
+                    return { attribute_name: attributeName, value }
+                  }
+
+                  if (row.attributeRef === NEW_OPTION_VALUE) {
+                    const attributeName = row.newAttributeName.trim()
+                    if (!attributeName) return null
+                    return { attribute_name: attributeName, value }
+                  }
+
+                  if (row.attributeRef) {
+                    return { attribute_id: row.attributeRef, value }
+                  }
+
+                  return null
+                })
+                .filter(Boolean)
+
+              restockMut.mutate({
+                assetId: restockAssetId,
+                body: {
+                  quantity: Number(restockQuantity) || 1,
+                  branch_id: restockBranchId || null,
+                  purchased_date: restockPurchaseDate || null,
+                  purchase_cost: restockPurchaseCost ? Number(restockPurchaseCost) : null,
+                  vendor_name: restockVendorName.trim() || null,
+                  vendor_contact: restockVendorContact.trim() || null,
+                  invoice_number: restockInvoiceNumber.trim() || null,
+                  warranty_expiry: restockWarrantyExpiry || null,
+                  expiry_date: restockExpiryDate || null,
+                  subscription_term: restockSubscriptionTerm.trim() || null,
+                  specifications,
+                  instance_metadata: restockNotes.trim() ? { notes: restockNotes.trim() } : null,
+                },
+              })
+            }}
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              <div className="rounded-xl border border-cyan-100 bg-white p-3 space-y-2">
+                <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Template</div>
+                <div className="font-semibold text-slate-900">{selectedRestockDetailsData?.asset_name || selectedRestockTemplate?.name || 'Selected asset'}</div>
+                <div className="text-xs text-slate-600">{selectedRestockDetailsData?.category || selectedRestockTemplate?.category || 'Category'} / {selectedRestockDetailsData?.sub_category || selectedRestockTemplate?.sub_category || 'Sub-category'}</div>
+                <div className="text-xs text-slate-500">Vendor: {selectedRestockDetailsData?.vendor_name || selectedRestockTemplate?.vendor_name || '—'} | Cost: {selectedRestockDetailsData?.purchase_cost ?? selectedRestockTemplate?.purchase_cost ?? '—'}</div>
+              </div>
+              <div className="rounded-xl border border-cyan-100 bg-white p-3 space-y-2">
+                <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Current inventory</div>
+                <div className="text-xs text-slate-600">Total: {selectedRestockDetailsData?.inventory?.total ?? selectedRestockTemplate?.total_quantity ?? 0}</div>
+                <div className="text-xs text-slate-600">Available: {selectedRestockDetailsData?.inventory?.available ?? selectedRestockTemplate?.unused ?? 0}</div>
+                <div className="text-xs text-slate-600">Assigned: {selectedRestockDetailsData?.inventory?.assigned ?? selectedRestockTemplate?.used ?? 0}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label className="text-xs font-medium text-slate-600">
+                Quantity to add
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="1" value={restockQuantity} onChange={(e) => setRestockQuantity(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-slate-600">
+                Branch
+                <select className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={restockBranchId} onChange={(e) => setRestockBranchId(e.target.value)}>
+                  <option value="">Use template branch</option>
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>{branch.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs font-medium text-slate-600">
+                Purchase date
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="date" value={restockPurchaseDate} onChange={(e) => setRestockPurchaseDate(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-slate-600">
+                Purchase cost
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" value={restockPurchaseCost} onChange={(e) => setRestockPurchaseCost(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-slate-600">
+                Vendor name
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={restockVendorName} onChange={(e) => setRestockVendorName(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-slate-600">
+                Vendor contact
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={restockVendorContact} onChange={(e) => setRestockVendorContact(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-slate-600">
+                Invoice number
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={restockInvoiceNumber} onChange={(e) => setRestockInvoiceNumber(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-slate-600">
+                Warranty expiry
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="date" value={restockWarrantyExpiry} onChange={(e) => setRestockWarrantyExpiry(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-slate-600">
+                Expiry date
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="date" value={restockExpiryDate} onChange={(e) => setRestockExpiryDate(e.target.value)} />
+              </label>
+              <label className="text-xs font-medium text-slate-600 md:col-span-2">
+                Subscription term
+                <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={restockSubscriptionTerm} onChange={(e) => setRestockSubscriptionTerm(e.target.value)} />
+              </label>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Spec snapshot</div>
+                  <p className="text-xs text-slate-500 mt-1">Edit the copied spec values for the new instances before you add quantity.</p>
+                </div>
+                <button type="button" className="text-xs font-semibold text-cyan-700 hover:text-cyan-900" onClick={addRestockSpecRow}>Add spec row</button>
+              </div>
+              <div className="space-y-2">
+                {restockSpecRows.map((row) => (
+                  <div key={row.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center rounded-xl border border-slate-200 bg-white p-3">
+                    <select
+                      className="md:col-span-4 rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
+                      value={row.attributeRef}
+                      onChange={(e) => updateRestockSpecRow(row.id, { attributeRef: e.target.value, newAttributeName: '' })}
+                    >
+                      <option value="">Select attribute</option>
+                      {restockAttributeOptions.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))}
+                      <option value={NEW_OPTION_VALUE}>Add new attribute</option>
+                    </select>
+                    {row.attributeRef === NEW_OPTION_VALUE ? (
+                      <input
+                        className="md:col-span-3 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                        placeholder="New attribute name"
+                        value={row.newAttributeName}
+                        onChange={(e) => updateRestockSpecRow(row.id, { newAttributeName: e.target.value })}
+                      />
+                    ) : (
+                      <div className="md:col-span-3 text-xs text-slate-500 md:pl-2">{row.attributeRef ? 'Existing attribute' : 'Optional'}</div>
+                    )}
+                    <input
+                      className="md:col-span-4 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      placeholder="Value"
+                      value={row.value}
+                      onChange={(e) => updateRestockSpecRow(row.id, { value: e.target.value })}
+                    />
+                    <button type="button" className="md:col-span-1 text-xs font-semibold text-rose-600 hover:text-rose-800" onClick={() => removeRestockSpecRow(row.id)}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <label className="block text-xs font-medium text-slate-600">
+              Restock notes
+              <textarea className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm min-h-[90px]" value={restockNotes} onChange={(e) => setRestockNotes(e.target.value)} />
+            </label>
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="submit"
+                className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
+                disabled={restockMut.isPending}
+              >
+                {restockMut.isPending ? 'Adding quantity...' : 'Add quantity'}
+              </button>
+            </div>
+          </form>
+        ) : restockAssetId === NEW_OPTION_VALUE ? (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-white/80 p-4 text-sm text-slate-600">
+            Add New is handled by the catalog asset form below.
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-white/80 p-4 text-sm text-slate-600">
+            Select an existing asset to autofill its category, sub-category, vendor, cost, warranty, and spec snapshot.
+          </div>
+        )}
+      </div>
+
       <form
         className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm"
         onSubmit={(e) => {

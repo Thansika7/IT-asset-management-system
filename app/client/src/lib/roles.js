@@ -51,7 +51,7 @@ export const NAV = {
     hasJsonPermission(p, 'users', 'permissions'),
   /** View kits for registration / allocation planning */
   onboardingKits: (r) => [R.ADMIN, R.MANAGER, R.HR].includes(r),
-  stock: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
+  stock: (r) => [R.ADMIN, R.ORG_ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   /** Allocation / repair / movement metrics — GET /assets/usage/* */
   assetUsage: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   finance: (r, p) =>
@@ -65,7 +65,7 @@ export const NAV = {
 }
 
 export function canManageStockWrites(r) {
-  return [R.ADMIN, R.SUPPORT_TEAM].includes(r)
+  return [R.ADMIN, R.ORG_ADMIN, R.SUPPORT_TEAM].includes(r)
 }
 
 /** Manual allocate / return — backend: admin only */

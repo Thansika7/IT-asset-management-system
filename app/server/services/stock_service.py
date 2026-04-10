@@ -649,16 +649,6 @@ class StockService:
         
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
-
-        employee = (
-            apply_tenant_filter(db.query(Employee), user, Employee)
-            .filter(Employee.employee_id == emp_id)
-            .first()
-        )
-        if not employee:
-            raise ResourceNotFoundError("Employee", emp_id)
-        if employee.organization_id != asset.organization_id:
-            raise InvalidStateError("Employee and asset must belong to same organization")
         
         # Get current inventory (before adding)
         old_inventory = StockService.get_inventory(db, asset_id)
@@ -747,6 +737,137 @@ class StockService:
         
 >>>>>>> develop/prabhu
         return asset
+
+    @staticmethod
+    def add_asset_quantity(
+        db: Session,
+        asset_id: str,
+        quantity: int,
+        user: Employee,
+        *,
+        reason: str = "RESTOCK",
+        branch_id: str | None = None,
+        purchased_date=None,
+        purchase_cost: float | None = None,
+        vendor_name: str | None = None,
+        vendor_contact: str | None = None,
+        invoice_number: str | None = None,
+        warranty_expiry=None,
+        expiry_date=None,
+        subscription_term: str | None = None,
+        specifications: list | None = None,
+        instance_metadata: dict | None = None,
+    ):
+        """Create additional AVAILABLE instances from an existing asset template."""
+        from uuid import uuid4
+
+        asset = (
+            apply_tenant_filter(db.query(Asset), user, Asset)
+            .filter(Asset.asset_id == asset_id)
+            .with_for_update()
+            .first()
+        )
+        if not asset:
+            raise ResourceNotFoundError("Asset", asset_id)
+        if quantity <= 0:
+            raise InvalidStateError("quantity must be greater than zero")
+
+        old_inventory = StockService.get_inventory(db, asset_id)
+        old_snapshot = {
+            "available": old_inventory.available,
+            "assigned": old_inventory.assigned,
+            "in_repair": old_inventory.in_repair,
+            "not_usable": old_inventory.not_usable,
+            "retired": old_inventory.retired,
+            "total": old_inventory.total,
+        }
+
+        created_instances: list[AssetInstance] = []
+        restock_metadata = dict(instance_metadata or {}) if instance_metadata else {}
+        if specifications:
+            restock_metadata["specifications"] = [
+                {
+                    "attribute_id": item.attribute_id,
+                    "attribute_name": item.attribute_name,
+                    "value": item.value,
+                    "data_type": item.data_type,
+                    "is_required": item.is_required,
+                }
+                for item in specifications
+            ]
+
+        effective_branch_id = branch_id or asset.branch_id or user.branch_id
+        effective_vendor_name = vendor_name if vendor_name is not None else asset.vendor_name
+        effective_vendor_contact = vendor_contact if vendor_contact is not None else asset.vendor_contact
+        effective_invoice_number = invoice_number if invoice_number is not None else asset.invoice_number
+        effective_purchase_date = purchased_date if purchased_date is not None else asset.purchased_date
+        effective_purchase_cost = purchase_cost if purchase_cost is not None else asset.purchase_cost
+
+        for _ in range(quantity):
+            instance = AssetInstance(
+                instance_id=f"INS-{uuid4().hex[:12].upper()}",
+                asset_id=asset.asset_id,
+                organization_id=asset.organization_id,
+                branch_id=effective_branch_id,
+                serial_number=None,
+                asset_tag=None,
+                status=AssetStatus.AVAILABLE,
+                vendor_name=effective_vendor_name,
+                vendor_contact=effective_vendor_contact,
+                invoice_number=effective_invoice_number,
+                purchase_date=effective_purchase_date,
+                purchase_cost=effective_purchase_cost,
+                warranty_expiry=warranty_expiry,
+                expiry_date=expiry_date,
+                subscription_term=subscription_term,
+                instance_metadata=restock_metadata or None,
+            )
+            db.add(instance)
+            created_instances.append(instance)
+
+        db.flush()
+
+        new_inventory = StockService.get_inventory(db, asset_id)
+        new_snapshot = {
+            "available": new_inventory.available,
+            "assigned": new_inventory.assigned,
+            "in_repair": new_inventory.in_repair,
+            "not_usable": new_inventory.not_usable,
+            "retired": new_inventory.retired,
+            "total": new_inventory.total,
+        }
+
+        asset.total_quantity = new_inventory.total
+        asset.used = new_inventory.assigned
+        asset.unused = new_inventory.available
+        if new_inventory.available > 0:
+            asset.asset_status = AssetStatus.ACTIVE
+        elif new_inventory.assigned > 0:
+            asset.asset_status = AssetStatus.ASSIGNED
+        else:
+            asset.asset_status = AssetStatus.NOT_USABLE
+
+        AuditService.log_change(db, "assets", asset.asset_id, "UPDATE", user, old_snapshot, new_snapshot, reason)
+
+        for instance in created_instances:
+            LifecycleService.log_event(
+                db,
+                instance_id=instance.instance_id,
+                asset_id=asset.asset_id,
+                event_type=LifecycleEvent.CREATED,
+                performed_by=user,
+                old_status=None,
+                new_status=AssetStatus.AVAILABLE.value,
+                notes=reason,
+                organization_id=asset.organization_id,
+                metadata={
+                    "restock": True,
+                    "quantity_added": quantity,
+                    "asset_id": asset.asset_id,
+                },
+            )
+
+        return asset, created_instances
 
     @staticmethod
     def allocate_asset(db: Session, asset_id: str, emp_id: str, alloc_type: AllocationType, user: Employee, reason: str = "ALLOCATION", instance_id: str = None) -> Tracking:

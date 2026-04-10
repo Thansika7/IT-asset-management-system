@@ -212,6 +212,94 @@ class AssetAttributeUpdateResponse(BaseModel):
     updated_count: int
     updates: List[AssetAttributeUpdateResult]
 
+
+class AssetTemplateSpecRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attribute_id: str
+    attribute_name: str
+    value: Optional[str] = None
+    data_type: str = "text"
+    is_required: bool = False
+
+
+class AssetTemplateRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: str
+    name: str
+    category_id: Optional[str] = None
+    category: Optional[str] = None
+    sub_category_id: Optional[str] = None
+    sub_category: Optional[str] = None
+    branch_id: Optional[str] = None
+    branch: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    vendor_name: Optional[str] = None
+    vendor_contact: Optional[str] = None
+    invoice_number: Optional[str] = None
+    purchased_date: Optional[date] = None
+    purchase_cost: Optional[float] = None
+    salvage_value: Optional[float] = None
+    warranty_expiry: Optional[date] = None
+    expiry_date: Optional[date] = None
+    subscription_term: Optional[str] = None
+    useful_life_years: int = 5
+    total_quantity: int = 0
+    used: int = 0
+    unused: int = 0
+    inventory: Optional["InventorySnapshot"] = None
+    specifications: List[AssetTemplateSpecRead] = Field(default_factory=list)
+
+
+class AssetDetailAttributeRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attribute_id: str
+    name: str
+    value: Optional[str] = None
+
+
+class AssetDetailsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: str
+    asset_name: str
+    category_id: Optional[str] = None
+    category: Optional[str] = None
+    sub_category_id: Optional[str] = None
+    sub_category: Optional[str] = None
+    branch_id: Optional[str] = None
+    branch: Optional[str] = None
+    vendor_name: Optional[str] = None
+    vendor_contact: Optional[str] = None
+    purchase_cost: Optional[float] = None
+    warranty_expiry: Optional[date] = None
+    purchased_date: Optional[date] = None
+    expiry_date: Optional[date] = None
+    invoice_number: Optional[str] = None
+    inventory: Optional["InventorySnapshot"] = None
+    attributes: List[AssetDetailAttributeRead] = Field(default_factory=list)
+
+
+class AssetQuantityAddRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    quantity: int = 1
+    branch_id: Optional[str] = None
+    purchased_date: Optional[date] = None
+    purchase_cost: Optional[float] = None
+    vendor_name: Optional[str] = None
+    vendor_contact: Optional[str] = None
+    invoice_number: Optional[str] = None
+    warranty_expiry: Optional[date] = None
+    expiry_date: Optional[date] = None
+    subscription_term: Optional[str] = None
+    specifications: List[AssetSpecificationInput] = Field(default_factory=list)
+    instance_metadata: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def validate_quantity(self):
+        if self.quantity <= 0:
+            raise ValueError("quantity must be greater than zero")
+        return self
+
 class AssetInstanceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     instance_id: str
