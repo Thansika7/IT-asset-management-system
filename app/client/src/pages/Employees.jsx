@@ -263,6 +263,9 @@ export default function Employees() {
 
       {open && canRegisterEmployees(user.role) ? (
         <RegisterModal
+          filterOptions={employeeFilterOptions}
+          orgOptions={orgOptions}
+          branchOptions={branchOptions}
           onClose={() => setOpen(false)}
           onSubmit={(body) => regMut.mutate(body)}
           busy={regMut.isPending}
@@ -437,29 +440,18 @@ function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
   )
 }
 
-function RegisterModal({ onClose, onSubmit, busy, error }) {
+function RegisterModal({ filterOptions, orgOptions, branchOptions, onClose, onSubmit, busy, error }) {
   const { user } = useAuth()
-  const { data: filterOptions = { roles: [], statuses: [] } } = useQuery({
-    queryKey: ['employee-filter-options-register'],
-    queryFn: () => apiFetch('/employees/filter-options'),
-  })
-  const { data: orgOptionsRaw = { items: [] } } = useQuery({
-    queryKey: ['employee-filter-organizations-register'],
-    queryFn: () => apiFetch('/organizations?page=1&per_page=200'),
-  })
-  const { data: presets = [] } = useQuery({
+  const { data: presets = [], isError: presetsError, error: presetsErrorDetail } = useQuery({
     queryKey: ['onboarding-presets'],
     queryFn: () => apiFetch('/onboarding-presets/'),
+    retry: 1,
   })
 
-  const { data: branches = [] } = useQuery({
-    queryKey: ['employee-register-branches'],
-    queryFn: () => apiFetch('/branches'),
-  })
-
-  const { data: stockRaw = { items: [] } } = useQuery({
+  const { data: stockRaw = { items: [] }, isError: stockError, error: stockErrorDetail } = useQuery({
     queryKey: ['stock-register-modal'],
     queryFn: () => apiFetch('/stock/?page=1&per_page=200'),
+    retry: 1,
   })
 
   const [name, setName] = useState('')
@@ -474,36 +466,40 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
   const [extraIds, setExtraIds] = useState('')
   const formRef = useRef(null)
 
-  const orgOptions = normalizeOptions(orgOptionsRaw?.items || [])
-  const branchOptions = normalizeOptions(branches)
-  const roleOptions = filterOptions.roles || []
-  const statusOptions = filterOptions.statuses || []
+  const roleOptions = Array.isArray(filterOptions?.roles) ? filterOptions.roles : []
+  const statusOptions = Array.isArray(filterOptions?.statuses) ? filterOptions.statuses : []
   const stock = stockRaw?.items || []
 
-  const availableStock = useMemo(() => stock.filter((a) => a.unused > 0), [stock])
+  const availableStock = useMemo(() => {
+    if (!Array.isArray(stock)) return []
+    return stock.filter((a) => a?.unused > 0)
+  }, [stock])
 
   const filteredBranches = useMemo(() => {
+    if (!Array.isArray(branchOptions)) return []
     if (!organizationId) return branchOptions
-    return branchOptions.filter((b) => (b.raw?.organization_id || '') === organizationId)
+    return branchOptions.filter((b) => (b?.raw?.organization_id || '') === organizationId)
   }, [branchOptions, organizationId])
 
   useEffect(() => {
-    if (!roleOptions.length) return
+    if (!Array.isArray(roleOptions) || !roleOptions.length) return
     if (!roleOptions.includes(role)) {
       setRole(roleOptions[0])
     }
   }, [roleOptions, role])
 
   const selectedBranchName = useMemo(() => {
-    const selected = branchOptions.find((b) => b.id === branchId)
+    if (!Array.isArray(branchOptions)) return ''
+    const selected = branchOptions.find((b) => b?.id === branchId)
     return selected?.name || ''
   }, [branchOptions, branchId])
 
   const compatiblePresets = useMemo(() => {
-    const eb = selectedBranchName.trim()
+    if (!Array.isArray(presets)) return []
+    const eb = selectedBranchName?.trim() || ''
     return presets.filter((p) => {
-      if (p.target_role && p.target_role !== role) return false
-      if (p.branch) {
+      if (p?.target_role && p.target_role !== role) return false
+      if (p?.branch) {
         if (!eb || p.branch !== eb) return false
       }
       return true
@@ -548,166 +544,216 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
             <X className="w-5 h-5" />
           </button>
         </div>
-        <p className="text-xs text-slate-500 mb-4">
-          A <strong>company email</strong> and <strong>temporary password</strong> are generated automatically. Credentials are sent to the employee&apos;s{' '}
-          <strong>personal email</strong> (SMTP must be configured on the server). Phone: 10 digits if provided. Choose an <strong>onboarding kit</strong> (under{' '}
-          <strong>Onboarding kits</strong>) and/or tick lines with free stock — optional field for extra asset IDs.
-        </p>
-        <form
-          ref={formRef}
-          className="space-y-3"
-          autoComplete="off"
-          onSubmit={(e) => {
-            e.preventDefault()
-          }}
-        >
-          <input
-            required
-            name="reg_employee_name"
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Full name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoComplete="off"
-          />
-          <input
-            required
-            name="reg_personal_email"
-            type="email"
-            inputMode="email"
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Personal email (receives login credentials)"
-            value={personalEmail}
-            onChange={(e) => setPersonalEmail(e.target.value)}
-            autoComplete="off"
-          />
-          <input
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Phone (10 digits)"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            autoComplete="off"
-          />
-          <select
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            value={branchId}
-            onChange={(e) => setBranchId(e.target.value)}
-          >
-            <option value="">Select branch</option>
-            {filteredBranches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            value={organizationId}
-            onChange={(e) => {
-              setOrganizationId(e.target.value)
-              setBranchId('')
-            }}
-            disabled={user?.role !== R.SUPER_ADMIN}
-          >
-            <option value="">Select organization</option>
-            {orgOptions.map((org) => (
-              <option key={org.id} value={org.id}>{org.name}</option>
-            ))}
-          </select>
-          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
-            {roleOptions.map((item) => (
-              <option key={item} value={item}>{labelForRole(item)}</option>
-            ))}
-          </select>
-          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={employeeStatus} onChange={(e) => setEmployeeStatus(e.target.value)}>
-            {statusOptions.map((item) => (
-              <option key={item} value={item}>{item}</option>
-            ))}
-          </select>
-
-          <div>
-            <label className="text-xs font-semibold text-slate-600">Onboarding kit (optional)</label>
-            <select className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={presetId} onChange={(e) => setPresetId(e.target.value)}>
-              <option value="">— None —</option>
-              {compatiblePresets.map((p) => (
-                <option key={p.preset_id} value={p.preset_id}>
-                  {p.name} ({p.preset_id})
-                  {p.target_role ? ` · ${labelForRole(p.target_role)}` : ''}
-                  {p.branch ? ` · ${p.branch}` : ''}
-                </option>
-              ))}
-            </select>
-            {compatiblePresets.length === 0 && presets.length > 0 ? (
-              <p className="text-[11px] text-amber-700 mt-1">No kit matches this role/branch — adjust branch or role, or create a kit.</p>
-            ) : null}
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-slate-600">Also assign from inventory (unused &gt; 0)</label>
-            <div className="mt-1 max-h-36 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100 text-sm">
-              {availableStock.length === 0 ? (
-                <p className="p-3 text-xs text-slate-500">No spare units in catalog.</p>
-              ) : (
-                availableStock.map((a) => (
-                  <label key={a.asset_id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer">
-                    <input type="checkbox" checked={picked.has(a.asset_id)} onChange={() => togglePick(a.asset_id)} />
-                    <span className="font-mono text-[11px]">{a.asset_id}</span>
-                    <span className="text-slate-600 truncate text-xs">{a.name}</span>
-                    <span className="text-xs text-teal-700 ml-auto">{a.unused} free</span>
-                  </label>
-                ))
-              )}
+        
+        {presetsError || stockError ? (
+          <>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-700 text-sm mb-4 space-y-1">
+              <p className="font-medium text-xs">⚠️ Some optional data unavailable</p>
+              {presetsError && <p className="text-xs">Onboarding presets: {presetsErrorDetail?.message || 'Network error'}</p>}
+              {stockError && <p className="text-xs">Stock inventory: {stockErrorDetail?.message || 'Network error'}</p>}
+              <p className="text-xs mt-1">You can still register the employee without these options</p>
             </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-slate-600">Extra asset IDs (optional)</label>
-            <input
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono text-xs"
-              placeholder="Comma-separated, only if not listed above"
-              value={extraIds}
-              onChange={(e) => setExtraIds(e.target.value)}
+            <p className="text-xs text-slate-500 mb-4">
+              A <strong>company email</strong> and <strong>temporary password</strong> are generated automatically. Credentials are sent to the employee&apos;s{' '}
+              <strong>personal email</strong> (SMTP must be configured on the server). Phone: 10 digits if provided.
+            </p>
+            <form ref={formRef} className="space-y-3" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
+              <input required name="reg_employee_name" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="off" />
+              <input required name="reg_personal_email" type="email" inputMode="email" className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Personal email (receives login credentials)" value={personalEmail} onChange={(e) => setPersonalEmail(e.target.value)} autoComplete="off" />
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Phone (10 digits)" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="off" />
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+                <option value="">Select branch</option>
+                {filteredBranches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+              </select>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={organizationId} onChange={(e) => { setOrganizationId(e.target.value); setBranchId('') }} disabled={user?.role !== R.SUPER_ADMIN}>
+                <option value="">Select organization</option>
+                {orgOptions.map((org) => (<option key={org.id} value={org.id}>{org.name}</option>))}
+              </select>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
+                {roleOptions.map((item) => (<option key={item} value={item}>{labelForRole(item)}</option>))}
+              </select>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={employeeStatus} onChange={(e) => setEmployeeStatus(e.target.value)}>
+                {statusOptions.map((item) => (<option key={item} value={item}>{item}</option>))}
+              </select>
+              {error ? (<p className="text-xs text-rose-600 whitespace-pre-wrap break-words rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">{error}</p>) : null}
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">Cancel</button>
+                <button type="button" disabled={busy} className="flex-1 rounded-xl bg-slate-900 text-white py-2.5 text-sm font-semibold disabled:opacity-50" onClick={() => {
+                  const form = formRef.current
+                  if (!form?.checkValidity()) { form?.reportValidity(); return }
+                  const nm = name.trim(); const pe = personalEmail.trim()
+                  if (!nm || !pe) return
+                  onSubmit({ name: nm, personal_email: pe, phone: phone.trim() || null, role, employee_status: employeeStatus, organization_id: organizationId || null, branch_id: branchId || null, preset_id: presetId || null, onboarding_asset_ids: mergeOnboardingIds() })
+                }}>
+                  {busy ? 'Saving…' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-slate-500 mb-4">
+              A <strong>company email</strong> and <strong>temporary password</strong> are generated automatically. Credentials are sent to the employee&apos;s{' '}
+              <strong>personal email</strong> (SMTP must be configured on the server). Phone: 10 digits if provided. Choose an <strong>onboarding kit</strong> (under{' '}
+              <strong>Onboarding kits</strong>) and/or tick lines with free stock — optional field for extra asset IDs.
+            </p>
+            <form
+              ref={formRef}
+              className="space-y-3"
               autoComplete="off"
-            />
-          </div>
-
-          {error ? (
-            <p className="text-xs text-rose-600 whitespace-pre-wrap break-words rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">{error}</p>
-          ) : null}
-          <div className="flex gap-2 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              className="flex-1 rounded-xl bg-slate-900 text-white py-2.5 text-sm font-semibold disabled:opacity-50"
-              onClick={() => {
-                const form = formRef.current
-                if (!form?.checkValidity()) {
-                  form?.reportValidity()
-                  return
-                }
-                const nm = name.trim()
-                const pe = personalEmail.trim()
-                if (!nm || !pe) return
-                onSubmit({
-                  name: nm,
-                  personal_email: pe,
-                  phone: phone.trim() || null,
-                  role,
-                  employee_status: employeeStatus,
-                  organization_id: organizationId || null,
-                  branch_id: branchId || null,
-                  preset_id: presetId || null,
-                  onboarding_asset_ids: mergeOnboardingIds(),
-                })
+              onSubmit={(e) => {
+                e.preventDefault()
               }}
             >
-              {busy ? 'Saving…' : 'Create'}
-            </button>
-          </div>
-        </form>
+              <input
+                required
+                name="reg_employee_name"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Full name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="off"
+              />
+              <input
+                required
+                name="reg_personal_email"
+                type="email"
+                inputMode="email"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Personal email (receives login credentials)"
+                value={personalEmail}
+                onChange={(e) => setPersonalEmail(e.target.value)}
+                autoComplete="off"
+              />
+              <input
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                placeholder="Phone (10 digits)"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                autoComplete="off"
+              />
+              <select
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                value={branchId}
+                onChange={(e) => setBranchId(e.target.value)}
+              >
+                <option value="">Select branch</option>
+                {filteredBranches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                value={organizationId}
+                onChange={(e) => {
+                  setOrganizationId(e.target.value)
+                  setBranchId('')
+                }}
+                disabled={user?.role !== R.SUPER_ADMIN}
+              >
+                <option value="">Select organization</option>
+                {orgOptions.map((org) => (
+                  <option key={org.id} value={org.id}>{org.name}</option>
+                ))}
+              </select>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
+                {roleOptions.map((item) => (
+                  <option key={item} value={item}>{labelForRole(item)}</option>
+                ))}
+              </select>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={employeeStatus} onChange={(e) => setEmployeeStatus(e.target.value)}>
+                {statusOptions.map((item) => (
+                  <option key={item} value={item}>{item}</option>
+                ))}
+              </select>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-600">Onboarding kit (optional)</label>
+                <select className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={presetId} onChange={(e) => setPresetId(e.target.value)}>
+                  <option value="">— None —</option>
+                  {compatiblePresets.map((p) => (
+                    <option key={p.preset_id} value={p.preset_id}>
+                      {p.name} ({p.preset_id})
+                      {p.target_role ? ` · ${labelForRole(p.target_role)}` : ''}
+                      {p.branch ? ` · ${p.branch}` : ''}
+                    </option>
+                  ))}
+                </select>
+                {compatiblePresets.length === 0 && presets.length > 0 ? (
+                  <p className="text-[11px] text-amber-700 mt-1">No kit matches this role/branch — adjust branch or role, or create a kit.</p>
+                ) : null}
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-600">Also assign from inventory (unused &gt; 0)</label>
+                <div className="mt-1 max-h-36 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100 text-sm">
+                  {availableStock.length === 0 ? (
+                    <p className="p-3 text-xs text-slate-500">No spare units in catalog.</p>
+                  ) : (
+                    availableStock.map((a) => (
+                      <label key={a.asset_id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                        <input type="checkbox" checked={picked.has(a.asset_id)} onChange={() => togglePick(a.asset_id)} />
+                        <span className="font-mono text-[11px]">{a.asset_id}</span>
+                        <span className="text-slate-600 truncate text-xs">{a.name}</span>
+                        <span className="text-xs text-teal-700 ml-auto">{a.unused} free</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-600">Extra asset IDs (optional)</label>
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-mono text-xs"
+                  placeholder="Comma-separated, only if not listed above"
+                  value={extraIds}
+                  onChange={(e) => setExtraIds(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+
+              {error ? (
+                <p className="text-xs text-rose-600 whitespace-pre-wrap break-words rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">{error}</p>
+              ) : null}
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="flex-1 rounded-xl bg-slate-900 text-white py-2.5 text-sm font-semibold disabled:opacity-50"
+                  onClick={() => {
+                    const form = formRef.current
+                    if (!form?.checkValidity()) {
+                      form?.reportValidity()
+                      return
+                    }
+                    const nm = name.trim()
+                    const pe = personalEmail.trim()
+                    if (!nm || !pe) return
+                    onSubmit({
+                      name: nm,
+                      personal_email: pe,
+                      phone: phone.trim() || null,
+                      role,
+                      employee_status: employeeStatus,
+                      organization_id: organizationId || null,
+                      branch_id: branchId || null,
+                      preset_id: presetId || null,
+                      onboarding_asset_ids: mergeOnboardingIds(),
+                    })
+                  }}
+                >
+                  {busy ? 'Saving…' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
       </div>
     </div>
   )
@@ -717,23 +763,23 @@ function EditEmployeeModal({ empId, name, onClose, onSaved }) {
   const { user } = useAuth()
   const qc = useQueryClient()
 
-  const { data: employee, isLoading } = useQuery({
+  const { data: employee, isLoading, isError: empError, error: empErrorDetail } = useQuery({
     queryKey: ['employee-detail', empId],
     queryFn: () => apiFetch(`/employees/${empId}`),
     enabled: Boolean(empId),
   })
 
-  const { data: filterOptions = { roles: [], statuses: [] } } = useQuery({
+  const { data: filterOptions = { roles: [], statuses: [] }, isError: optionsError } = useQuery({
     queryKey: ['employee-filter-options-edit'],
     queryFn: () => apiFetch('/employees/filter-options'),
   })
 
-  const { data: orgOptionsRaw = { items: [] } } = useQuery({
+  const { data: orgOptionsRaw = { items: [] }, isError: orgError } = useQuery({
     queryKey: ['employee-filter-organizations-edit'],
     queryFn: () => apiFetch('/organizations?page=1&per_page=200'),
   })
 
-  const { data: branches = [] } = useQuery({
+  const { data: branches = [], isError: branchesError } = useQuery({
     queryKey: ['employee-edit-branches'],
     queryFn: () => apiFetch('/branches'),
   })
@@ -756,9 +802,9 @@ function EditEmployeeModal({ empId, name, onClose, onSaved }) {
   const [role, setRole] = useState('')
   const [status, setStatus] = useState('active')
 
-  const orgOptions = normalizeOptions(orgOptionsRaw?.items || [])
-  const branchOptions = normalizeOptions(branches)
-  const roleOptions = filterOptions.roles || []
+  const orgOptions = normalizeOptions(orgOptionsRaw?.items || []) || []
+  const branchOptions = normalizeOptions(Array.isArray(branches) ? branches : []) || []
+  const roleOptions = Array.isArray(filterOptions.roles) ? filterOptions.roles : []
   const statusOptions = filterOptions.statuses || []
 
   useEffect(() => {
@@ -773,8 +819,9 @@ function EditEmployeeModal({ empId, name, onClose, onSaved }) {
   }, [employee, user?.organizationId])
 
   const filteredBranches = useMemo(() => {
+    if (!Array.isArray(branchOptions)) return []
     if (!organizationId) return branchOptions
-    return branchOptions.filter((b) => (b.raw?.organization_id || '') === organizationId)
+    return branchOptions.filter((b) => (b?.raw?.organization_id || '') === organizationId)
   }, [branchOptions, organizationId])
 
   return (
@@ -789,6 +836,23 @@ function EditEmployeeModal({ empId, name, onClose, onSaved }) {
         </div>
         {isLoading ? (
           <div className="text-sm text-slate-400 animate-pulse">Loading employee details...</div>
+        ) : empError ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-rose-700 text-sm">
+            <p className="font-medium">Failed to load employee</p>
+            <p className="text-xs mt-1">{empErrorDetail?.message || 'Please try again'}</p>
+            <button type="button" onClick={onClose} className="mt-3 text-xs font-semibold underline">Close</button>
+          </div>
+        ) : !employee ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-700 text-sm">
+            <p className="font-medium">Employee not found</p>
+            <button type="button" onClick={onClose} className="mt-3 text-xs font-semibold underline">Close</button>
+          </div>
+        ) : (optionsError || orgError || branchesError) ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-rose-700 text-sm">
+            <p className="font-medium">Failed to load form options</p>
+            <p className="text-xs mt-1">Some data couldn't be loaded. Please try again.</p>
+            <button type="button" onClick={onClose} className="mt-3 text-xs font-semibold underline">Close</button>
+          </div>
         ) : (
           <div className="space-y-3">
             <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Full name" />
@@ -853,11 +917,11 @@ function EditEmployeeModal({ empId, name, onClose, onSaved }) {
 
 function PermissionsModal({ empId, name, onClose, onSaved }) {
   const qc = useQueryClient()
-  const { data: permissions, isLoading } = useQuery({
+  const { data: permissions, isLoading, isError: permError, error: permErrorDetail } = useQuery({
     queryKey: ['employee-permissions', empId],
     queryFn: () => apiFetch(`/employees/${empId}/permissions`),
   })
-  const { data: permissionCatalog = { modules: [] }, isLoading: isCatalogLoading } = useQuery({
+  const { data: permissionCatalog = { modules: [] }, isLoading: isCatalogLoading, isError: catalogError } = useQuery({
     queryKey: ['employee-permissions-catalog'],
     queryFn: () => apiFetch('/employees/permissions/catalog'),
   })
@@ -907,8 +971,14 @@ function PermissionsModal({ empId, name, onClose, onSaved }) {
           </button>
         </div>
         
-        {isLoading || isCatalogLoading ? (
+        {(isLoading || isCatalogLoading) ? (
           <div className="flex-1 min-h-[300px] flex items-center justify-center text-slate-400 animate-pulse">Loading permissions...</div>
+        ) : (permError || catalogError) ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-rose-700 text-sm">
+            <p className="font-medium">Failed to load permissions</p>
+            <p className="text-xs mt-1">{permErrorDetail?.message || catalogError?.message || 'Please try again'}</p>
+            <button type="button" onClick={onClose} className="mt-3 text-xs font-semibold underline">Close</button>
+          </div>
         ) : (
           <>
             <div className="flex-1 overflow-y-auto mb-6 pr-2 space-y-6">

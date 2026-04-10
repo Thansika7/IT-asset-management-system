@@ -143,7 +143,7 @@ def _ensure_onboarding_preset_columns() -> None:
 
 
 def _ensure_employee_permission_columns() -> None:
-    """Backfill schema for temporary permission support in legacy databases."""
+    """Backfill schema for JSON-only employee permissions in legacy databases."""
     with engine.begin() as conn:
         rows = conn.execute(
             text(
@@ -156,12 +156,8 @@ def _ensure_employee_permission_columns() -> None:
         )
         existing = {row[0] for row in rows}
 
-        if "temporary_permissions_json" not in existing:
-            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN temporary_permissions_json JSON NULL"))
-        if "valid_from" not in existing:
-            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN valid_from TIMESTAMPTZ NULL"))
-        if "valid_until" not in existing:
-            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN valid_until TIMESTAMPTZ NULL"))
+        if "permissions_json" not in existing:
+            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN permissions_json JSON NOT NULL DEFAULT '{}'::json"))
 
 
 def _ensure_asset_instance_finance_columns() -> None:

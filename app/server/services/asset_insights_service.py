@@ -6,6 +6,7 @@ from typing import Optional
 
 from sqlalchemy import String, func, or_
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.sql import case as sql_case
 
 from app.server.exceptions.base import ResourceNotFoundError
 from app.server.models.asset_insights import (
@@ -29,7 +30,7 @@ from app.server.models.asset_insights import (
     UtilizationItem,
 )
 from app.server.models.stock import AssetTemplateRead, AssetTemplateSpecRead, InventorySnapshot
-from app.server.models.stock import AssetDetailsRead, AssetDetailAttributeRead
+from app.server.models.stock import AssetDetailsRead, AssetDetailAttributeRead, AssetTemplateDetailsRead, AssetTemplateInventoryCountsRead
 from app.server.schema.employee import Employee
 from app.server.schema.request import Request
 from app.server.schema.asset import Asset, AssetInstance, AssetStatus
@@ -532,6 +533,68 @@ class AssetInsightsService:
                 )
                 for row in attribute_rows
             ],
+        )
+
+    @staticmethod
+    def get_asset_template_details(db: Session, asset_id: str, current_user: Employee) -> AssetTemplateDetailsRead:
+        asset = AssetInsightsService._base_asset_query(db, current_user).filter(Asset.asset_id == asset_id).first()
+        if not asset:
+            raise ResourceNotFoundError("Asset", asset_id)
+
+        first_instance = (
+            db.query(AssetInstance)
+            .filter(AssetInstance.asset_id == asset_id)
+            .order_by(AssetInstance.created_at.asc())
+            .first()
+        )
+
+        aggregate = (
+            db.query(
+                func.count(AssetInstance.instance_id).label("total"),
+                func.sum(sql_case((AssetInstance.status == AssetStatus.AVAILABLE, 1), else_=0)).label("available"),
+                func.sum(sql_case((AssetInstance.status == AssetStatus.ASSIGNED, 1), else_=0)).label("assigned"),
+            )
+            .filter(AssetInstance.asset_id == asset_id)
+            .first()
+        )
+
+        attribute_rows = (
+            db.query(
+                AssetAttributeValue.attribute_id,
+                AssetAttribute.attribute_name,
+                AssetAttributeValue.value,
+            )
+            .join(AssetAttribute, AssetAttribute.attribute_id == AssetAttributeValue.attribute_id)
+            .filter(AssetAttributeValue.asset_id == asset_id)
+            .order_by(AssetAttribute.attribute_name.asc())
+            .all()
+        )
+
+        return AssetTemplateDetailsRead(
+            asset_id=asset.asset_id,
+            asset_name=asset.name,
+            category_id=asset.category_id,
+            category=asset.category.category_name if asset.category else None,
+            sub_category_id=asset.sub_category_id,
+            sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+            branch_id=asset.branch_id,
+            branch=asset.branch,
+            vendor_name=asset.vendor_name or (first_instance.vendor_name if first_instance else None),
+            purchase_cost=asset.purchase_cost if asset.purchase_cost is not None else (first_instance.purchase_cost if first_instance else None),
+            warranty_expiry=first_instance.warranty_expiry if first_instance else None,
+            attributes=[
+                AssetDetailAttributeRead(
+                    attribute_id=row.attribute_id,
+                    name=row.attribute_name,
+                    value=row.value,
+                )
+                for row in attribute_rows
+            ],
+            inventory_counts=AssetTemplateInventoryCountsRead(
+                total=int(aggregate.total or 0),
+                available=int(aggregate.available or 0),
+                assigned=int(aggregate.assigned or 0),
+            ),
         )
 
 

@@ -279,6 +279,30 @@ class AssetDetailsRead(BaseModel):
     attributes: List[AssetDetailAttributeRead] = Field(default_factory=list)
 
 
+class AssetTemplateInventoryCountsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    total: int = 0
+    available: int = 0
+    assigned: int = 0
+
+
+class AssetTemplateDetailsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_id: str
+    asset_name: str
+    category_id: Optional[str] = None
+    category: Optional[str] = None
+    sub_category_id: Optional[str] = None
+    sub_category: Optional[str] = None
+    branch_id: Optional[str] = None
+    branch: Optional[str] = None
+    vendor_name: Optional[str] = None
+    purchase_cost: Optional[float] = None
+    warranty_expiry: Optional[date] = None
+    attributes: List[AssetDetailAttributeRead] = Field(default_factory=list)
+    inventory_counts: AssetTemplateInventoryCountsRead = Field(default_factory=AssetTemplateInventoryCountsRead)
+
+
 class AssetQuantityAddRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     quantity: int = 1

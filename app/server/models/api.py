@@ -189,6 +189,8 @@ class EmployeeFilterOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     statuses: List[str]
     roles: List[str]
+    organizations: List[dict] = Field(default_factory=list)
+    branches: List[dict] = Field(default_factory=list)
 
 class OAuthEmployeeCreate(EmployeeBase):
     oauth_provider: str
@@ -218,22 +220,14 @@ class EmployeeRead(EmployeeBase):
 class EmployeePermissionBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
     permissions_json: Dict[str, Dict[str, bool]] = Field(default_factory=dict)
-    temporary_permissions_json: Dict[str, Dict[str, bool]] = Field(default_factory=dict)
-    valid_from: Optional[datetime] = None
-    valid_until: Optional[datetime] = None
+    organization_id: Optional[str] = None
+    branch_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     @field_validator("permissions_json", mode="before")
     @classmethod
     def normalize_permissions_json(cls, v):
-        if v is None:
-            return {}
-        if isinstance(v, dict):
-            return v
-        return {}
-
-    @field_validator("temporary_permissions_json", mode="before")
-    @classmethod
-    def normalize_temporary_permissions_json(cls, v):
         if v is None:
             return {}
         if isinstance(v, dict):

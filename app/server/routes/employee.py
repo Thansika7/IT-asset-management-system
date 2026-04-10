@@ -4,13 +4,11 @@ from typing import List, Optional
 
 from app.server.auth.service import (
     create_default_permissions,
-    get_default_permission_flags,
     get_effective_permissions,
     get_current_user,
     get_permission_catalog,
     get_password_hash,
     has_permission,
-    permission_json_to_legacy_flags,
 )
 from sqlalchemy import or_, String, func
 from app.server.database.database import get_db
@@ -194,15 +192,12 @@ def register_employee(
     db.add(user)
     db.flush()
 
-    # Assign default role permissions for all permission flags.
-    default_perms = get_default_permission_flags(user.role)
     default_json = create_default_permissions(user.role)
     user.permissions = EmployeePermission(
         employee_id=user.employee_id,
         organization_id=user.organization_id,
         branch_id=user.branch_id,
         permissions_json=default_json,
-        **default_perms
     )
     db.add(user.permissions)
     db.flush()
@@ -318,13 +313,30 @@ def get_employee_filter_options(
     query = apply_tenant_filter(db.query(Employee), current_user, Employee)
     statuses = query.with_entities(Employee.is_active).distinct().all()
     roles = query.with_entities(Employee.role).distinct().all()
+    organizations_query = apply_tenant_filter(db.query(Organization), current_user, Organization)
+    branches_query = apply_tenant_filter(db.query(Branch), current_user, Branch)
 
     status_values = ["active" if row[0] else "inactive" for row in statuses if row[0] is not None]
     role_values = [row[0].value if hasattr(row[0], "value") else str(row[0]) for row in roles if row[0] is not None]
+    organization_values = organizations_query.order_by(Organization.organization_name.asc()).all()
+    branch_values = branches_query.order_by(Branch.branch_name.asc()).all()
 
     return {
         "statuses": sorted(set(status_values)),
         "roles": sorted(set(role_values)),
+        "organizations": [
+            {"id": org.organization_id, "name": org.organization_name}
+            for org in organization_values
+        ],
+        "branches": [
+            {
+                "id": branch.branch_id,
+                "name": branch.branch_name,
+                "organization_id": branch.organization_id,
+                "status": branch.status.value if hasattr(branch.status, "value") else str(branch.status),
+            }
+            for branch in branch_values
+        ],
     }
 
 
@@ -573,14 +585,12 @@ def get_employee_permissions(
         raise ResourceNotFoundError("Employee", emp_id)
 
     if not target.permissions:
-        default_perms = get_default_permission_flags(target.role)
         default_json = create_default_permissions(target.role)
         target.permissions = EmployeePermission(
             employee_id=target.employee_id,
             organization_id=target.organization_id,
             branch_id=target.branch_id,
             permissions_json=default_json,
-            **default_perms,
         )
         db.add(target.permissions)
         db.commit()
@@ -594,9 +604,10 @@ def get_employee_permissions(
     return {
         "employee_id": target.employee_id,
         "permissions_json": get_effective_permissions(target),
-        "temporary_permissions_json": target.permissions.temporary_permissions_json or {},
-        "valid_from": target.permissions.valid_from,
-        "valid_until": target.permissions.valid_until,
+        "organization_id": target.permissions.organization_id,
+        "branch_id": target.permissions.branch_id,
+        "created_at": target.permissions.created_at,
+        "updated_at": target.permissions.updated_at,
     }
 
 @router.put("/{emp_id}/permissions", response_model=EmployeePermissionRead)
@@ -618,28 +629,19 @@ def update_employee_permissions(
             raise HTTPException(status_code=403, detail="Organization Admin cannot modify permissions of a Global Admin.")
 
     if not target.permissions:
-        default_perms = get_default_permission_flags(target.role)
         default_json = create_default_permissions(target.role)
         target.permissions = EmployeePermission(
             employee_id=target.employee_id,
             organization_id=target.organization_id,
             branch_id=target.branch_id,
             permissions_json=default_json,
-            **default_perms,
         )
         db.add(target.permissions)
 
     payload_dict = payload.model_dump(exclude_unset=True)
     permissions_json = payload_dict.get("permissions_json", {})
-    temporary_permissions_json = payload_dict.get("temporary_permissions_json", {})
-    valid_from = payload_dict.get("valid_from")
-    valid_until = payload_dict.get("valid_until")
     if not isinstance(permissions_json, dict):
         raise HTTPException(status_code=400, detail="permissions_json must be an object")
-    if not isinstance(temporary_permissions_json, dict):
-        raise HTTPException(status_code=400, detail="temporary_permissions_json must be an object")
-    if valid_from and valid_until and valid_from > valid_until:
-        raise HTTPException(status_code=400, detail="valid_from must be earlier than valid_until")
 
     normalized_permissions: dict[str, dict[str, bool]] = {}
     for module, actions in permissions_json.items():
@@ -654,30 +656,9 @@ def update_employee_permissions(
             if str(action).strip()
         }
 
-    normalized_temporary_permissions: dict[str, dict[str, bool]] = {}
-    for module, actions in temporary_permissions_json.items():
-        if not isinstance(actions, dict):
-            continue
-        module_key = str(module).strip()
-        if not module_key:
-            continue
-        normalized_temporary_permissions[module_key] = {
-            str(action).strip(): bool(allowed)
-            for action, allowed in actions.items()
-            if str(action).strip()
-        }
-
     old_permissions_json = target.permissions.permissions_json or {}
-    old_temporary_permissions_json = target.permissions.temporary_permissions_json or {}
-    old_valid_from = target.permissions.valid_from
-    old_valid_until = target.permissions.valid_until
 
     target.permissions.permissions_json = normalized_permissions
-    target.permissions.temporary_permissions_json = normalized_temporary_permissions
-    target.permissions.valid_from = valid_from
-    target.permissions.valid_until = valid_until
-    for flag, value in permission_json_to_legacy_flags(normalized_permissions).items():
-        setattr(target.permissions, flag, value)
 
     AuditService.log_change(
         db,
@@ -687,15 +668,9 @@ def update_employee_permissions(
         user=current_user,
         old_values={
             "permissions_json": old_permissions_json,
-            "temporary_permissions_json": old_temporary_permissions_json,
-            "valid_from": old_valid_from.isoformat() if old_valid_from else None,
-            "valid_until": old_valid_until.isoformat() if old_valid_until else None,
         },
         new_values={
             "permissions_json": normalized_permissions,
-            "temporary_permissions_json": normalized_temporary_permissions,
-            "valid_from": valid_from.isoformat() if valid_from else None,
-            "valid_until": valid_until.isoformat() if valid_until else None,
         },
         reason="PERMISSION_UPDATED",
     )
@@ -705,9 +680,10 @@ def update_employee_permissions(
     return {
         "employee_id": target.employee_id,
         "permissions_json": get_effective_permissions(target),
-        "temporary_permissions_json": target.permissions.temporary_permissions_json or {},
-        "valid_from": target.permissions.valid_from,
-        "valid_until": target.permissions.valid_until,
+        "organization_id": target.permissions.organization_id,
+        "branch_id": target.permissions.branch_id,
+        "created_at": target.permissions.created_at,
+        "updated_at": target.permissions.updated_at,
     }
 
 
@@ -721,14 +697,12 @@ def get_my_permissions(
         raise ResourceNotFoundError("Employee", current_user.employee_id)
 
     if not target.permissions:
-        default_perms = get_default_permission_flags(target.role)
         default_json = create_default_permissions(target.role)
         target.permissions = EmployeePermission(
             employee_id=target.employee_id,
             organization_id=target.organization_id,
             branch_id=target.branch_id,
             permissions_json=default_json,
-            **default_perms,
         )
         db.add(target.permissions)
         db.commit()
@@ -737,9 +711,10 @@ def get_my_permissions(
     return {
         "employee_id": target.employee_id,
         "permissions_json": get_effective_permissions(target),
-        "temporary_permissions_json": target.permissions.temporary_permissions_json or {},
-        "valid_from": target.permissions.valid_from,
-        "valid_until": target.permissions.valid_until,
+        "organization_id": target.permissions.organization_id,
+        "branch_id": target.permissions.branch_id,
+        "created_at": target.permissions.created_at,
+        "updated_at": target.permissions.updated_at,
     }
 
 

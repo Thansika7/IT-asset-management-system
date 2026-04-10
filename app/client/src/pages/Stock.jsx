@@ -12,7 +12,7 @@ import {
   getSortedRowModel,
   flexRender,
 } from '@tanstack/react-table'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, PackagePlus, RotateCw, PencilLine } from 'lucide-react'
 import AssetDetailPanel from '@/components/AssetDetailPanel'
 import { Search } from 'lucide-react'
 
@@ -469,6 +469,13 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
   const [restockSubscriptionTerm, setRestockSubscriptionTerm] = useState('')
   const [restockSpecRows, setRestockSpecRows] = useState([newSpecRow()])
   const [restockNotes, setRestockNotes] = useState('')
+  const [activeFeature, setActiveFeature] = useState('register')
+  const [updateAssetId, setUpdateAssetId] = useState('')
+  const [updateInstanceId, setUpdateInstanceId] = useState('')
+  const [updateVendorName, setUpdateVendorName] = useState('')
+  const [updatePurchaseCost, setUpdatePurchaseCost] = useState('')
+  const [updateWarranty, setUpdateWarranty] = useState('')
+  const [updateSpecRows, setUpdateSpecRows] = useState([newSpecRow()])
 
   const selectedCategory = categories.find((item) => item.id === ccat)
   const selectedCategoryName = (selectedCategory?.name || '').toLowerCase()
@@ -496,7 +503,7 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
 
   const { data: selectedRestockDetailsData } = useQuery({
     queryKey: ['asset-details', restockAssetId],
-    queryFn: () => apiFetch(`/assets/${restockAssetId}/details`),
+    queryFn: () => apiFetch(`/assets/${restockAssetId}/template-details`),
     enabled: Boolean(restockAssetId) && restockAssetId !== NEW_OPTION_VALUE,
   })
 
@@ -507,6 +514,28 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
   })
 
   const restockAttributeOptions = useMemo(() => normalizeOptions(restockAttributeOptionsRaw), [restockAttributeOptionsRaw])
+
+  const { data: updateDetailsData } = useQuery({
+    queryKey: ['asset-update-details', updateAssetId],
+    queryFn: () => apiFetch(`/assets/${updateAssetId}/template-details`),
+    enabled: Boolean(updateAssetId),
+  })
+
+  const { data: updateInstancesRaw = { items: [] } } = useQuery({
+    queryKey: ['asset-update-instances', updateAssetId],
+    queryFn: () => apiFetch(`/stock/instances?asset_id=${updateAssetId}&page=1&per_page=200`),
+    enabled: Boolean(updateAssetId),
+  })
+
+  const updateInstances = updateInstancesRaw?.items || []
+
+  const { data: updateAttributeOptionsRaw = [] } = useQuery({
+    queryKey: ['asset-update-attribute-options', updateDetailsData?.sub_category_id],
+    queryFn: () => apiFetch(`/stock/attributes/options?sub_category_id=${updateDetailsData?.sub_category_id}`),
+    enabled: Boolean(updateDetailsData?.sub_category_id),
+  })
+
+  const updateAttributeOptions = useMemo(() => normalizeOptions(updateAttributeOptionsRaw), [updateAttributeOptionsRaw])
 
   const restockSeed = useMemo(() => {
     if (restockAssetId === NEW_OPTION_VALUE) return null
@@ -530,6 +559,11 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
     onSuccess: invalidateStockRelated,
   })
 
+  const updateAssetMut = useMutation({
+    mutationFn: ({ instanceId, body }) => apiFetch(`/assets/${instanceId}/update-attributes`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: invalidateStockRelated,
+  })
+
   const updateSpecRow = (rowId, patch) => {
     setSpecRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)))
   }
@@ -548,6 +582,16 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
 
   const removeRestockSpecRow = (rowId) => {
     setRestockSpecRows((prev) => (prev.length <= 1 ? [newSpecRow()] : prev.filter((row) => row.id !== rowId)))
+  }
+
+  const updateAssetSpecRow = (rowId, patch) => {
+    setUpdateSpecRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)))
+  }
+
+  const addUpdateSpecRow = () => setUpdateSpecRows((prev) => [...prev, newSpecRow()])
+
+  const removeUpdateSpecRow = (rowId) => {
+    setUpdateSpecRows((prev) => (prev.length <= 1 ? [newSpecRow()] : prev.filter((row) => row.id !== rowId)))
   }
 
   const resetForm = () => {
@@ -622,6 +666,11 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
     }
   }
 
+  const handleUpdateAssetChange = (assetId) => {
+    setUpdateAssetId(assetId)
+    setUpdateInstanceId('')
+  }
+
   useEffect(() => {
     if (!restockSeed || restockAssetId === NEW_OPTION_VALUE) return
     hydrateRestockForm(restockSeed)
@@ -632,8 +681,78 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
     resetRestockForm()
   }, [restockAssetId, today])
 
+  useEffect(() => {
+    if (!updateAssetId || !updateDetailsData) return
+    const attrs = Array.isArray(updateDetailsData.attributes) ? updateDetailsData.attributes : []
+    setUpdateVendorName(updateDetailsData.vendor_name || '')
+    setUpdatePurchaseCost(updateDetailsData.purchase_cost != null ? String(updateDetailsData.purchase_cost) : '')
+    setUpdateWarranty(updateDetailsData.warranty_expiry || '')
+    setUpdateSpecRows(
+      attrs.length
+        ? attrs.map((spec) => ({
+            id: `${spec.attribute_id}-${Math.random().toString(36).slice(2, 8)}`,
+            attributeRef: spec.attribute_id || '',
+            newAttributeName: '',
+            value: spec.value || '',
+          }))
+        : [newSpecRow()],
+    )
+  }, [updateAssetId, updateDetailsData])
+
+  useEffect(() => {
+    if (!updateInstances.length) return
+    if (!updateInstanceId) {
+      setUpdateInstanceId(updateInstances[0].instance_id)
+    }
+  }, [updateInstances, updateInstanceId])
+
   return (
     <div className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <button
+          type="button"
+          onClick={() => setActiveFeature('register')}
+          className={`text-left rounded-2xl border p-4 transition shadow-sm ${activeFeature === 'register' ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl p-2 bg-emerald-100 text-emerald-700"><PackagePlus className="w-5 h-5" /></div>
+            <div>
+              <h3 className="font-semibold text-slate-900">Register Asset</h3>
+              <p className="text-xs text-slate-600 mt-1">Create new asset model and instances</p>
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveFeature('restock')}
+          className={`text-left rounded-2xl border p-4 transition shadow-sm ${activeFeature === 'restock' ? 'border-cyan-300 bg-cyan-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl p-2 bg-cyan-100 text-cyan-700"><RotateCw className="w-5 h-5" /></div>
+            <div>
+              <h3 className="font-semibold text-slate-900">Restock Asset</h3>
+              <p className="text-xs text-slate-600 mt-1">Add more quantity to existing asset</p>
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveFeature('update')}
+          className={`text-left rounded-2xl border p-4 transition shadow-sm ${activeFeature === 'update' ? 'border-violet-300 bg-violet-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl p-2 bg-violet-100 text-violet-700"><PencilLine className="w-5 h-5" /></div>
+            <div>
+              <h3 className="font-semibold text-slate-900">Update Asset Data</h3>
+              <p className="text-xs text-slate-600 mt-1">Modify asset specs or vendor details</p>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {activeFeature === 'restock' ? (
       <div className="rounded-2xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-white p-5 shadow-sm space-y-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
@@ -716,9 +835,9 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
               </div>
               <div className="rounded-xl border border-cyan-100 bg-white p-3 space-y-2">
                 <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Current inventory</div>
-                <div className="text-xs text-slate-600">Total: {selectedRestockDetailsData?.inventory?.total ?? selectedRestockTemplate?.total_quantity ?? 0}</div>
-                <div className="text-xs text-slate-600">Available: {selectedRestockDetailsData?.inventory?.available ?? selectedRestockTemplate?.unused ?? 0}</div>
-                <div className="text-xs text-slate-600">Assigned: {selectedRestockDetailsData?.inventory?.assigned ?? selectedRestockTemplate?.used ?? 0}</div>
+                <div className="text-xs text-slate-600">Total: {selectedRestockDetailsData?.inventory_counts?.total ?? selectedRestockTemplate?.total_quantity ?? 0}</div>
+                <div className="text-xs text-slate-600">Available: {selectedRestockDetailsData?.inventory_counts?.available ?? selectedRestockTemplate?.unused ?? 0}</div>
+                <div className="text-xs text-slate-600">Assigned: {selectedRestockDetailsData?.inventory_counts?.assigned ?? selectedRestockTemplate?.used ?? 0}</div>
               </div>
             </div>
 
@@ -839,7 +958,9 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
           </div>
         )}
       </div>
+      ) : null}
 
+      {activeFeature === 'register' ? (
       <form
         className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4 shadow-sm"
         onSubmit={(e) => {
@@ -1102,6 +1223,141 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
         </button>
         {createMut.isError ? <p className="text-xs text-rose-600">{createMut.error?.message}</p> : null}
       </form>
+      ) : null}
+
+      {activeFeature === 'update' ? (
+        <form
+          className="rounded-2xl border border-violet-200 bg-white p-5 space-y-4 shadow-sm"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!updateAssetId || !updateInstanceId) return
+
+            const findAttributeByName = (needle) => {
+              const key = String(needle || '').trim().toLowerCase()
+              return updateAttributeOptions.find((item) => item?.name?.trim().toLowerCase() === key)
+            }
+
+            const changes = updateSpecRows
+              .map((row) => {
+                if (!row.attributeRef) return null
+                const newValue = String(row.value || '').trim()
+                if (!newValue) return null
+                return { attribute_id: row.attributeRef, new_value: newValue }
+              })
+              .filter(Boolean)
+
+            const vendorAttr = findAttributeByName('Vendor')
+            const costAttr = findAttributeByName('Purchase Cost') || findAttributeByName('Cost')
+            const warrantyAttr = findAttributeByName('Warranty') || findAttributeByName('Warranty Expiry')
+
+            if (vendorAttr && updateVendorName.trim()) {
+              changes.push({ attribute_id: vendorAttr.id, new_value: updateVendorName.trim() })
+            }
+            if (costAttr && updatePurchaseCost.trim()) {
+              changes.push({ attribute_id: costAttr.id, new_value: updatePurchaseCost.trim() })
+            }
+            if (warrantyAttr && updateWarranty.trim()) {
+              changes.push({ attribute_id: warrantyAttr.id, new_value: updateWarranty.trim() })
+            }
+
+            if (!changes.length) return
+
+            updateAssetMut.mutate({
+              instanceId: updateInstanceId,
+              body: {
+                event_type: 'ATTRIBUTE_UPDATED',
+                reason: 'UPDATE_ASSET_DATA',
+                changes,
+              },
+            })
+          }}
+        >
+          <div>
+            <h3 className="font-bold text-slate-900">Update asset data</h3>
+            <p className="text-xs text-slate-500 mt-1">Modify attributes and submit a lifecycle-tracked update for the selected instance.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs font-medium text-slate-600">
+              Select asset
+              <select className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateAssetId} onChange={(e) => handleUpdateAssetChange(e.target.value)}>
+                <option value="">Choose asset</option>
+                {assetTemplateOptions.map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              Select instance
+              <select className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateInstanceId} onChange={(e) => setUpdateInstanceId(e.target.value)} disabled={!updateAssetId}>
+                <option value="">Choose instance</option>
+                {updateInstances.map((item) => (
+                  <option key={item.instance_id} value={item.instance_id}>{item.instance_id}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              Vendor
+              <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateVendorName} onChange={(e) => setUpdateVendorName(e.target.value)} placeholder="Vendor" />
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              Cost
+              <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updatePurchaseCost} onChange={(e) => setUpdatePurchaseCost(e.target.value)} placeholder="Purchase cost" />
+            </label>
+            <label className="text-xs font-medium text-slate-600 md:col-span-2">
+              Warranty
+              <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateWarranty} onChange={(e) => setUpdateWarranty(e.target.value)} placeholder="Warranty" />
+            </label>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-3 space-y-3 bg-slate-50/50">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-800">Attributes</h4>
+                <p className="text-xs text-slate-500">Edit tracked attributes for the selected asset.</p>
+              </div>
+              <button type="button" className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700" onClick={addUpdateSpecRow}>
+                Add attribute row
+              </button>
+            </div>
+
+            {updateSpecRows.map((row) => (
+              <div key={row.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-start">
+                <label className="text-xs font-medium text-slate-600 md:col-span-5">
+                  Attribute
+                  <select
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
+                    value={row.attributeRef}
+                    onChange={(e) => updateAssetSpecRow(row.id, { attributeRef: e.target.value })}
+                  >
+                    <option value="">Select attribute</option>
+                    {updateAttributeOptions.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs font-medium text-slate-600 md:col-span-6">
+                  Value
+                  <input
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    placeholder="New value"
+                    value={row.value}
+                    onChange={(e) => updateAssetSpecRow(row.id, { value: e.target.value })}
+                  />
+                </label>
+                <button type="button" className="rounded-lg border border-rose-200 px-2 py-2 text-xs font-medium text-rose-700 md:col-span-1 bg-white" onClick={() => removeUpdateSpecRow(row.id)}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <button type="submit" disabled={updateAssetMut.isPending} className="rounded-xl bg-violet-700 text-white text-sm font-medium px-4 py-2 w-full disabled:opacity-50">
+            {updateAssetMut.isPending ? 'Updating asset data...' : 'Update asset'}
+          </button>
+          {updateAssetMut.isError ? <p className="text-xs text-rose-600">{updateAssetMut.error?.message}</p> : null}
+        </form>
+      ) : null}
     </div>
   )
 }

@@ -20,7 +20,7 @@ from app.server.models.asset_insights import (
     AssetRecommendationRead,
 )
 from app.server.models.stock import AssetAttributeUpdateRequest, AssetAttributeUpdateResponse, AssetQuantityAddRequest, AssetTemplateRead, InventorySnapshot, StockResponse
-from app.server.models.stock import AssetDetailsRead
+from app.server.models.stock import AssetDetailsRead, AssetTemplateDetailsRead
 from app.server.models.api import EmployeeAssetOwnerResponse
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.schema.asset import AssetStatus
@@ -41,8 +41,6 @@ router = APIRouter(
 def _has_finance_permission(user: Employee) -> bool:
     if not user.permissions:
         return False
-    if user.permissions.can_view_finance or user.permissions.can_manage_finance:
-        return True
     perms_json = user.permissions.permissions_json
     if isinstance(perms_json, dict):
         finance_scope = perms_json.get("finance")
@@ -123,6 +121,15 @@ def get_asset_details(
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     return AssetInsightsService.get_asset_details(db, asset_id, current_user)
+
+
+@router.get("/{asset_id}/template-details", response_model=AssetTemplateDetailsRead)
+def get_asset_template_details(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return AssetInsightsService.get_asset_template_details(db, asset_id, current_user)
 
 
 @router.post("/{asset_id}/add-quantity", response_model=StockResponse)

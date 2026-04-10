@@ -7,7 +7,7 @@ from sqlalchemy import func, or_
 
 from app.server.auth.service import (
     get_password_hash,
-    get_default_permission_flags,
+    create_default_permissions,
     _login_email_host_strict,
     _org_domain_host_strict,
 )
@@ -102,12 +102,11 @@ def create_organization(
     db.add(admin)
     db.flush()
 
-    default_perms = get_default_permission_flags(EmployeeRole.ORG_ADMIN)
     admin.permissions = EmployeePermission(
         employee_id=admin.employee_id,
         organization_id=org.organization_id,
         branch_id=None,
-        **default_perms,
+        permissions_json=create_default_permissions(EmployeeRole.ORG_ADMIN),
     )
     db.add(admin.permissions)
 
