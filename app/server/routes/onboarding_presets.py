@@ -1,28 +1,56 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.server.database.database import get_db
 from app.server.middlewares.auth import require_roles
-from app.server.models.stock import OnboardingPresetCreate, OnboardingPresetRead
+from app.server.models.stock import OnboardingPresetCreate, OnboardingPresetRead, OnboardingPresetListResponse
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.schema.onboarding import OnboardingPreset
 
 router = APIRouter(prefix="/onboarding-presets", tags=["onboarding_presets"])
 
 
-@router.get("/", response_model=List[OnboardingPresetRead])
+@router.get("/", response_model=OnboardingPresetListResponse)
 def list_onboarding_presets(
+    search: Optional[str] = None,
+    target_role: Optional[str] = None,
+    branch: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.HR, EmployeeRole.MANAGER)),
 ):
     query = db.query(OnboardingPreset)
     if current_user.role != EmployeeRole.SUPER_ADMIN:
         query = query.filter(OnboardingPreset.organization_id == current_user.organization_id)
+    if target_role:
+        query = query.filter(OnboardingPreset.target_role == target_role.strip().lower())
+    if branch:
+        query = query.filter(OnboardingPreset.branch.ilike(f"%{branch.strip()}%"))
+    if search:
+        needle = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                OnboardingPreset.name.ilike(needle),
+                OnboardingPreset.preset_id.ilike(needle),
+                OnboardingPreset.branch.ilike(needle),
+                OnboardingPreset.target_role.ilike(needle),
+            )
+        )
     try:
-        return query.order_by(OnboardingPreset.created_at.desc()).all()
+        total = query.count()
+        rows = query.order_by(OnboardingPreset.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        items = [OnboardingPresetRead.model_validate(row) for row in rows]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+        }
     except ProgrammingError as exc:
         msg = str(getattr(exc.orig, "diag", getattr(exc.orig, "pgerror", exc)))
         if "onboarding_presets.organization_id" in msg or "column onboarding_presets.organization_id does not exist" in msg:

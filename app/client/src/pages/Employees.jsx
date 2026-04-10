@@ -8,25 +8,76 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 import { apiFetch } from '@/lib/api'
+import { normalizeOptions } from '@/lib/options'
 import { R, canRegisterEmployees, canDeactivateEmployees, labelForRole, canManagePermissions } from '@/lib/roles'
 import { useAuth } from '@/context/AuthContext'
-import { RefreshCw, UserPlus, X, UserMinus, Shield } from 'lucide-react'
+import { RefreshCw, UserPlus, X, UserMinus, Shield, Pencil } from 'lucide-react'
 
 export default function Employees() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [deact, setDeact] = useState(null)
+  const [editUser, setEditUser] = useState(null)
   const [permsUser, setPermsUser] = useState(null)
   const [banner, setBanner] = useState(null)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('active')
+  const [branchFilter, setBranchFilter] = useState('')
+  const [roleFilter, setRoleFilter] = useState('')
+  const [organizationFilter, setOrganizationFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
+
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(page),
+      per_page: String(PAGE_SIZE),
+    })
+    if (search.trim()) params.set('search', search.trim())
+    if (statusFilter) params.set('status', statusFilter)
+    if (branchFilter) params.set('branch_id', branchFilter)
+    if (roleFilter) params.set('role', roleFilter)
+    if (organizationFilter) params.set('organization_id', organizationFilter)
+    return params.toString()
+  }, [page, search, statusFilter, branchFilter, roleFilter, organizationFilter])
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ['employees'],
-    queryFn: () => apiFetch('/employees/'),
+    queryKey: ['employees', queryString],
+    queryFn: () => apiFetch(`/employees/?${queryString}`),
+  })
+
+  const { data: branchOptionsRaw = [] } = useQuery({
+    queryKey: ['employee-filter-branches'],
+    queryFn: () => apiFetch('/stock/branches-list'),
+  })
+
+  const { data: orgOptionsRaw = { items: [] } } = useQuery({
+    queryKey: ['employee-filter-organizations'],
+    queryFn: () => apiFetch('/organizations?page=1&per_page=200'),
+  })
+
+  const branchOptions = useMemo(() => normalizeOptions(branchOptionsRaw), [branchOptionsRaw])
+  const orgOptions = useMemo(() => normalizeOptions(orgOptionsRaw?.items || []), [orgOptionsRaw])
+
+
+  const { data: employeeFilterOptions = { roles: [], statuses: [] } } = useQuery({
+    queryKey: ['employee-filter-options'],
+    queryFn: () => apiFetch('/employees/filter-options'),
   })
 
   const regMut = useMutation({
-    mutationFn: (body) => apiFetch('/employees/register', { method: 'POST', body: JSON.stringify(body) }),
+    mutationFn: async (body) => {
+      const { employee_status, ...payload } = body
+      const created = await apiFetch('/employees/register', { method: 'POST', body: JSON.stringify(payload) })
+      if (employee_status === 'inactive' && created?.employee_id) {
+        await apiFetch(`/employees/${created.employee_id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ is_active: false }),
+        })
+      }
+      return created
+    },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['employees'] })
       setOpen(false)
@@ -115,6 +166,16 @@ export default function Employees() {
                   Permissions
                 </button>
               )}
+              {canRegisterEmployees(user.role) && (user.employeeId !== emp.employee_id) && (
+                <button
+                  type="button"
+                  onClick={() => setEditUser({ id: emp.employee_id, name: emp.name })}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1.5 text-xs font-semibold text-teal-800 hover:bg-teal-100"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  Edit
+                </button>
+              )}
               {canDeactivateEmployees(user.role) && (user.employeeId !== emp.employee_id) && (
                 <button
                   type="button"
@@ -136,17 +197,14 @@ export default function Employees() {
     [user.role, user.employeeId],
   )
 
-  const [page, setPage] = useState(1)
-  const PAGE_SIZE = 10
-  const rows = data || []
-  const totalPages = Math.ceil(rows.length / PAGE_SIZE)
-  const pagedRows = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE
-    return rows.slice(start, start + PAGE_SIZE)
-  }, [rows, page, PAGE_SIZE])
+  const rows = data?.items || []
+  const totalItems = data?.total || 0
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
+  const roleOptions = employeeFilterOptions?.roles || []
+  const statusOptions = employeeFilterOptions?.statuses || []
 
   const table = useReactTable({
-    data: pagedRows,
+    data: rows,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -212,6 +270,15 @@ export default function Employees() {
         />
       ) : null}
 
+      {editUser ? (
+        <EditEmployeeModal
+          empId={editUser.id}
+          name={editUser.name}
+          onClose={() => setEditUser(null)}
+          onSaved={(message) => setBanner({ kind: 'success', text: message })}
+        />
+      ) : null}
+
       {deact ? (
         <ConfirmDeactivate
           name={deact.name}
@@ -233,6 +300,69 @@ export default function Employees() {
       ) : null}
 
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+        <div className="p-4 border-b border-slate-100 bg-slate-50/50 grid grid-cols-1 md:grid-cols-6 gap-3">
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm md:col-span-2"
+            placeholder="Search name, email, role, branch, organization..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value)
+              setPage(1)
+            }}
+          />
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All status</option>
+            {statusOptions.map((status) => (
+              <option key={status} value={status}>{status}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={branchFilter}
+            onChange={(e) => {
+              setBranchFilter(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All branches</option>
+            {branchOptions.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={roleFilter}
+            onChange={(e) => {
+              setRoleFilter(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All roles</option>
+            {roleOptions.map((role) => (
+              <option key={role} value={role}>{labelForRole(role)}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={organizationFilter}
+            onChange={(e) => {
+              setOrganizationFilter(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All organizations</option>
+            {orgOptions.map((org) => (
+              <option key={org.id} value={org.id}>{org.name}</option>
+            ))}
+          </select>
+        </div>
         {isLoading ? (
           <div className="p-16 text-center text-slate-400 animate-pulse">Loading…</div>
         ) : isError ? (
@@ -269,7 +399,7 @@ export default function Employees() {
                 </tbody>
               </table>
             </div>
-            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={rows.length} />
+            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={totalItems} />
           </>
         )}
       </div>
@@ -309,38 +439,65 @@ function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
 
 function RegisterModal({ onClose, onSubmit, busy, error }) {
   const { user } = useAuth()
+  const { data: filterOptions = { roles: [], statuses: [] } } = useQuery({
+    queryKey: ['employee-filter-options-register'],
+    queryFn: () => apiFetch('/employees/filter-options'),
+  })
+  const { data: orgOptionsRaw = { items: [] } } = useQuery({
+    queryKey: ['employee-filter-organizations-register'],
+    queryFn: () => apiFetch('/organizations?page=1&per_page=200'),
+  })
   const { data: presets = [] } = useQuery({
     queryKey: ['onboarding-presets'],
     queryFn: () => apiFetch('/onboarding-presets/'),
   })
 
   const { data: branches = [] } = useQuery({
-    queryKey: ['organization-branches-register', user?.organizationId],
-    queryFn: () => apiFetch(`/organizations/${user.organizationId}/branches`),
-    enabled: Boolean(user?.organizationId),
+    queryKey: ['employee-register-branches'],
+    queryFn: () => apiFetch('/branches'),
   })
 
-  const { data: stock = [] } = useQuery({
-    queryKey: ['stock'],
-    queryFn: () => apiFetch('/stock/'),
+  const { data: stockRaw = { items: [] } } = useQuery({
+    queryKey: ['stock-register-modal'],
+    queryFn: () => apiFetch('/stock/?page=1&per_page=200'),
   })
 
   const [name, setName] = useState('')
   const [personalEmail, setPersonalEmail] = useState('')
   const [phone, setPhone] = useState('')
+  const [organizationId, setOrganizationId] = useState(user?.organizationId || '')
   const [branchId, setBranchId] = useState('')
-  const [role, setRole] = useState(R.EMPLOYEE)
+  const [role, setRole] = useState(filterOptions.roles?.[0] || R.EMPLOYEE)
+  const [employeeStatus, setEmployeeStatus] = useState('active')
   const [presetId, setPresetId] = useState('')
   const [picked, setPicked] = useState(() => new Set())
   const [extraIds, setExtraIds] = useState('')
   const formRef = useRef(null)
 
+  const orgOptions = normalizeOptions(orgOptionsRaw?.items || [])
+  const branchOptions = normalizeOptions(branches)
+  const roleOptions = filterOptions.roles || []
+  const statusOptions = filterOptions.statuses || []
+  const stock = stockRaw?.items || []
+
   const availableStock = useMemo(() => stock.filter((a) => a.unused > 0), [stock])
 
+  const filteredBranches = useMemo(() => {
+    if (!organizationId) return branchOptions
+    return branchOptions.filter((b) => (b.raw?.organization_id || '') === organizationId)
+  }, [branchOptions, organizationId])
+
+  useEffect(() => {
+    if (!roleOptions.length) return
+    if (!roleOptions.includes(role)) {
+      setRole(roleOptions[0])
+    }
+  }, [roleOptions, role])
+
   const selectedBranchName = useMemo(() => {
-    const selected = branches.find((b) => b.branch_id === branchId)
-    return selected?.branch_name || ''
-  }, [branches, branchId])
+    const selected = branchOptions.find((b) => b.id === branchId)
+    return selected?.name || ''
+  }, [branchOptions, branchId])
 
   const compatiblePresets = useMemo(() => {
     const eb = selectedBranchName.trim()
@@ -437,18 +594,35 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
             onChange={(e) => setBranchId(e.target.value)}
           >
             <option value="">Select branch</option>
-            {branches.map((b) => (
-              <option key={b.branch_id} value={b.branch_id}>
-                {b.branch_name}
+            {filteredBranches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
               </option>
             ))}
           </select>
+          <select
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={organizationId}
+            onChange={(e) => {
+              setOrganizationId(e.target.value)
+              setBranchId('')
+            }}
+            disabled={user?.role !== R.SUPER_ADMIN}
+          >
+            <option value="">Select organization</option>
+            {orgOptions.map((org) => (
+              <option key={org.id} value={org.id}>{org.name}</option>
+            ))}
+          </select>
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value={R.EMPLOYEE}>Employee</option>
-            <option value={R.HR}>HR</option>
-            <option value={R.MANAGER}>Manager</option>
-            <option value={R.SUPPORT_TEAM}>Support</option>
-            <option value={R.ADMIN}>Admin</option>
+            {roleOptions.map((item) => (
+              <option key={item} value={item}>{labelForRole(item)}</option>
+            ))}
+          </select>
+          <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={employeeStatus} onChange={(e) => setEmployeeStatus(e.target.value)}>
+            {statusOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
           </select>
 
           <div>
@@ -522,6 +696,8 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
                   personal_email: pe,
                   phone: phone.trim() || null,
                   role,
+                  employee_status: employeeStatus,
+                  organization_id: organizationId || null,
                   branch_id: branchId || null,
                   preset_id: presetId || null,
                   onboarding_asset_ids: mergeOnboardingIds(),
@@ -537,11 +713,153 @@ function RegisterModal({ onClose, onSubmit, busy, error }) {
   )
 }
 
+function EditEmployeeModal({ empId, name, onClose, onSaved }) {
+  const { user } = useAuth()
+  const qc = useQueryClient()
+
+  const { data: employee, isLoading } = useQuery({
+    queryKey: ['employee-detail', empId],
+    queryFn: () => apiFetch(`/employees/${empId}`),
+    enabled: Boolean(empId),
+  })
+
+  const { data: filterOptions = { roles: [], statuses: [] } } = useQuery({
+    queryKey: ['employee-filter-options-edit'],
+    queryFn: () => apiFetch('/employees/filter-options'),
+  })
+
+  const { data: orgOptionsRaw = { items: [] } } = useQuery({
+    queryKey: ['employee-filter-organizations-edit'],
+    queryFn: () => apiFetch('/organizations?page=1&per_page=200'),
+  })
+
+  const { data: branches = [] } = useQuery({
+    queryKey: ['employee-edit-branches'],
+    queryFn: () => apiFetch('/branches'),
+  })
+
+  const updateMut = useMutation({
+    mutationFn: (body) => apiFetch(`/employees/${empId}`, { method: 'PUT', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['employees'] })
+      qc.invalidateQueries({ queryKey: ['employee-detail', empId] })
+      onClose()
+      onSaved?.(`Employee ${name} updated successfully.`)
+    },
+  })
+
+  const [fullName, setFullName] = useState('')
+  const [personalEmail, setPersonalEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [organizationId, setOrganizationId] = useState('')
+  const [branchId, setBranchId] = useState('')
+  const [role, setRole] = useState('')
+  const [status, setStatus] = useState('active')
+
+  const orgOptions = normalizeOptions(orgOptionsRaw?.items || [])
+  const branchOptions = normalizeOptions(branches)
+  const roleOptions = filterOptions.roles || []
+  const statusOptions = filterOptions.statuses || []
+
+  useEffect(() => {
+    if (!employee) return
+    setFullName(employee.name || '')
+    setPersonalEmail(employee.personal_email || '')
+    setPhone(employee.phone || '')
+    setOrganizationId(employee.organization_id || user?.organizationId || '')
+    setBranchId(employee.branch_id || '')
+    setRole(employee.role || '')
+    setStatus(employee.is_active ? 'active' : 'inactive')
+  }, [employee, user?.organizationId])
+
+  const filteredBranches = useMemo(() => {
+    if (!organizationId) return branchOptions
+    return branchOptions.filter((b) => (b.raw?.organization_id || '') === organizationId)
+  }, [branchOptions, organizationId])
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <button type="button" className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" aria-label="Close" onClick={onClose} />
+      <div className="relative w-full max-w-2xl rounded-2xl bg-white border border-slate-200 shadow-xl p-6 max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-slate-900">Edit employee</h3>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {isLoading ? (
+          <div className="text-sm text-slate-400 animate-pulse">Loading employee details...</div>
+        ) : (
+          <div className="space-y-3">
+            <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Full name" />
+            <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={personalEmail} onChange={(e) => setPersonalEmail(e.target.value)} placeholder="Personal email" />
+            <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone (10 digits)" />
+            <select
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={organizationId}
+              onChange={(e) => {
+                setOrganizationId(e.target.value)
+                setBranchId('')
+              }}
+              disabled={user?.role !== R.SUPER_ADMIN}
+            >
+              <option value="">Select organization</option>
+              {orgOptions.map((org) => (
+                <option key={org.id} value={org.id}>{org.name}</option>
+              ))}
+            </select>
+            <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+              <option value="">Select branch</option>
+              {filteredBranches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+            <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
+              {roleOptions.map((item) => (
+                <option key={item} value={item}>{labelForRole(item)}</option>
+              ))}
+            </select>
+            <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
+              {statusOptions.map((item) => (
+                <option key={item} value={item}>{item}</option>
+              ))}
+            </select>
+            {updateMut.error ? <p className="text-xs text-rose-600">{updateMut.error?.message}</p> : null}
+            <div className="flex gap-2 pt-2">
+              <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">Cancel</button>
+              <button
+                type="button"
+                disabled={updateMut.isPending}
+                className="flex-1 rounded-xl bg-teal-700 text-white py-2.5 text-sm font-semibold disabled:opacity-50"
+                onClick={() => updateMut.mutate({
+                  name: fullName.trim() || undefined,
+                  personal_email: personalEmail.trim() || null,
+                  phone: phone.trim() || null,
+                  organization_id: organizationId || null,
+                  branch_id: branchId || null,
+                  role,
+                  is_active: status === 'active',
+                })}
+              >
+                {updateMut.isPending ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function PermissionsModal({ empId, name, onClose, onSaved }) {
   const qc = useQueryClient()
   const { data: permissions, isLoading } = useQuery({
     queryKey: ['employee-permissions', empId],
     queryFn: () => apiFetch(`/employees/${empId}/permissions`),
+  })
+  const { data: permissionCatalog = { modules: [] }, isLoading: isCatalogLoading } = useQuery({
+    queryKey: ['employee-permissions-catalog'],
+    queryFn: () => apiFetch('/employees/permissions/catalog'),
   })
 
   const updateMut = useMutation({
@@ -553,82 +871,30 @@ function PermissionsModal({ empId, name, onClose, onSaved }) {
     },
   })
 
-  const [perms, setPerms] = useState({})
+  const [permsJson, setPermsJson] = useState({})
 
   useEffect(() => {
     if (permissions) {
-      setPerms(permissions)
+      setPermsJson(permissions.permissions_json || {})
     }
   }, [permissions])
 
-  const toggle = (field) => {
-    setPerms(p => ({ ...p, [field]: !p[field] }))
+  const modules = useMemo(() => permissionCatalog?.modules || [], [permissionCatalog])
+
+  const toggle = (moduleKey, actionKey) => {
+    setPermsJson((prev) => {
+      const modulePerms = prev?.[moduleKey] && typeof prev[moduleKey] === 'object' ? prev[moduleKey] : {}
+      return {
+        ...prev,
+        [moduleKey]: {
+          ...modulePerms,
+          [actionKey]: !modulePerms[actionKey],
+        },
+      }
+    })
   }
 
-  const groups = [
-    {
-      title: 'Asset Module',
-      fields: [
-        { key: 'can_view_assets', label: 'View Assets' },
-        { key: 'can_create_assets', label: 'Create Assets' },
-        { key: 'can_update_assets', label: 'Update Assets' },
-        { key: 'can_delete_assets', label: 'Delete Assets' },
-      ]
-    },
-    {
-      title: 'Request Module',
-      fields: [
-        { key: 'can_create_request', label: 'Create Request' },
-        { key: 'can_approve_request', label: 'Approve Request' },
-        { key: 'can_reject_request', label: 'Reject Request' },
-      ]
-    },
-    {
-      title: 'Finance Module',
-      fields: [
-        { key: 'can_view_finance', label: 'View Finance' },
-        { key: 'can_manage_finance', label: 'Manage Finance' },
-      ]
-    },
-    {
-      title: 'Tracking Module',
-      fields: [
-        { key: 'can_view_tracking', label: 'View Tracking' },
-        { key: 'can_allocate_asset', label: 'Allocate Asset' },
-        { key: 'can_transfer_asset', label: 'Transfer Asset' },
-      ]
-    },
-    {
-      title: 'Branch Module',
-      fields: [
-        { key: 'can_view_branch', label: 'View Branch' },
-        { key: 'can_create_branch', label: 'Create Branch' },
-        { key: 'can_update_branch', label: 'Update Branch' },
-      ]
-    },
-    {
-      title: 'Reports Module',
-      fields: [
-        { key: 'can_view_reports', label: 'View Reports' },
-      ]
-    },
-    {
-      title: 'Admin Module',
-      fields: [
-        { key: 'can_manage_users', label: 'Manage Users' },
-        { key: 'can_manage_permissions', label: 'Manage Permissions' },
-      ]
-    }
-  ]
-
-  const permissionKeys = groups.flatMap((g) => g.fields.map((f) => f.key))
-
-  const buildPermissionPayload = () => {
-    return permissionKeys.reduce((acc, key) => {
-      acc[key] = perms[key] === true
-      return acc
-    }, {})
-  }
+  const buildPermissionPayload = () => ({ permissions_json: permsJson })
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -641,30 +907,35 @@ function PermissionsModal({ empId, name, onClose, onSaved }) {
           </button>
         </div>
         
-        {isLoading ? (
+        {isLoading || isCatalogLoading ? (
           <div className="flex-1 min-h-[300px] flex items-center justify-center text-slate-400 animate-pulse">Loading permissions...</div>
         ) : (
           <>
             <div className="flex-1 overflow-y-auto mb-6 pr-2 space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {groups.map((g) => (
-                  <div key={g.title} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                    <h4 className="text-sm font-bold text-slate-700 mb-3">{g.title}</h4>
+                {modules.map((module) => (
+                  <div key={module.key} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    <h4 className="text-sm font-bold text-slate-700 mb-3">{module.label}</h4>
                     <div className="space-y-2">
-                      {g.fields.map(f => (
-                        <label key={f.key} className="flex items-center gap-2 cursor-pointer hover:bg-white p-1 -mx-1 rounded">
+                      {module.actions.map((action) => (
+                        <label key={`${module.key}-${action.key}`} className="flex items-center gap-2 cursor-pointer hover:bg-white p-1 -mx-1 rounded">
                           <input 
                             type="checkbox" 
                             className="w-4 h-4 text-violet-600 rounded border-slate-300 focus:ring-violet-600 focus:ring-2"
-                            checked={perms[f.key] === true}
-                            onChange={() => toggle(f.key)}
+                            checked={Boolean(permsJson?.[module.key]?.[action.key])}
+                            onChange={() => toggle(module.key, action.key)}
                           />
-                          <span className="text-sm text-slate-600 select-none">{f.label}</span>
+                          <span className="text-sm text-slate-600 select-none">{action.label}</span>
                         </label>
                       ))}
                     </div>
                   </div>
                 ))}
+                {modules.length === 0 ? (
+                  <div className="sm:col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                    No permission modules are configured in the backend catalog.
+                  </div>
+                ) : null}
               </div>
             </div>
             

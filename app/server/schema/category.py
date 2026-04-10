@@ -1,8 +1,16 @@
 import uuid
+import enum
 from sqlalchemy import Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.server.database.database import Base
+
+
+class AssetBehavior(str, enum.Enum):
+    INSTANCE_BASED = "instance_based"
+    QUANTITY_BASED = "quantity_based"
+    SUBSCRIPTION_BASED = "subscription_based"
+    LICENSE_BASED = "license_based"
 
 class Category(Base):
     __tablename__="categories"
@@ -11,6 +19,7 @@ class Category(Base):
     category_id=Column(String(50), primary_key=True, index=True, default=lambda: f"CAT-{uuid.uuid4().hex[:8].upper()}")
     category_name=Column(String(100), nullable=False, unique=True)
     description=Column(Text, nullable=True)
+    asset_behavior=Column(String(50), nullable=False, default=AssetBehavior.INSTANCE_BASED.value)
     created_at=Column(DateTime(timezone=True), server_default=func.now())
     sub_categories=relationship("SubCategory", back_populates="category", cascade="all, delete-orphan")
     assets=relationship("Asset", back_populates="category")

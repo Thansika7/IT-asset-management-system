@@ -6,16 +6,6 @@ import { apiFetch } from '@/lib/api'
 import { RefreshCw, Search } from 'lucide-react'
 import AssetDetailPanel from '@/components/AssetDetailPanel'
 
-const STATUS_OPTIONS = ['ACTIVE', 'ALLOCATED', 'IN_REPAIR', 'WARRANTY', 'RETIRED', 'LOST', 'DAMAGED', 'available', 'allocated', 'low_stock']
-const SORT_OPTIONS = [
-  { value: 'priority_cost', label: 'Priority monitoring' },
-  { value: 'tco', label: 'Highest TCO' },
-  { value: 'maintenance', label: 'Highest maintenance' },
-  { value: 'repair', label: 'Highest repair cost' },
-  { value: 'depreciation', label: 'Highest depreciation' },
-  { value: 'health', label: 'Lowest health first' },
-]
-
 function formatCurrency(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
@@ -32,16 +22,17 @@ export default function Finance() {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 15
+
   const initialFilters = {
     search: '',
-    category: '',
-    subCategory: '',
-    branch: user.branch || '',
+    category_id: '',
+    sub_category_id: '',
+    branch_id: user.branch_id || '',
     status: '',
     recommendation: '',
     availableOnly: false,
     allocatedOnly: false,
-    lowStockOnly: false,
+    low_stockOnly: false,
     minTco: '',
     maxTco: '',
     minHealth: '',
@@ -51,12 +42,38 @@ export default function Finance() {
   const [draftFilters, setDraftFilters] = useState(initialFilters)
   const [appliedFilters, setAppliedFilters] = useState(initialFilters)
 
+  const { data: categories = [] } = useQuery({
+    queryKey: ['finance-categories'],
+    queryFn: () => apiFetch('/stock/categories'),
+  })
+
+  const { data: branches = [] } = useQuery({
+    queryKey: ['finance-branches'],
+    queryFn: () => apiFetch('/stock/branches-list'),
+  })
+
+  const { data: statuses = [] } = useQuery({
+    queryKey: ['finance-statuses'],
+    queryFn: () => apiFetch('/stock/statuses'),
+  })
+
+  const { data: financeOptions = { sort_options: [] } } = useQuery({
+    queryKey: ['finance-options'],
+    queryFn: () => apiFetch('/assets/finance/options'),
+  })
+
+  const { data: subCategories = [] } = useQuery({
+    queryKey: ['finance-sub-categories', draftFilters.category_id],
+    queryFn: () => apiFetch(`/stock/sub-categories?category_id=${draftFilters.category_id}`),
+    enabled: Boolean(draftFilters.category_id),
+  })
+
   const queryString = useMemo(() => {
-    const params = new URLSearchParams()
+    const params = new URLSearchParams({ page: String(page), per_page: String(PAGE_SIZE) })
     if (appliedFilters.search.trim()) params.set('search', appliedFilters.search.trim())
-    if (appliedFilters.category.trim()) params.set('category', appliedFilters.category.trim())
-    if (appliedFilters.subCategory.trim()) params.set('sub_category', appliedFilters.subCategory.trim())
-    if (appliedFilters.branch.trim()) params.set('branch', appliedFilters.branch.trim())
+    if (appliedFilters.category_id.trim()) params.set('category_id', appliedFilters.category_id.trim())
+    if (appliedFilters.sub_category_id.trim()) params.set('sub_category_id', appliedFilters.sub_category_id.trim())
+    if (appliedFilters.branch_id.trim()) params.set('branch_id', appliedFilters.branch_id.trim())
     if (appliedFilters.status) params.set('status', appliedFilters.status)
     if (appliedFilters.recommendation) params.set('recommendation', appliedFilters.recommendation)
     if (appliedFilters.availableOnly) params.set('available_only', 'true')
@@ -68,23 +85,25 @@ export default function Finance() {
     if (appliedFilters.maxHealth) params.set('max_health_score', appliedFilters.maxHealth)
     params.set('sort_by', appliedFilters.sortBy)
     return params.toString()
-  }, [appliedFilters])
+  }, [appliedFilters, page])
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['finance-report', queryString],
-    queryFn: () => apiFetch(`/assets/finance/report${queryString ? `?${queryString}` : ''}`),
+    queryFn: () => apiFetch(`/assets/finance/report?${queryString}`),
   })
 
-  const allItems = data?.items || []
-  const totalPages = Math.ceil(allItems.length / PAGE_SIZE)
-  const pagedItems = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE
-    return allItems.slice(start, start + PAGE_SIZE)
-  }, [allItems, page, PAGE_SIZE])
+  const items = data?.items || []
+  const totalItems = data?.total || 0
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
+
+  const recommendationOptions = useMemo(() => {
+    const values = new Set(items.map((item) => item.replacement_recommendation).filter(Boolean))
+    return [...values].sort((a, b) => String(a).localeCompare(String(b)))
+  }, [items])
 
   const selectedFinanceAsset = useMemo(() => {
-    return allItems.find((item) => item.asset_id === selectedAssetId) || null
-  }, [allItems, selectedAssetId])
+    return items.find((item) => item.asset_id === selectedAssetId) || null
+  }, [items, selectedAssetId])
 
   const assetDetailQuery = useQuery({
     queryKey: ['asset-detail', selectedFinanceAsset?.asset_id],
@@ -126,21 +145,30 @@ export default function Finance() {
           <h2 className="text-sm font-bold uppercase tracking-[0.16em]">Search and Filters</h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Search asset, category, vendor, branch..." value={draftFilters.search} onChange={(e) => setDraftFilters((prev) => ({ ...prev, search: e.target.value }))} />
-          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Category" value={draftFilters.category} onChange={(e) => setDraftFilters((prev) => ({ ...prev, category: e.target.value }))} />
-          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Sub-category" value={draftFilters.subCategory} onChange={(e) => setDraftFilters((prev) => ({ ...prev, subCategory: e.target.value }))} />
-          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Branch" value={draftFilters.branch} onChange={(e) => setDraftFilters((prev) => ({ ...prev, branch: e.target.value }))} disabled={Boolean(user.branch && user.role !== 'manager')} />
+          <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Search asset, vendor, brand..." value={draftFilters.search} onChange={(e) => setDraftFilters((prev) => ({ ...prev, search: e.target.value }))} />
+          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.category_id} onChange={(e) => setDraftFilters((prev) => ({ ...prev, category_id: e.target.value, sub_category_id: '' }))}>
+            <option value="">All categories</option>
+            {categories.map((item) => <option key={item.category_id} value={item.category_id}>{item.category_name}</option>)}
+          </select>
+          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.sub_category_id} onChange={(e) => setDraftFilters((prev) => ({ ...prev, sub_category_id: e.target.value }))} disabled={!draftFilters.category_id}>
+            <option value="">All sub-categories</option>
+            {subCategories.map((item) => <option key={item.sub_category_id} value={item.sub_category_id}>{item.sub_category_name}</option>)}
+          </select>
+          <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.branch_id} onChange={(e) => setDraftFilters((prev) => ({ ...prev, branch_id: e.target.value }))} disabled={Boolean(user.branch_id && user.role !== 'manager' && user.role !== 'super_admin' && user.role !== 'org_admin')}>
+            <option value="">All branches</option>
+            {branches.map((item) => <option key={item.branch_id} value={item.branch_id}>{item.branch_name}</option>)}
+          </select>
           <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.status} onChange={(e) => setDraftFilters((prev) => ({ ...prev, status: e.target.value }))}>
             <option value="">All statuses</option>
-            {STATUS_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            {statuses.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
+
           <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.recommendation} onChange={(e) => setDraftFilters((prev) => ({ ...prev, recommendation: e.target.value }))}>
             <option value="">All recommendations</option>
-            <option value="REPLACE">Replace</option>
-            <option value="RETAIN">Retain</option>
+            {recommendationOptions.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
           <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm" value={draftFilters.sortBy} onChange={(e) => setDraftFilters((prev) => ({ ...prev, sortBy: e.target.value }))}>
-            {SORT_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            {financeOptions.sort_options.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
           <div className="grid grid-cols-2 gap-2">
             <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Min TCO" type="number" min="0" value={draftFilters.minTco} onChange={(e) => setDraftFilters((prev) => ({ ...prev, minTco: e.target.value }))} />
@@ -211,7 +239,7 @@ export default function Finance() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {pagedItems.length ? pagedItems.map((item) => (
+                    {items.length ? items.map((item) => (
                       <tr key={item.asset_id} className={`cursor-pointer hover:bg-slate-50 ${selectedFinanceAsset?.asset_id === item.asset_id ? 'bg-cyan-50/60' : ''}`} onClick={() => { setSelectedAssetId(item.asset_id); setDetailsOpen(true) }}>
                         <td className="px-4 py-4 align-top">
                           <div>
@@ -245,39 +273,39 @@ export default function Finance() {
                       </tr>
                     )) : (
                       <tr>
-                        <td colSpan="11" className="px-4 py-12 text-center text-slate-500">No assets matched the current finance filters.</td>
+                        <td colSpan={11} className="px-4 py-14 text-center text-slate-400">No assets found for these filters.</td>
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
-              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={allItems.length} />
+              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={totalItems} />
             </div>
           </section>
-
-          {detailsOpen && selectedFinanceAsset ? (
-            <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-900/70 backdrop-blur-sm" onClick={() => { setDetailsOpen(false); setSelectedAssetId(null) }}>
-              <div className="mx-auto mt-10 mb-10 w-full max-w-6xl overflow-auto rounded-3xl bg-white shadow-2xl border border-slate-200" onClick={(event) => event.stopPropagation()}>
-                <button
-                  type="button"
-                  className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  onClick={() => setDetailsOpen(false)}
-                  aria-label="Close asset details"
-                >
-                  ×
-                </button>
-                <div className="p-6">
-                  <AssetDetailPanel
-                    asset={assetDetailQuery.data}
-                    title="Selected Asset"
-                    subtitle={assetDetailQuery.isLoading ? 'Loading selected asset details...' : 'Selected asset details.'}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : null}
         </>
       )}
+
+      {detailsOpen && selectedFinanceAsset ? (
+        <div className="fixed inset-0 z-[9999] overflow-y-auto bg-slate-900/70 backdrop-blur-sm" onClick={() => { setDetailsOpen(false); setSelectedAssetId(null) }}>
+          <div className="mx-auto mt-10 mb-10 w-full max-w-6xl overflow-auto rounded-3xl bg-white shadow-2xl border border-slate-200" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"
+              onClick={() => setDetailsOpen(false)}
+              aria-label="Close asset details"
+            >
+              ×
+            </button>
+            <div className="p-6">
+              <AssetDetailPanel
+                asset={assetDetailQuery.data}
+                title="Finance Asset"
+                subtitle={assetDetailQuery.isLoading ? 'Loading selected asset details...' : 'Selected asset details.'}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

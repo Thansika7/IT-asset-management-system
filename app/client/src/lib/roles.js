@@ -29,16 +29,26 @@ export function labelForRole(role) {
   return ROLE_LABEL[normalizeRole(role)] || role
 }
 
+function hasJsonPermission(permissions, module, action) {
+  const json = permissions?.permissions_json
+  if (!json || typeof json !== 'object') return false
+  const modulePerms = json[module]
+  if (!modulePerms || typeof modulePerms !== 'object') return false
+  return Boolean(modulePerms[action])
+}
+
 /** Navigation and route guards */
 export const NAV = {
   dashboard: (r) => r !== R.SUPER_ADMIN,
   myAssets: (r) => r !== R.SUPER_ADMIN,
   requests: (r) => r !== R.SUPER_ADMIN,
   tracking: (r) => r !== R.SUPER_ADMIN,
-  organizations: (r) => [R.SUPER_ADMIN, R.ORG_ADMIN].includes(r),
+  organizations: (r) => [R.SUPER_ADMIN].includes(r),
+  branches: (r) => [R.ORG_ADMIN].includes(r),
   employees: (r, p) =>
     [R.ADMIN, R.ORG_ADMIN, R.HR, R.MANAGER].includes(r) ||
-    Boolean(p?.can_manage_users || p?.can_manage_permissions),
+    hasJsonPermission(p, 'users', 'manage') ||
+    hasJsonPermission(p, 'users', 'permissions'),
   /** View kits for registration / allocation planning */
   onboardingKits: (r) => [R.ADMIN, R.MANAGER, R.HR].includes(r),
   stock: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
@@ -46,9 +56,12 @@ export const NAV = {
   assetUsage: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   finance: (r, p) =>
     [R.ADMIN, R.MANAGER].includes(r) ||
-    Boolean(p?.can_view_finance || p?.can_manage_finance),
+    hasJsonPermission(p, 'finance', 'view') ||
+    hasJsonPermission(p, 'finance', 'manage'),
+  healthAnalytics: (r) => [R.ORG_ADMIN, R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
   /** CMDB items & relationships — matches backend GET /cmdb/* */
   cmdb: (r) => [R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM].includes(r),
+  auditLogs: (r) => [R.ORG_ADMIN, R.MANAGER].includes(r),
 }
 
 export function canManageStockWrites(r) {
@@ -107,5 +120,5 @@ export function canTransferCrossBranch(r) {
 }
 
 export function canManagePermissions(r, p) {
-  return [R.ADMIN, R.ORG_ADMIN].includes(r) || Boolean(p?.can_manage_permissions)
+  return [R.ADMIN, R.ORG_ADMIN].includes(r) || hasJsonPermission(p, 'users', 'permissions')
 }

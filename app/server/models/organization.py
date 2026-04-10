@@ -63,6 +63,14 @@ class OrganizationResponse(OrganizationBase):
     created_at: datetime
 
 
+class OrganizationListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[OrganizationResponse]
+    total: int
+    page: int
+    per_page: int
+
+
 class OrganizationOnboardResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     organization_id: str
@@ -97,3 +105,12 @@ class BranchResponse(BranchBase):
     organization_id: str
     status: str
     created_at: datetime
+
+
+class BranchListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[BranchResponse]
+    total: int
+    page: int
+    per_page: int
+

@@ -49,7 +49,14 @@ export const AuthProvider = ({ children }) => {
         })
 
         if (!response.ok) {
-          throw new Error('Unable to load current user')
+          // Only log out on 401/403, not on other errors (timeout, 5xx, etc)
+          if (response.status === 401 || response.status === 403) {
+            if (active) logout()
+          } else {
+            // For other errors, keep user logged in (might be temporary server issue)
+            console.warn('Failed to load user profile:', response.status)
+          }
+          return
         }
 
         const profile = await response.json()
@@ -65,8 +72,9 @@ export const AuthProvider = ({ children }) => {
           organizationId: profile.organization_id || parsed.organizationId,
           permissions: profile.permissions || null,
         })
-      } catch {
-        if (active) logout()
+      } catch (error) {
+        // Network error or other issue - keep user logged in, don't auto-logout
+        console.warn('Error hydrating user:', error)
       } finally {
         if (active) setLoading(false)
       }

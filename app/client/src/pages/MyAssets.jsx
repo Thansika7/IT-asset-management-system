@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext'
 import { apiFetch } from '@/lib/api'
 import { R } from '@/lib/roles'
 import { Plus, AlertCircle } from 'lucide-react'
+import Pagination from '@/components/Pagination'
 
 function AdminAllocationForm({ onSuccess, adminId }) {
   const qc = useQueryClient()
@@ -32,7 +33,8 @@ function AdminAllocationForm({ onSuccess, adminId }) {
     },
   })
 
-  const availableAssets = (stockQuery.data || []).filter((a) => a.unused > 0)
+  const stockItems = stockQuery.data?.items || []
+  const availableItems = stockItems.filter((a) => a.unused > 0)
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -86,7 +88,7 @@ function AdminAllocationForm({ onSuccess, adminId }) {
             disabled={stockQuery.isLoading}
           >
             <option value="">Select an asset…</option>
-            {availableAssets.map((asset) => (
+            {availableItems.map((asset) => (
               <option key={asset.asset_id} value={asset.asset_id}>
                 {asset.name} ({asset.unused} available)
               </option>
@@ -137,10 +139,43 @@ export default function MyAssets() {
   const qc = useQueryClient()
   const empId = user.employeeId
   const [allocationSuccess, setAllocationSuccess] = useState(false)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [branchFilter, setBranchFilter] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const [historyPage, setHistoryPage] = useState(1)
+  const PAGE_SIZE = 10
+
+  const queryString = new URLSearchParams({
+    page: String(page),
+    per_page: String(PAGE_SIZE),
+  })
+  if (search.trim()) queryString.set('search', search.trim())
+  if (statusFilter) queryString.set('status', statusFilter)
+  if (branchFilter) queryString.set('branch', branchFilter)
+  if (categoryFilter) queryString.set('category', categoryFilter)
+
+  const historyQueryString = new URLSearchParams({
+    page: String(historyPage),
+    per_page: String(PAGE_SIZE),
+  })
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['my-assets', empId],
-    queryFn: () => apiFetch(`/employees/${empId}/assets`),
+    queryKey: ['my-assets', empId, page, search, statusFilter, branchFilter, categoryFilter],
+    queryFn: () => apiFetch(`/employees/${empId}/assets?${queryString.toString()}`),
+    enabled: Boolean(empId),
+  })
+
+  const optionsQuery = useQuery({
+    queryKey: ['my-assets-options', empId],
+    queryFn: () => apiFetch(`/employees/${empId}/assets/options`),
+    enabled: Boolean(empId),
+  })
+
+  const historyQuery = useQuery({
+    queryKey: ['my-assets-history', empId, historyPage],
+    queryFn: () => apiFetch(`/employees/${empId}/assets/history?${historyQueryString.toString()}`),
     enabled: Boolean(empId),
   })
 
@@ -149,7 +184,13 @@ export default function MyAssets() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['my-assets', empId] }),
   })
 
-  const rows = data?.active_assets ?? []
+  const rows = data?.items ?? []
+  const total = data?.total || 0
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const filterOptions = optionsQuery.data || { statuses: [], branches: [], categories: [] }
+  const historyRows = historyQuery.data?.items || []
+  const historyTotal = historyQuery.data?.total || 0
+  const historyTotalPages = Math.max(1, Math.ceil(historyTotal / PAGE_SIZE))
 
   if (!empId) {
     return (
@@ -196,9 +237,58 @@ export default function MyAssets() {
       ) : isError ? (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-800">{error?.message}</div>
       ) : rows.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-500 text-sm">No active assets assigned.</p>
+        <>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-2"
+              placeholder="Search instance id, serial number, asset name"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
+            />
+            <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}>
+              <option value="">All statuses</option>
+              {filterOptions.statuses.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setPage(1) }}>
+              <option value="">All branches</option>
+              {filterOptions.branches.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1) }}>
+              <option value="">All categories</option>
+              {filterOptions.categories.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </div>
+          <p className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-500 text-sm">No active assets assigned.</p>
+        </>
       ) : (
         <>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+            <input
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:col-span-2"
+              placeholder="Search instance id, serial number, asset name"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
+            />
+            <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}>
+              <option value="">All statuses</option>
+              {filterOptions.statuses.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setPage(1) }}>
+              <option value="">All branches</option>
+              {filterOptions.branches.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1) }}>
+              <option value="">All categories</option>
+              {filterOptions.categories.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </div>
+
           <p className="text-xs text-slate-500">
             Use <strong>Copy id</strong> if an admin needs the tracking id for a return-to-stock action.
           </p>
@@ -207,20 +297,19 @@ export default function MyAssets() {
               <li key={r.tracking_id} className="rounded-2xl border border-slate-200 bg-white p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <p className="font-mono text-xs text-slate-500">{r.asset_id}</p>
-                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
-                      {r.allocation_type || 'PERMANENT'}
-                    </span>
-                    {r.asset?.category && (
+                    <p className="font-mono text-xs text-slate-500">{r.instance_id}</p>
+                    {r.category && (
                       <span className="text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100">
-                        {r.asset.category}
+                        {r.category}
                       </span>
                     )}
+                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">{r.status}</span>
                   </div>
                   
                   <p className="font-bold text-slate-900 text-lg leading-tight">
-                    {r.asset?.brand ? `${r.asset.brand} ` : ''}{r.asset?.name || 'Unknown Asset'}
+                    {r.brand ? `${r.brand} ` : ''}{r.asset_name || 'Unknown Asset'}
                   </p>
+                  <p className="text-xs text-slate-500 mt-1">{r.model || 'Model —'} · {r.branch || 'Branch —'} · Serial: {r.serial_number || '—'}</p>
                   
                   {r.assigned_date && (
                     <p className="text-xs text-slate-500 mt-1">
@@ -261,6 +350,27 @@ export default function MyAssets() {
               </li>
             ))}
           </ul>
+          <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={total} />
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+            <h3 className="text-lg font-bold text-slate-900">Asset History</h3>
+            {historyQuery.isLoading ? (
+              <p className="text-sm text-slate-400 animate-pulse">Loading history…</p>
+            ) : historyRows.length === 0 ? (
+              <p className="text-sm text-slate-500">No history records.</p>
+            ) : (
+              <div className="space-y-2">
+                {historyRows.map((h) => (
+                  <div key={h.tracking_id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                    <p className="text-sm font-semibold text-slate-900">{h.asset_name} <span className="font-mono text-xs text-slate-500">({h.instance_id})</span></p>
+                    <p className="text-xs text-slate-600 mt-1">Assigned: {h.assigned_date ? new Date(h.assigned_date).toLocaleString() : '—'} · Returned: {h.returned_at ? new Date(h.returned_at).toLocaleString() : '—'}</p>
+                    <p className="text-xs text-slate-600 mt-1">Repair: {h.repair_history ? 'Yes' : 'No'} · Replacement: {h.replacement_history ? 'Yes' : 'No'} · Previous assignment: {h.previous_assignment ? 'Yes' : 'No'}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Pagination page={historyPage} totalPages={historyTotalPages} onPageChange={setHistoryPage} pageSize={PAGE_SIZE} total={historyTotal} />
+          </div>
         </>
       )}
       {ackMut.isError ? <p className="text-sm text-rose-600">{ackMut.error?.message}</p> : null}

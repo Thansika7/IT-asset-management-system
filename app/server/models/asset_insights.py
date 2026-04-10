@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict
 
@@ -8,14 +8,27 @@ class AssetListItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_id: str
     name: str
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    category_id: Optional[str] = None
     category: Optional[str] = None
+    sub_category_id: Optional[str] = None
     sub_category: Optional[str] = None
+    branch_id: Optional[str] = None
     branch: Optional[str] = None
     status: str
     total_quantity: int
     used: int
     unused: int
     low_stock: bool
+
+
+class AssetListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[AssetListItem]
+    total: int
+    page: int
+    per_page: int
 
 
 class AssetDetailRead(BaseModel):
@@ -124,20 +137,40 @@ class AssetFinanceReportRead(BaseModel):
     total_depreciation: float
     total_cost_of_ownership: float
     items: list[AssetFinanceMonitorItem]
+    page: int = 1
+    per_page: int = 20
+    total: int = 0
+
+
+class FinanceSortOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: str
+    label: str
+
+
+class AssetFinanceOptionsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sort_options: list[FinanceSortOption]
 
 
 class AssetHealthRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_id: str
+    instance_id: Optional[str] = None
+    serial_number: Optional[str] = None
+    asset_name: Optional[str] = None
+    status: Optional[str] = None
     health_score: int
     classification: str
     asset_age_years: float
     usage_duration_days: int
     repair_count: int
+    failure_count: int = 0
     performance_issues_count: int
     warranty_expired: bool
     age_penalty: int
     repair_penalty: int
+    failure_penalty: int = 0
     performance_penalty: int
     warranty_penalty: int
     usage_penalty: int
@@ -147,6 +180,8 @@ class AssetHealthRead(BaseModel):
 class AssetHealthReportItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_id: str
+    instance_id: Optional[str] = None
+    serial_number: Optional[str] = None
     asset_name: str
     category: Optional[str] = None
     sub_category: Optional[str] = None
@@ -156,15 +191,17 @@ class AssetHealthReportItem(BaseModel):
     classification: str
     recommendation: str
     recommendation_reason: str
+    asset_age_years: float
+    usage_duration_days: int
+    repair_count: int
+    failure_count: int = 0
+    performance_issues_count: int
+    warranty_expired: bool
     purchase_cost: float
     maintenance_cost: float
     repair_cost: float
     reselling_value: float
-    usage_duration_days: int
-    asset_age_years: float
-    repair_count: int
-    performance_issues_count: int
-    warranty_expired: bool
+    failure_penalty: int = 0
 
 
 class AssetHealthReportRead(BaseModel):
@@ -176,6 +213,23 @@ class AssetHealthReportRead(BaseModel):
     critical_assets: int
     replacement_candidates: int
     items: list[AssetHealthReportItem]
+    total: int = 0
+    page: int = 1
+    per_page: int = 20
+
+
+class HealthRangeOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str
+    value: str
+
+
+class AssetHealthFilterOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    branches: List[str]
+    categories: List[str]
+    health_ranges: List[HealthRangeOption]
+    statuses: List[str]
 
 
 class AssetRecommendationRead(BaseModel):

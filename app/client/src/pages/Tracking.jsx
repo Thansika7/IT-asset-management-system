@@ -8,6 +8,7 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 import { apiFetch } from '@/lib/api'
+import { normalizeOptions } from '@/lib/options'
 import { RefreshCw } from 'lucide-react'
 
 function formatDate(value) {
@@ -17,9 +18,11 @@ function formatDate(value) {
 
 function statusBadgeClasses(status) {
   const normalized = (status || '').toUpperCase()
-  if (normalized === 'PENDING') return 'bg-amber-50 text-amber-800 border border-amber-200'
-  if (normalized === 'APPROVED') return 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-  if (normalized === 'REJECTED') return 'bg-rose-50 text-rose-800 border border-rose-200'
+  if (normalized === 'NEW') return 'bg-sky-50 text-sky-800 border border-sky-200'
+  if (normalized === 'ASSIGNED') return 'bg-indigo-50 text-indigo-800 border border-indigo-200'
+  if (normalized === 'RETURNED') return 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+  if (normalized === 'IN_REPAIR') return 'bg-amber-50 text-amber-800 border border-amber-200'
+  if (normalized === 'NOT_USABLE') return 'bg-rose-50 text-rose-800 border border-rose-200'
   return 'bg-slate-100 text-slate-700 border border-slate-200'
 }
 
@@ -68,13 +71,46 @@ export default function Tracking() {
   const [selectedTrackingId, setSelectedTrackingId] = useState(null)
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 12
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('')
+  const [branchId, setBranchId] = useState('')
+  const [employeeId, setEmployeeId] = useState('')
+  const [categoryId, setCategoryId] = useState('')
+  const [movementType, setMovementType] = useState('')
+  const [transferStatus, setTransferStatus] = useState('')
+
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(page),
+      per_page: String(PAGE_SIZE),
+    })
+    if (search.trim()) params.set('search', search.trim())
+    if (status) params.set('status', status)
+    if (branchId) params.set('branch_id', branchId)
+    if (employeeId) params.set('employee_id', employeeId)
+    if (categoryId) params.set('category_id', categoryId)
+    if (movementType) params.set('movement_type', movementType)
+    if (transferStatus) params.set('transfer_status', transferStatus)
+    return params.toString()
+  }, [page, search, status, branchId, employeeId, categoryId, movementType, transferStatus])
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ['tracking'],
-    queryFn: () => apiFetch('/tracking/'),
+    queryKey: ['tracking', queryString],
+    queryFn: () => apiFetch(`/tracking/?${queryString}`),
   })
 
-  const trackingData = data || []
+  const { data: options } = useQuery({
+    queryKey: ['tracking-options'],
+    queryFn: () => apiFetch('/tracking/options'),
+  })
+
+  const statusOptions = options?.statuses || []
+  const branchOptions = normalizeOptions(options?.branches || [])
+  const employeeOptions = normalizeOptions(options?.employees || [])
+  const categoryOptions = normalizeOptions(options?.categories || [])
+
+  const trackingData = data?.items || []
+  const totalItems = data?.total || 0
   const selectedRecord =
     trackingData.find((item) => item.tracking_id === selectedTrackingId) ||
     trackingData[0] ||
@@ -93,38 +129,38 @@ export default function Tracking() {
         ),
       },
       {
-        header: 'Movement',
-        accessorKey: 'movement_type',
+        header: 'Instance ID',
+        accessorKey: 'instance_id',
+        cell: (c) => <span className="font-mono text-xs">{c.getValue() || '-'}</span>,
+      },
+      {
+        header: 'Serial Number',
+        accessorKey: 'serial_number',
+        cell: (c) => <span className="font-mono text-xs">{c.getValue() || '-'}</span>,
+      },
+      {
+        header: 'Assigned To',
+        accessorKey: 'assigned_to',
         cell: (c) => (
-          <span className={`px-2 py-1 rounded-lg text-xs font-bold uppercase ${movementBadgeClasses(c.getValue())}`}>
-            {c.getValue() || '-'}
-          </span>
+          <span className="font-medium text-slate-900">{c.getValue() || '-'}</span>
         ),
       },
       {
         header: 'Employee',
-        accessorKey: 'emp_id',
-        cell: ({ row }) => (
-          <div>
-            <p className="font-medium text-slate-900">{row.original.emp_id || '-'}</p>
-            <p className="mt-1 text-xs text-slate-500">{row.original.allocation_type || '-'}</p>
-          </div>
-        ),
+        accessorKey: 'employee_name',
+        cell: ({ row }) => row.original.employee_name || row.original.emp_id || '-',
       },
       {
-        header: 'Branch Flow',
+        header: 'Branch',
         accessorKey: 'branch',
-        cell: ({ row }) => {
-          const { branch, from_branch: fromBranch, to_branch: toBranch } = row.original
-          if (fromBranch || toBranch) {
-            return (
-              <div>
-                <p className="font-medium text-slate-900">{fromBranch || '-'}</p>
-                <p className="mt-1 text-xs text-slate-500">to {toBranch || '-'}</p>
-              </div>
-            )
-          }
-          return branch || '-'
+        cell: (c) => c.getValue() || '-',
+      },
+      {
+        header: 'Status',
+        accessorKey: 'status',
+        cell: (c) => {
+          const value = c.getValue()
+          return value ? <span className={`px-2 py-0.5 rounded-md text-xs font-semibold ${statusBadgeClasses(value)}`}>{value}</span> : '-'
         },
       },
       {
@@ -132,54 +168,14 @@ export default function Tracking() {
         accessorKey: 'assigned_date',
         cell: (c) => formatDate(c.getValue()),
       },
-      {
-        header: 'Expiry',
-        accessorKey: 'license_expiry',
-        cell: ({ row }) => {
-          const expiry = getApplicableExpiry(row.original)
-          return (
-            <div className="min-w-[190px]">
-              <div
-                className={`rounded-lg px-3 py-2 ${
-                  expiry.tone === 'sky'
-                    ? 'border border-sky-100 bg-sky-50'
-                    : 'border border-orange-100 bg-orange-50'
-                }`}
-              >
-                <p
-                  className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${
-                    expiry.tone === 'sky' ? 'text-sky-700' : 'text-orange-700'
-                  }`}
-                >
-                  {expiry.label}
-                </p>
-                <p className="mt-1 text-xs font-medium text-slate-900">{expiry.value || '-'}</p>
-              </div>
-            </div>
-          )
-        },
-      },
-      {
-        header: 'Transfer',
-        accessorKey: 'transfer_status',
-        cell: (c) => {
-          const status = c.getValue()
-          if (!status) return '-'
-          return <span className={`px-2 py-0.5 rounded-md text-xs font-semibold ${statusBadgeClasses(status)}`}>{status}</span>
-        },
-      },
     ],
     [],
   )
 
-  const totalPages = Math.ceil(trackingData.length / PAGE_SIZE)
-  const pagedRows = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE
-    return trackingData.slice(start, start + PAGE_SIZE)
-  }, [trackingData, page, PAGE_SIZE])
+  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE))
 
   const table = useReactTable({
-    data: pagedRows,
+    data: trackingData,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -205,6 +201,95 @@ export default function Tracking() {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+        <div className="p-4 border-b border-slate-100 bg-slate-50/50 grid grid-cols-1 md:grid-cols-5 gap-3">
+          <input
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Search asset, instance id, serial number, employee..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value)
+              setPage(1)
+            }}
+          />
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={status}
+            onChange={(e) => {
+              setStatus(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All statuses</option>
+            {statusOptions.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={branchId}
+            onChange={(e) => {
+              setBranchId(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All branches</option>
+            {branchOptions.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={employeeId}
+            onChange={(e) => {
+              setEmployeeId(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All employees</option>
+            {employeeOptions.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={categoryId}
+            onChange={(e) => {
+              setCategoryId(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All categories</option>
+            {categoryOptions.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={movementType}
+            onChange={(e) => {
+              setMovementType(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All movements</option>
+            {['ALLOCATION', 'RETURN', 'TRANSFER', 'SERVICE'].map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={transferStatus}
+            onChange={(e) => {
+              setTransferStatus(e.target.value)
+              setPage(1)
+            }}
+          >
+            <option value="">All transfers</option>
+            {['PENDING', 'IN_TRANSIT', 'RECEIVED', 'CANCELLED'].map((ts) => (
+              <option key={ts} value={ts}>{ts}</option>
+            ))}
+          </select>
+        </div>
         {isLoading ? (
           <div className="p-16 text-center text-slate-400 animate-pulse">Loading tracking...</div>
         ) : isError ? (
@@ -215,7 +300,7 @@ export default function Tracking() {
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.95fr)] xl:items-start">
             <div className="min-w-0 flex flex-col">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm min-w-[1040px]">
+                <table className="w-full text-left text-sm min-w-[980px]">
                   <thead>
                     {table.getHeaderGroups().map((headerGroup) => (
                       <tr key={headerGroup.id} className="bg-slate-50 border-b border-slate-200">
@@ -251,7 +336,7 @@ export default function Tracking() {
                   </tbody>
                 </table>
               </div>
-              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={trackingData.length} />
+              <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={totalItems} />
             </div>
 
             <aside className="border-t xl:border-t-0 xl:border-l border-slate-200 p-6 bg-slate-50/70 min-h-[200px] xl:min-h-0">

@@ -12,6 +12,7 @@ import {
   Layers,
   GitBranch,
   Activity,
+  ScrollText,
   LogOut,
   Menu,
   X,
@@ -22,6 +23,7 @@ import { NAV, labelForRole } from '@/lib/roles'
 
 const navDef = [
   { to: '/organizations', label: 'Organizations', icon: Building2, show: NAV.organizations },
+  { to: '/branches', label: 'Branches', icon: GitBranch, show: NAV.branches },
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, show: NAV.dashboard },
   { to: '/my-assets', label: 'My assets', icon: Laptop, show: NAV.myAssets },
   { to: '/requests', label: 'Requests', icon: FileStack, show: NAV.requests },
@@ -29,9 +31,11 @@ const navDef = [
   { to: '/asset-usage', label: 'Asset usage', icon: Activity, show: NAV.assetUsage },
   { to: '/tracking', label: 'Tracking', icon: MapPinned, show: NAV.tracking },
   { to: '/finance', label: 'Finance', icon: Wallet, show: NAV.finance },
+  { to: '/health-analytics', label: 'Health analytics', icon: Activity, show: NAV.healthAnalytics },
   { to: '/employees', label: 'Team', icon: Users, show: NAV.employees },
   { to: '/onboarding-kits', label: 'Onboarding kits', icon: Layers, show: NAV.onboardingKits },
   { to: '/cmdb', label: 'CMDB', icon: GitBranch, show: NAV.cmdb },
+  { to: '/audit-logs', label: 'Audit Logs', icon: ScrollText, show: NAV.auditLogs },
 ]
 
 export default function MainLayout() {

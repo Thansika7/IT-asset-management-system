@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
-import { R, canManageOnboardingKits, labelForRole } from '@/lib/roles'
+import Pagination from '@/components/Pagination'
+import { canManageOnboardingKits, labelForRole } from '@/lib/roles'
 import { useAuth } from '@/context/AuthContext'
 import { RefreshCw, Trash2, Plus } from 'lucide-react'
 import ConfirmDialog from '@/components/ConfirmDialog'
@@ -11,19 +12,46 @@ export default function OnboardingKits() {
   const qc = useQueryClient()
   const canEdit = canManageOnboardingKits(user.role)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [page, setPage] = useState(1)
+  const [search, setSearch] = useState('')
+  const [targetRoleFilter, setTargetRoleFilter] = useState('')
+  const [branchFilter, setBranchFilter] = useState('')
+  const PAGE_SIZE = 10
 
-  const { data: presets = [], isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['onboarding-presets'],
-    queryFn: () => apiFetch('/onboarding-presets/'),
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams({ page: String(page), per_page: String(PAGE_SIZE) })
+    if (search.trim()) params.set('search', search.trim())
+    if (targetRoleFilter) params.set('target_role', targetRoleFilter)
+    if (branchFilter) params.set('branch', branchFilter)
+    return params.toString()
+  }, [page, search, targetRoleFilter, branchFilter])
+
+  const { data: presetsData = { items: [], total: 0 }, isLoading, refetch, isFetching } = useQuery({
+    queryKey: ['onboarding-presets', queryString],
+    queryFn: () => apiFetch(`/onboarding-presets/?${queryString}`),
   })
 
-  const { data: stock = [] } = useQuery({
-    queryKey: ['stock'],
-    queryFn: () => apiFetch('/stock/'),
+  const { data: stockData = { items: [] } } = useQuery({
+    queryKey: ['stock', 'onboarding-kits'],
+    queryFn: () => apiFetch('/stock/?page=1&per_page=200'),
     enabled: canEdit,
   })
 
-  const available = useMemo(() => stock.filter((a) => a.unused > 0), [stock])
+  const { data: employeeFilterOptions = { roles: [] } } = useQuery({
+    queryKey: ['onboarding-kit-roles'],
+    queryFn: () => apiFetch('/employees/filter-options'),
+  })
+
+  const { data: branchOptions = [] } = useQuery({
+    queryKey: ['onboarding-kit-branches'],
+    queryFn: () => apiFetch('/branches'),
+  })
+
+  const available = useMemo(() => (stockData?.items || []).filter((a) => a.unused > 0), [stockData])
+  const roleOptions = employeeFilterOptions?.roles || []
+  const presetItems = presetsData?.items || []
+  const total = presetsData?.total || 0
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const createMut = useMutation({
     mutationFn: (body) => apiFetch('/onboarding-presets/', { method: 'POST', body: JSON.stringify(body) }),
@@ -61,6 +89,8 @@ export default function OnboardingKits() {
       {canEdit ? (
         <CreateKitForm
           stock={available}
+          roles={roleOptions}
+          branches={branchOptions}
           onCreate={(body) => createMut.mutate(body)}
           busy={createMut.isPending}
           error={createMut.error?.message}
@@ -72,14 +102,49 @@ export default function OnboardingKits() {
       )}
 
       <div className="space-y-3">
-        <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Saved kits</h2>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Saved kits</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full sm:w-auto">
+            <input
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              placeholder="Search kit name or ID"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
+            />
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={targetRoleFilter}
+              onChange={(e) => {
+                setTargetRoleFilter(e.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="">All roles</option>
+              {roleOptions.map((role) => <option key={role} value={role}>{labelForRole(role)}</option>)}
+            </select>
+            <select
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={branchFilter}
+              onChange={(e) => {
+                setBranchFilter(e.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="">All branches</option>
+              {branchOptions.map((branch) => <option key={branch.branch_id} value={branch.branch_name}>{branch.branch_name}</option>)}
+            </select>
+          </div>
+        </div>
         {isLoading ? (
           <p className="text-slate-400 animate-pulse py-8">Loading…</p>
-        ) : presets.length === 0 ? (
+        ) : presetItems.length === 0 ? (
           <p className="text-sm text-slate-500 border border-dashed border-slate-200 rounded-2xl p-8 text-center">No kits yet.</p>
         ) : (
           <ul className="space-y-3">
-            {presets.map((p) => (
+            {presetItems.map((p) => (
               <li key={p.preset_id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                 <div>
                   <p className="font-bold text-slate-900">{p.name}</p>
@@ -115,6 +180,7 @@ export default function OnboardingKits() {
             ))}
           </ul>
         )}
+        <Pagination page={page} totalPages={totalPages} onPageChange={setPage} pageSize={PAGE_SIZE} total={total} />
       </div>
 
       <ConfirmDialog
@@ -130,7 +196,7 @@ export default function OnboardingKits() {
   )
 }
 
-function CreateKitForm({ stock, onCreate, busy, error }) {
+function CreateKitForm({ stock, roles, branches, onCreate, busy, error }) {
   const [name, setName] = useState('')
   const [targetRole, setTargetRole] = useState('')
   const [branch, setBranch] = useState('')
@@ -170,13 +236,12 @@ function CreateKitForm({ stock, onCreate, busy, error }) {
         <input required className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" placeholder="Kit name (e.g. Standard laptop employee)" value={name} onChange={(e) => setName(e.target.value)} />
         <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={targetRole} onChange={(e) => setTargetRole(e.target.value)}>
           <option value="">Target role (optional)</option>
-          <option value={R.EMPLOYEE}>Employee</option>
-          <option value={R.HR}>HR</option>
-          <option value={R.MANAGER}>Manager</option>
-          <option value={R.SUPPORT_TEAM}>Support</option>
-          <option value={R.ADMIN}>Admin</option>
+          {roles.map((role) => <option key={role} value={role}>{labelForRole(role)}</option>)}
         </select>
-        <input className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white sm:col-span-2" placeholder="Branch filter (optional — employee must match)" value={branch} onChange={(e) => setBranch(e.target.value)} />
+        <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white sm:col-span-2" value={branch} onChange={(e) => setBranch(e.target.value)}>
+          <option value="">Branch filter (optional — employee must match)</option>
+          {branches.map((item) => <option key={item.branch_id} value={item.branch_name}>{item.branch_name}</option>)}
+        </select>
       </div>
       <div>
         <p className="text-xs font-semibold text-slate-700 mb-2">Pick catalog lines with available quantity (unused &gt; 0)</p>

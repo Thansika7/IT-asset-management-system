@@ -5,11 +5,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.server.database.database import get_db
-from app.server.middlewares.auth import require_roles
+from app.server.middlewares.auth import require_module_access, require_roles
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.services.cmdb_service import CMDBService
 
-router = APIRouter(prefix="/cmdb", tags=["cmdb"])
+router = APIRouter(
+    prefix="/cmdb",
+    tags=["cmdb"],
+    dependencies=[Depends(require_module_access("cmdb"))],
+)
 
 
 class CIRead(BaseModel):
@@ -19,6 +23,8 @@ class CIRead(BaseModel):
     name: str
     asset_id: Optional[str] = None
     status: str
+    organization_id: Optional[str] = None
+    branch_id: Optional[str] = None
     created_at: Optional[str] = None
 
 
@@ -45,9 +51,51 @@ class RelCreate(BaseModel):
     relationship_type: str
 
 
-@router.get("/items", response_model=List[CIRead])
+class CIListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: List[CIRead]
+    total: int
+    page: int
+    per_page: int
+
+
+class CIRelListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: List[CIRelRead]
+    total: int
+    page: int
+    per_page: int
+
+
+class CMDBOptionsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ci_types: List[str]
+    relationship_types: List[str]
+
+
+class CMDBImpactItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ci_id: str
+    name: str
+    asset_id: Optional[str] = None
+    status: str
+    ci_type: str
+
+
+class CMDBImpactResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ci_id: str
+    dependent_assets: List[CMDBImpactItem]
+    dependent_services: List[CMDBImpactItem]
+    impacted_ci_count: int
+
+
+@router.get("/items", response_model=CIListResponse)
 def list_ci(
+    search: Optional[str] = None,
     ci_type: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
@@ -57,20 +105,31 @@ def list_ci(
     Valid CI types: ASSET, SOFTWARE, SERVICE, USER, NETWORK_DEVICE, FURNITURE, CLOUD, OTHER
     
     Query Parameters:
+    - search: Search by name or CI ID
     - ci_type: Filter by CI type (e.g., "ASSET", "SOFTWARE", "SERVICE")
+    - page: Page number
+    - per_page: Items per page
     """
-    rows = CMDBService.list_items(db, current_user, ci_type=ci_type)
-    return [
-        CIRead(
-            ci_id=r.ci_id,
-            ci_type=r.ci_type,
-            name=r.name,
-            asset_id=r.asset_id,
-            status=r.status,
-            created_at=r.created_at.isoformat() if r.created_at else None,
-        )
-        for r in rows
-    ]
+    return CMDBService.list_items(
+        db, 
+        current_user, 
+        search=search,
+        ci_type=ci_type,
+        page=page,
+        per_page=per_page
+    )
+
+
+@router.get("/options", response_model=CMDBOptionsResponse)
+def list_options(
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+    db: Session = Depends(get_db),
+):
+    return {
+        "ci_types": sorted(CMDBService.VALID_CI_TYPES),
+        "relationship_types": CMDBService.get_relationship_types(db, current_user),
+    }
+
 
 
 @router.post("/items", response_model=CIRead, status_code=201)
@@ -95,7 +154,7 @@ def create_ci(
         ci_type=payload.ci_type,
         name=payload.name,
         asset_id=payload.asset_id,
-        status=payload.status,
+        ci_status=payload.status,
     )
     return CIRead(
         ci_id=r.ci_id,
@@ -103,13 +162,19 @@ def create_ci(
         name=r.name,
         asset_id=r.asset_id,
         status=r.status,
+        organization_id=r.organization_id,
+        branch_id=r.branch_id,
         created_at=r.created_at.isoformat() if r.created_at else None,
     )
 
 
-@router.get("/relationships", response_model=List[CIRelRead])
+@router.get("/relationships", response_model=CIRelListResponse)
 def list_rels(
     ci_id: Optional[str] = None,
+    search: Optional[str] = None,
+    relationship_type: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
@@ -126,8 +191,15 @@ def list_rels(
     - hosted_on: Source is hosted/running on target (e.g., service hosted on server)
     - supports: Source physically/logically supports target (e.g., furniture supports monitor)
     """
-    rows = CMDBService.list_relationships(db, current_user, ci_id=ci_id)
-    return [CIRelRead.model_validate(r) for r in rows]
+    return CMDBService.list_relationships(
+        db,
+        current_user,
+        ci_id=ci_id,
+        search=search,
+        relationship_type=relationship_type,
+        page=page,
+        per_page=per_page,
+    )
 
 
 @router.post("/relationships", response_model=CIRelRead, status_code=201)
@@ -161,3 +233,61 @@ def create_rel(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     return CIRelRead.model_validate(r)
+
+
+@router.get("/ci", response_model=CIListResponse)
+def list_ci_module12(
+    search: Optional[str] = None,
+    ci_type: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return CMDBService.list_items(
+        db,
+        current_user,
+        search=search,
+        ci_type=ci_type,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get("/ci/{ci_id}", response_model=CIRead)
+def get_ci_by_id(
+    ci_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    payload = CMDBService.get_item_payload(db, ci_id, current_user)
+    return CIRead(**payload)
+
+
+@router.get("/ci/{ci_id}/impact", response_model=CMDBImpactResponse)
+def get_ci_impact(
+    ci_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    payload = CMDBService.get_impact(db, ci_id, current_user)
+    return CMDBImpactResponse(**payload)
+
+
+@router.post("/relationship", response_model=CIRelRead, status_code=201)
+def create_relationship_module12(
+    payload: RelCreate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER)),
+):
+    try:
+        rel = CMDBService.create_relationship(
+            db,
+            current_user,
+            source_ci=payload.source_ci,
+            target_ci=payload.target_ci,
+            relationship_type=payload.relationship_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return CIRelRead.model_validate(rel)

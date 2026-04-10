@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher, get_close_matches
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import String, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.server.exceptions.base import ResourceNotFoundError
@@ -13,9 +13,13 @@ from app.server.models.asset_insights import (
     AssetFinanceRead,
     AssetFinanceMonitorItem,
     AssetFinanceReportRead,
+    AssetFinanceOptionsRead,
+    FinanceSortOption,
     AssetHealthRead,
     AssetHealthReportItem,
     AssetHealthReportRead,
+    AssetHealthFilterOptions,
+    HealthRangeOption,
     AssetListItem,
     AssetRecommendationRead,
     CategoryRead,
@@ -26,14 +30,25 @@ from app.server.models.asset_insights import (
 )
 from app.server.schema.employee import Employee
 from app.server.schema.request import Request
-from app.server.schema.asset import Asset
+from app.server.schema.asset import Asset, AssetInstance, AssetStatus
 from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
 from app.server.schema.category import Category, SubCategory
 from app.server.schema.organization import Branch
-from app.server.schema.tracking import Tracking
+from app.server.schema.tracking import Tracking, MovementType
 
 
 class AssetInsightsService:
+    NON_HARDWARE_CATEGORIES = {"software", "furniture", "accessories", "network"}
+
+    @staticmethod
+    def _is_hardware_asset(asset: Asset) -> bool:
+        category_name = (asset.category.category_name if asset.category else "") or ""
+        return category_name.strip().lower() not in AssetInsightsService.NON_HARDWARE_CATEGORIES
+
+    @staticmethod
+    def _is_hardware_category_name(category_name: str | None) -> bool:
+        return (category_name or "").strip().lower() not in AssetInsightsService.NON_HARDWARE_CATEGORIES
+
     @staticmethod
     def _apply_role_scope(query, current_user):
         from app.server.schema.employee import EmployeeRole
@@ -78,6 +93,210 @@ class AssetInsightsService:
         return total_days
 
     @staticmethod
+    def _get_instance_usage_duration_days(db: Session, instance_id: str) -> int:
+        records = db.query(Tracking).filter(Tracking.instance_id == instance_id).order_by(Tracking.assigned_date.asc()).all()
+        total_days = 0
+        now = datetime.now()
+        for record in records:
+            if not record.assigned_date:
+                continue
+            start_time = record.assigned_date.replace(tzinfo=None) if record.assigned_date.tzinfo else record.assigned_date
+            end_time = record.returned_at.replace(tzinfo=None) if record.returned_at and record.returned_at.tzinfo else (record.returned_at or now)
+            total_days += max((end_time - start_time).days, 0)
+        return total_days
+
+    @staticmethod
+    def _instance_failure_count(db: Session, instance_id: str) -> int:
+        return (
+            db.query(Tracking)
+            .filter(
+                Tracking.instance_id == instance_id,
+                Tracking.movement_type.in_([MovementType.REPAIR, MovementType.REPLACE, MovementType.WARRANTY]),
+            )
+            .count()
+        )
+
+    @staticmethod
+    def _instance_repair_count(db: Session, instance_id: str) -> int:
+        return (
+            db.query(Tracking)
+            .filter(
+                Tracking.instance_id == instance_id,
+                Tracking.movement_type.in_([MovementType.REPAIR, MovementType.WARRANTY]),
+            )
+            .count()
+        )
+
+    @staticmethod
+    def _instance_health_score(db: Session, instance: AssetInstance) -> dict:
+        model = instance.model
+        category_name = model.category.category_name if model and model.category else ""
+        if not AssetInsightsService._is_hardware_category_name(category_name):
+            return {
+                "health_score": 100,
+                "classification": "Not Applicable",
+                "asset_age_years": 0.0,
+                "usage_duration_days": 0,
+                "repair_count": 0,
+                "failure_count": 0,
+                "performance_issues_count": 0,
+                "warranty_expired": False,
+                "age_penalty": 0,
+                "repair_penalty": 0,
+                "failure_penalty": 0,
+                "performance_penalty": 0,
+                "warranty_penalty": 0,
+                "usage_penalty": 0,
+                "recommendation_hint": "Health score is not applicable for non-hardware assets.",
+            }
+
+        purchase_date = instance.purchase_date or (model.purchased_date if model else None)
+        asset_age_years = 0.0
+        if purchase_date:
+            asset_age_years = max((date.today() - purchase_date).days / 365, 0)
+
+        if asset_age_years >= 4:
+            age_penalty = 25
+        elif asset_age_years >= 3:
+            age_penalty = 15
+        elif asset_age_years >= 2:
+            age_penalty = 10
+        elif asset_age_years >= 1:
+            age_penalty = 5
+        else:
+            age_penalty = 0
+
+        usage_duration_days = AssetInsightsService._get_instance_usage_duration_days(db, instance.instance_id)
+        if usage_duration_days >= 1460:
+            usage_penalty = 15
+        elif usage_duration_days >= 1095:
+            usage_penalty = 12
+        elif usage_duration_days >= 730:
+            usage_penalty = 8
+        elif usage_duration_days >= 365:
+            usage_penalty = 5
+        else:
+            usage_penalty = 0
+
+        repair_count = AssetInsightsService._instance_repair_count(db, instance.instance_id)
+        failure_count = AssetInsightsService._instance_failure_count(db, instance.instance_id)
+        performance_issues_count = failure_count
+        repair_penalty = repair_count * 8
+        failure_penalty = failure_count * 10
+        performance_penalty = performance_issues_count * 5
+
+        warranty_expiry = instance.warranty_expiry or AssetInsightsService._get_warranty_expiry(db, instance.asset_id)
+        # Unknown warranty should not degrade health; only expired known dates do.
+        warranty_expired = bool(warranty_expiry is not None and warranty_expiry < date.today())
+        warranty_penalty = 10 if warranty_expired else 0
+
+        status_penalty_map = {
+            AssetStatus.NEW.value: 0,
+            AssetStatus.AVAILABLE.value: 0,
+            AssetStatus.ASSIGNED.value: 0,
+            AssetStatus.USED.value: 5,
+            AssetStatus.IN_REPAIR.value: 20,
+            AssetStatus.NOT_USABLE.value: 30,
+            AssetStatus.RETIRED.value: 60,
+        }
+        status_value = instance.status.value if hasattr(instance.status, "value") else str(instance.status)
+        status_penalty = status_penalty_map.get(status_value, 0)
+
+        purchase_cost = float(instance.purchase_cost or (model.purchase_cost if model else 0.0) or 0.0)
+        maintenance_cost = float(model.maintenance_total_cost if model else 0.0)
+        repair_cost = float(model.repair_total_cost if model else 0.0)
+        spend_ratio_penalty = 0
+        if purchase_cost > 0:
+            ratio = (maintenance_cost + repair_cost) / purchase_cost
+            if ratio >= 0.20:
+                spend_ratio_penalty = 10
+            elif ratio >= 0.10:
+                spend_ratio_penalty = 5
+
+        score = max(
+            0,
+            min(
+                100,
+                100
+                - age_penalty
+                - repair_penalty
+                - failure_penalty
+                - performance_penalty
+                - usage_penalty
+                - warranty_penalty
+                - status_penalty
+                - spend_ratio_penalty,
+            ),
+        )
+
+        return {
+            "health_score": score,
+            "classification": AssetInsightsService._classify_health(score),
+            "asset_age_years": round(asset_age_years, 2),
+            "usage_duration_days": usage_duration_days,
+            "repair_count": repair_count,
+            "failure_count": failure_count,
+            "performance_issues_count": performance_issues_count,
+            "warranty_expired": warranty_expired,
+            "age_penalty": age_penalty,
+            "repair_penalty": repair_penalty,
+            "failure_penalty": failure_penalty,
+            "performance_penalty": performance_penalty,
+            "warranty_penalty": warranty_penalty,
+            "usage_penalty": usage_penalty,
+            "recommendation_hint": (
+                "Replace asset immediately." if score < 20 else
+                "Urgent repair/replacement evaluation required." if score < 40 else
+                "Inspect and maintain soon." if score < 60 else
+                "Healthy for continued use and reallocation."
+            ),
+        }
+
+    @staticmethod
+    def _instance_health_read(db: Session, instance: AssetInstance) -> AssetHealthRead:
+        model = instance.model
+        metrics = AssetInsightsService._instance_health_score(db, instance)
+        asset_name = model.name if model else instance.asset_id
+        return AssetHealthRead(
+            asset_id=instance.asset_id,
+            instance_id=instance.instance_id,
+            serial_number=instance.serial_number,
+            asset_name=asset_name,
+            status=instance.status.value if hasattr(instance.status, "value") else str(instance.status),
+            health_score=metrics["health_score"],
+            classification=metrics["classification"],
+            asset_age_years=metrics["asset_age_years"],
+            usage_duration_days=metrics["usage_duration_days"],
+            repair_count=metrics["repair_count"],
+            failure_count=metrics["failure_count"],
+            performance_issues_count=metrics["performance_issues_count"],
+            warranty_expired=metrics["warranty_expired"],
+            age_penalty=metrics["age_penalty"],
+            repair_penalty=metrics["repair_penalty"],
+            failure_penalty=metrics["failure_penalty"],
+            performance_penalty=metrics["performance_penalty"],
+            warranty_penalty=metrics["warranty_penalty"],
+            usage_penalty=metrics["usage_penalty"],
+            recommendation_hint=metrics["recommendation_hint"],
+        )
+
+    @staticmethod
+    def _base_instance_query(db: Session, current_user: Employee):
+        from app.server.schema.employee import EmployeeRole
+
+        query = db.query(AssetInstance).options(
+            joinedload(AssetInstance.model).joinedload(Asset.category),
+            joinedload(AssetInstance.model).joinedload(Asset.sub_category),
+            joinedload(AssetInstance.branch_rel),
+        )
+        from app.server.database.tenant import apply_tenant_filter
+
+        query = apply_tenant_filter(query, current_user, AssetInstance)
+        if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
+            query = query.filter(AssetInstance.branch_id == current_user.branch_id)
+        return query.join(AssetInstance.model).outerjoin(Category).outerjoin(Branch)
+
+    @staticmethod
     def _base_asset_query(db: Session, current_user: Employee):
         query = db.query(Asset).options(joinedload(Asset.category), joinedload(Asset.sub_category))
         return AssetInsightsService._apply_role_scope(query, current_user)
@@ -88,24 +307,25 @@ class AssetInsightsService:
         current_user: Employee,
         *,
         search: Optional[str] = None,
-        category: Optional[str] = None,
-        sub_category: Optional[str] = None,
-        branch: Optional[str] = None,
+        category_id: Optional[str] = None,
+        sub_category_id: Optional[str] = None,
+        branch_id: Optional[str] = None,
         status: Optional[str] = None,
         available_only: bool = False,
         allocated_only: bool = False,
         low_stock_only: bool = False,
-    ) -> list[AssetListItem]:
-        query = AssetInsightsService._base_asset_query(db, current_user).join(Category)
-        if sub_category:
-            query = query.outerjoin(SubCategory)
-
-        if category:
-            query = query.filter(Category.category_name.ilike(f"%{category.strip()}%"))
-        if sub_category:
-            query = query.filter(SubCategory.sub_category_name.ilike(f"%{sub_category.strip()}%"))
-        if branch:
-            query = query.join(Asset.branch_rel).filter(Branch.branch_name.ilike(f"%{branch.strip()}%"))
+        page: int = 1,
+        per_page: int = 20,
+    ) -> dict:
+        from sqlalchemy import or_
+        query = AssetInsightsService._base_asset_query(db, current_user).join(Category).outerjoin(SubCategory).outerjoin(Branch)
+        
+        if category_id:
+            query = query.filter(Asset.category_id == category_id)
+        if sub_category_id:
+            query = query.filter(Asset.sub_category_id == sub_category_id)
+        if branch_id:
+            query = query.filter(Asset.branch_id == branch_id)
 
         if status:
             normalized = status.strip().lower()
@@ -125,24 +345,67 @@ class AssetInsightsService:
         if low_stock_only:
             query = query.filter(Asset.unused <= Asset.low_stock_threshold)
 
-        assets = query.all()
         if search:
-            needle = search.strip().lower()
-            assets = [
-                asset for asset in assets
-                if needle in (asset.name or "").lower()
-                or needle in ((asset.category.category_name if asset.category else "")).lower()
-                or needle in ((asset.sub_category.sub_category_name if asset.sub_category else "")).lower()
-                or needle in ((asset.branch or "")).lower()
-                or needle in ((asset.asset_status.value if asset.asset_status else "")).lower()
-            ]
+            needle = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    Asset.name.ilike(needle),
+                    Asset.asset_id.ilike(needle),
+                    Asset.brand.ilike(needle),
+                    Asset.model.ilike(needle),
+                    Category.category_name.ilike(needle),
+                    SubCategory.sub_category_name.ilike(needle),
+                    Branch.branch_name.ilike(needle),
+                    func.cast(Asset.asset_status, String).ilike(needle),
+                )
+            )
 
+        total = query.count()
+        assets = query.order_by(Asset.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+
+        items = [
+            AssetListItem(
+                asset_id=asset.asset_id,
+                name=asset.name,
+                brand=asset.brand,
+                model=asset.model,
+                category_id=asset.category_id,
+                category=asset.category.category_name if asset.category else None,
+                sub_category_id=asset.sub_category_id,
+                sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                branch_id=asset.branch_id,
+                branch=asset.branch,
+                status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
+                total_quantity=asset.total_quantity,
+                used=asset.used,
+                unused=asset.unused,
+                low_stock=asset.unused <= (asset.low_stock_threshold or 0),
+            )
+            for asset in assets
+        ]
+        
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "per_page": per_page
+        }
+
+    @staticmethod
+    def list_asset_options(db: Session, current_user: Employee) -> list[AssetListItem]:
+        query = AssetInsightsService._base_asset_query(db, current_user)
+        assets = query.order_by(Asset.name.asc(), Asset.asset_id.asc()).all()
         return [
             AssetListItem(
                 asset_id=asset.asset_id,
                 name=asset.name,
+                brand=asset.brand,
+                model=asset.model,
+                category_id=asset.category_id,
                 category=asset.category.category_name if asset.category else None,
+                sub_category_id=asset.sub_category_id,
                 sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                branch_id=asset.branch_id,
                 branch=asset.branch,
                 status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
                 total_quantity=asset.total_quantity,
@@ -153,40 +416,28 @@ class AssetInsightsService:
             for asset in assets
         ]
 
+
     @staticmethod
     def _matches_asset_filters(
         asset: Asset,
         *,
         search: Optional[str] = None,
-        category: Optional[str] = None,
-        sub_category: Optional[str] = None,
-        branch: Optional[str] = None,
         status: Optional[str] = None,
         available_only: bool = False,
         allocated_only: bool = False,
         low_stock_only: bool = False,
     ) -> bool:
-        category_name = asset.category.category_name if asset.category else ""
-        sub_category_name = asset.sub_category.sub_category_name if asset.sub_category else ""
-        asset_status = asset.asset_status.value if asset.asset_status else ""
-
-        if category and category.strip().lower() not in category_name.lower():
-            return False
-        if sub_category and sub_category.strip().lower() not in sub_category_name.lower():
-            return False
-        if branch and branch.strip().lower() not in (asset.branch or "").lower():
-            return False
-
         if status:
             normalized = status.strip().lower()
-            if normalized == "available" and asset.unused <= 0:
-                return False
-            if normalized == "allocated" and asset.used <= 0:
-                return False
-            if normalized == "low_stock" and asset.unused > (asset.low_stock_threshold or 0):
-                return False
-            if normalized not in {"available", "allocated", "low_stock"} and normalized != asset_status.lower():
-                return False
+            if normalized == "available":
+                if asset.unused <= 0: return False
+            elif normalized == "allocated":
+                if asset.used <= 0: return False
+            elif normalized == "low_stock":
+                if asset.unused > (asset.low_stock_threshold or 0): return False
+            else:
+                if (asset.asset_status.value if asset.asset_status else "").upper() != status.strip().upper():
+                    return False
 
         if available_only and asset.unused <= 0:
             return False
@@ -197,22 +448,20 @@ class AssetInsightsService:
 
         if search:
             needle = search.strip().lower()
-            haystacks = [
-                asset.asset_id or "",
-                asset.name or "",
-                category_name,
-                sub_category_name,
-                asset.branch or "",
-                asset_status,
-                asset.brand or "",
-                asset.vendor_name or "",
-                asset.vendor_contact or "",
-                asset.invoice_number or "",
+            haystack = [
+                asset.asset_id,
+                asset.name,
+                asset.brand,
+                asset.model,
+                asset.category.category_name if asset.category else "",
+                asset.sub_category.sub_category_name if asset.sub_category else "",
+                asset.vendor_name,
+                asset.invoice_number,
+                asset.branch_rel.branch_name if asset.branch_rel else "",
             ]
-            if not any(needle in value.lower() for value in haystacks):
-                return False
-
+            return any(needle in (str(h).lower()) for h in haystack if h)
         return True
+
 
     @staticmethod
     def _get_warranty_expiry(db: Session, asset_id: str) -> Optional[date]:
@@ -362,11 +611,11 @@ class AssetInsightsService:
     def get_finance_report(
         db: Session,
         current_user: Employee,
-        branch: Optional[str] = None,
+        branch_id: Optional[str] = None,
         *,
         search: Optional[str] = None,
-        category: Optional[str] = None,
-        sub_category: Optional[str] = None,
+        category_id: Optional[str] = None,
+        sub_category_id: Optional[str] = None,
         status: Optional[str] = None,
         available_only: bool = False,
         allocated_only: bool = False,
@@ -377,16 +626,23 @@ class AssetInsightsService:
         min_health_score: Optional[int] = None,
         max_health_score: Optional[int] = None,
         sort_by: str = "priority_cost",
+        page: int = 1,
+        per_page: int = 20,
     ) -> AssetFinanceReportRead:
         query = AssetInsightsService._base_asset_query(db, current_user)
+        
+        if branch_id:
+            query = query.filter(Asset.branch_id == branch_id)
+        if category_id:
+            query = query.filter(Asset.category_id == category_id)
+        if sub_category_id:
+            query = query.filter(Asset.sub_category_id == sub_category_id)
+        
         assets = [
             asset for asset in query.all()
             if AssetInsightsService._matches_asset_filters(
                 asset,
                 search=search,
-                category=category,
-                sub_category=sub_category,
-                branch=branch,
                 status=status,
                 available_only=available_only,
                 allocated_only=allocated_only,
@@ -394,32 +650,33 @@ class AssetInsightsService:
             )
         ]
 
-        items = [AssetInsightsService._build_finance_monitor_item(db, asset, current_user) for asset in assets]
+
+        all_items = [AssetInsightsService._build_finance_monitor_item(db, asset, current_user) for asset in assets]
         if recommendation:
             desired = recommendation.strip().upper()
-            items = [item for item in items if item.replacement_recommendation.upper() == desired]
+            all_items = [item for item in all_items if item.replacement_recommendation.upper() == desired]
         if min_tco is not None:
-            items = [item for item in items if item.total_cost_of_ownership >= min_tco]
+            all_items = [item for item in all_items if item.total_cost_of_ownership >= min_tco]
         if max_tco is not None:
-            items = [item for item in items if item.total_cost_of_ownership <= max_tco]
+            all_items = [item for item in all_items if item.total_cost_of_ownership <= max_tco]
         if min_health_score is not None:
-            items = [item for item in items if item.health_score >= min_health_score]
+            all_items = [item for item in all_items if item.health_score >= min_health_score]
         if max_health_score is not None:
-            items = [item for item in items if item.health_score <= max_health_score]
+            all_items = [item for item in all_items if item.health_score <= max_health_score]
 
         if sort_by == "health":
-            items = sorted(items, key=lambda item: (item.health_score, -item.total_cost_of_ownership))
+            all_items = sorted(all_items, key=lambda item: (item.health_score, -item.total_cost_of_ownership))
         elif sort_by == "tco":
-            items = sorted(items, key=lambda item: item.total_cost_of_ownership, reverse=True)
+            all_items = sorted(all_items, key=lambda item: item.total_cost_of_ownership, reverse=True)
         elif sort_by == "maintenance":
-            items = sorted(items, key=lambda item: item.maintenance_cost, reverse=True)
+            all_items = sorted(all_items, key=lambda item: item.maintenance_cost, reverse=True)
         elif sort_by == "repair":
-            items = sorted(items, key=lambda item: item.repair_cost, reverse=True)
+            all_items = sorted(all_items, key=lambda item: item.repair_cost, reverse=True)
         elif sort_by == "depreciation":
-            items = sorted(items, key=lambda item: item.accumulated_depreciation, reverse=True)
+            all_items = sorted(all_items, key=lambda item: item.accumulated_depreciation, reverse=True)
         else:
-            items = sorted(
-                items,
+            all_items = sorted(
+                all_items,
                 key=lambda item: (
                     item.replacement_recommendation == "REPLACE",
                     item.low_stock,
@@ -429,17 +686,37 @@ class AssetInsightsService:
                 reverse=True,
             )
 
+        total = len(all_items)
+        items = all_items[(page - 1) * per_page : page * per_page]
+
         return AssetFinanceReportRead(
-            branch=branch,
-            asset_count=len(items),
-            total_purchase_cost=round(sum(row.purchase_cost for row in items), 2),
-            total_maintenance_cost=round(sum(row.maintenance_cost for row in items), 2),
-            total_repair_cost=round(sum(row.repair_cost for row in items), 2),
-            total_license_cost=round(sum(row.sub_license_cost for row in items), 2),
-            total_depreciation=round(sum(row.accumulated_depreciation for row in items), 2),
-            total_cost_of_ownership=round(sum(row.total_cost_of_ownership for row in items), 2),
+            branch=branch_id,
+            asset_count=total,
+            total_purchase_cost=round(sum(row.purchase_cost for row in all_items), 2),
+            total_maintenance_cost=round(sum(row.maintenance_cost for row in all_items), 2),
+            total_repair_cost=round(sum(row.repair_cost for row in all_items), 2),
+            total_license_cost=round(sum(row.sub_license_cost for row in all_items), 2),
+            total_depreciation=round(sum(row.accumulated_depreciation for row in all_items), 2),
+            total_cost_of_ownership=round(sum(row.total_cost_of_ownership for row in all_items), 2),
             items=items,
+            page=page,
+            per_page=per_page,
+            total=total
         )
+
+    @staticmethod
+    def get_finance_options() -> AssetFinanceOptionsRead:
+        return AssetFinanceOptionsRead(
+            sort_options=[
+                FinanceSortOption(value="priority_cost", label="Priority monitoring"),
+                FinanceSortOption(value="tco", label="Highest TCO"),
+                FinanceSortOption(value="maintenance", label="Highest maintenance"),
+                FinanceSortOption(value="repair", label="Highest repair cost"),
+                FinanceSortOption(value="depreciation", label="Highest depreciation"),
+                FinanceSortOption(value="health", label="Lowest health first"),
+            ]
+        )
+
 
     @staticmethod
     def get_asset_health(db: Session, asset_id: str, current_user: Employee) -> AssetHealthRead:
@@ -447,103 +724,68 @@ class AssetInsightsService:
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
 
-        asset_age_years = 0.0
-        if asset.purchased_date:
-            asset_age_years = max((date.today() - asset.purchased_date).days / 365, 0)
+        instances = (
+            AssetInsightsService._base_instance_query(db, current_user)
+            .filter(AssetInstance.asset_id == asset_id)
+            .order_by(AssetInstance.created_at.asc())
+            .all()
+        )
+        if not instances:
+            # Fallback for legacy model-only records.
+            if not AssetInsightsService._is_hardware_asset(asset):
+                return AssetHealthRead(
+                    asset_id=asset.asset_id,
+                    health_score=100,
+                    classification="Not Applicable",
+                    asset_age_years=0.0,
+                    usage_duration_days=0,
+                    repair_count=0,
+                    failure_count=0,
+                    performance_issues_count=0,
+                    warranty_expired=False,
+                    age_penalty=0,
+                    repair_penalty=0,
+                    failure_penalty=0,
+                    performance_penalty=0,
+                    warranty_penalty=0,
+                    usage_penalty=0,
+                    recommendation_hint="Health score is not applicable for non-hardware assets.",
+                )
+            pseudo = AssetInstance(
+                instance_id=asset.asset_id,
+                asset_id=asset.asset_id,
+                branch_id=asset.branch_id,
+                organization_id=asset.organization_id,
+                status=asset.asset_status,
+                purchase_date=asset.purchased_date,
+                purchase_cost=asset.purchase_cost,
+            )
+            pseudo.model = asset
+            return AssetInsightsService._instance_health_read(db, pseudo)
 
-        if asset_age_years >= 4:
-            age_penalty = 25
-        elif asset_age_years >= 3:
-            age_penalty = 15
-        elif asset_age_years >= 2:
-            age_penalty = 10
-        elif asset_age_years >= 1:
-            age_penalty = 5
-        else:
-            age_penalty = 0
-
-        repair_count = int(asset.repair_count or 0)
-        performance_issues_count = int(asset.performance_issues_count or 0)
-        usage_duration_days = AssetInsightsService._get_usage_duration_days(db, asset.asset_id)
-
-        if usage_duration_days >= 1460:
-            usage_penalty = 10
-        elif usage_duration_days >= 1095:
-            usage_penalty = 10
-        elif usage_duration_days >= 730:
-            usage_penalty = 5
-        elif usage_duration_days >= 365:
-            usage_penalty = 5
-        else:
-            # No tracking history often means old stock/inventory not being rotated.
-            # Apply a mild lifecycle penalty from purchase age to keep long-lived assets visible.
-            if asset_age_years >= 4:
-                usage_penalty = 10
-            elif asset_age_years >= 3:
-                usage_penalty = 5
-            else:
-                usage_penalty = 0
-
-        repair_penalty = repair_count * 8
-        performance_penalty = performance_issues_count * 5
-
-        warranty_expiry = AssetInsightsService._get_warranty_expiry(db, asset.asset_id)
-        warranty_expired = (warranty_expiry is None) or bool(warranty_expiry < date.today())
-        warranty_penalty = 10 if warranty_expired else 0
-
-        purchase_cost = float(asset.purchase_cost or 0.0)
-        maintenance_cost = float(asset.maintenance_total_cost or 0.0)
-        repair_cost = float(asset.repair_total_cost or 0.0)
-        spend_ratio_penalty = 0
-        if purchase_cost > 0:
-            ratio = (maintenance_cost + repair_cost) / purchase_cost
-            if ratio >= 0.20:
-                spend_ratio_penalty = 10
-            elif ratio >= 0.10:
-                spend_ratio_penalty = 5
-
-        score = max(
-            0,
-            min(
-                100,
-                100
-                - age_penalty
-                - repair_penalty
-                - performance_penalty
-                - usage_penalty
-                - warranty_penalty
-                - spend_ratio_penalty,
+        # Return the most at-risk active instance first; keeps the endpoint instance-centric.
+        ranked_instances = sorted(
+            instances,
+            key=lambda item: (
+                0 if (item.status and getattr(item.status, "value", str(item.status)) == AssetStatus.ASSIGNED.value) else 1,
+                0 if (item.status and getattr(item.status, "value", str(item.status)) == AssetStatus.AVAILABLE.value) else 1,
+                item.created_at or datetime.min,
             ),
         )
-        classification = AssetInsightsService._classify_health(score)
-        if classification == "Replace Immediately":
-            hint = "Replace asset immediately."
-        elif classification == "Critical":
-            hint = "Urgent repair/replacement evaluation required."
-        elif classification == "Warning":
-            hint = "Inspect and maintain soon."
-        else:
-            hint = "Healthy for continued use and reallocation."
-
-        return AssetHealthRead(
-            asset_id=asset.asset_id,
-            health_score=score,
-            classification=classification,
-            asset_age_years=round(asset_age_years, 2),
-            usage_duration_days=usage_duration_days,
-            repair_count=repair_count,
-            performance_issues_count=performance_issues_count,
-            warranty_expired=warranty_expired,
-            age_penalty=age_penalty,
-            repair_penalty=repair_penalty,
-            performance_penalty=performance_penalty,
-            warranty_penalty=warranty_penalty,
-            usage_penalty=usage_penalty,
-            recommendation_hint=hint,
-        )
+        return AssetInsightsService._instance_health_read(db, ranked_instances[0])
 
     @staticmethod
     def get_replacement_recommendation(db: Session, asset_id: str, current_user: Employee) -> AssetRecommendationRead:
+        asset = AssetInsightsService._base_asset_query(db, current_user).filter(Asset.asset_id == asset_id).first()
+        if not asset:
+            raise ResourceNotFoundError("Asset", asset_id)
+        if not AssetInsightsService._is_hardware_asset(asset):
+            return AssetRecommendationRead(
+                asset_id=asset_id,
+                recommendation="RETAIN",
+                reason="Replacement recommendation is not applicable for non-hardware assets.",
+            )
+
         health = AssetInsightsService.get_asset_health(db, asset_id, current_user)
         if health.health_score < 30:
             return AssetRecommendationRead(
@@ -565,61 +807,126 @@ class AssetInsightsService:
         )
 
     @staticmethod
+    def _build_health_item(db: Session, instance: AssetInstance, current_user: Employee) -> AssetHealthReportItem:
+        metrics = AssetInsightsService._instance_health_score(db, instance)
+        model = instance.model
+        category = model.category.category_name if model and model.category else None
+        sub_category = model.sub_category.sub_category_name if model and model.sub_category else None
+        return AssetHealthReportItem(
+            asset_id=instance.asset_id,
+            instance_id=instance.instance_id,
+            serial_number=instance.serial_number,
+            asset_name=model.name if model else instance.asset_id,
+            category=category,
+            sub_category=sub_category,
+            branch=instance.branch or (model.branch if model else None),
+            status=instance.status.value if hasattr(instance.status, "value") else str(instance.status),
+            health_score=metrics["health_score"],
+            classification=metrics["classification"],
+            recommendation=("REPLACE" if metrics["health_score"] < 30 else "REPAIR" if metrics["health_score"] <= 50 else "RETAIN"),
+            recommendation_reason=metrics["recommendation_hint"],
+            asset_age_years=metrics["asset_age_years"],
+            usage_duration_days=metrics["usage_duration_days"],
+            repair_count=metrics["repair_count"],
+            failure_count=metrics["failure_count"],
+            performance_issues_count=metrics["performance_issues_count"],
+            warranty_expired=metrics["warranty_expired"],
+            purchase_cost=float(instance.purchase_cost or (model.purchase_cost if model else 0.0) or 0.0),
+            maintenance_cost=float(model.maintenance_total_cost if model else 0.0),
+            repair_cost=float(model.repair_total_cost if model else 0.0),
+            reselling_value=float(model.salvage_value if model and model.salvage_value is not None else 0.0),
+            failure_penalty=metrics["failure_penalty"],
+        )
+
+    @staticmethod
     def get_health_report(
         db: Session,
         current_user: Employee,
+        branch_id: Optional[str] = None,
         *,
-        branch: Optional[str] = None,
+        search: Optional[str] = None,
+        category_id: Optional[str] = None,
+        min_health_score: Optional[int] = None,
+        max_health_score: Optional[int] = None,
+        health_range: Optional[str] = None,
+        page: int = 1,
+        per_page: int = 20,
         critical_only: bool = False,
     ) -> AssetHealthReportRead:
-        query = AssetInsightsService._base_asset_query(db, current_user)
-
-        items: list[AssetHealthReportItem] = []
-        for asset in query.all():
-            if branch and branch.strip().lower() != (asset.branch or "").lower():
-                continue
-            health = AssetInsightsService.get_asset_health(db, asset.asset_id, current_user)
-            if critical_only and health.health_score > 39:
-                continue
-            recommendation = AssetInsightsService.get_replacement_recommendation(db, asset.asset_id, current_user)
-            items.append(
-                AssetHealthReportItem(
-                    asset_id=asset.asset_id,
-                    asset_name=asset.name,
-                    category=asset.category.category_name if asset.category else None,
-                    sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
-                    branch=asset.branch,
-                    status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
-                    health_score=health.health_score,
-                    classification=health.classification,
-                    recommendation=recommendation.recommendation,
-                    recommendation_reason=recommendation.reason,
-                    purchase_cost=round(float(asset.purchase_cost or 0.0), 2),
-                    maintenance_cost=round(float(asset.maintenance_total_cost or 0.0), 2),
-                    repair_cost=round(float(asset.repair_total_cost or 0.0), 2),
-                    reselling_value=round(float(asset.salvage_value or 0.0), 2),
-                    usage_duration_days=health.usage_duration_days,
-                    asset_age_years=health.asset_age_years,
-                    repair_count=health.repair_count,
-                    performance_issues_count=health.performance_issues_count,
-                    warranty_expired=health.warranty_expired,
+        query = AssetInsightsService._base_instance_query(db, current_user)
+        if branch_id:
+            query = query.filter(AssetInstance.branch_id == branch_id)
+        if category_id:
+            query = query.join(Asset).filter(Asset.category_id == category_id)
+        if search:
+            needle = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    AssetInstance.instance_id.ilike(needle),
+                    AssetInstance.serial_number.ilike(needle),
+                    Asset.name.ilike(needle),
                 )
             )
 
-        items.sort(key=lambda item: (item.health_score, -item.repair_cost, -item.maintenance_cost))
+        items: list[AssetHealthReportItem] = []
+        for instance in query.all():
+            if not instance.model or not AssetInsightsService._is_hardware_asset(instance.model):
+                continue
+            report_item = AssetInsightsService._build_health_item(db, instance, current_user)
+            if health_range:
+                try:
+                    start_str, end_str = health_range.split("-", 1)
+                    start_value = int(start_str)
+                    end_value = int(end_str)
+                    if not (start_value <= report_item.health_score <= end_value):
+                        continue
+                except ValueError:
+                    pass
+            if min_health_score is not None and report_item.health_score < min_health_score:
+                continue
+            if max_health_score is not None and report_item.health_score > max_health_score:
+                continue
+            if critical_only and report_item.health_score > 39:
+                continue
+            items.append(report_item)
+
+        items.sort(key=lambda item: (item.health_score, item.failure_penalty, item.repair_count, item.asset_name.lower()))
+        total = len(items)
+        page = max(1, page)
+        per_page = max(1, min(per_page, 10000))
+        paged_items = items[(page - 1) * per_page : (page - 1) * per_page + per_page]
         return AssetHealthReportRead(
-            asset_count=len(items),
+            asset_count=total,
             healthy_assets=sum(1 for item in items if item.classification == "Healthy"),
             good_assets=sum(1 for item in items if item.classification == "Good"),
             warning_assets=sum(1 for item in items if item.classification == "Warning"),
             critical_assets=sum(1 for item in items if item.classification in {"Critical", "Replace Immediately"}),
             replacement_candidates=sum(1 for item in items if item.recommendation == "REPLACE"),
-            items=items,
+            items=paged_items,
+            total=total,
+            page=page,
+            per_page=per_page,
         )
 
     @staticmethod
+    def get_health_filter_options(db: Session, current_user: Employee) -> AssetHealthFilterOptions:
+        query = AssetInsightsService._base_instance_query(db, current_user)
+        instances = query.all()
+        branches = sorted({(instance.branch or instance.branch_id or "").strip() for instance in instances if (instance.branch or instance.branch_id)})
+        categories = sorted({(instance.model.category.category_name if instance.model and instance.model.category else "").strip() for instance in instances if instance.model and instance.model.category and AssetInsightsService._is_hardware_category_name(instance.model.category.category_name)})
+
+        health_ranges = [
+            HealthRangeOption(label="Critical (0-39)", value="0-39"),
+            HealthRangeOption(label="Warning (40-59)", value="40-59"),
+            HealthRangeOption(label="Good (60-79)", value="60-79"),
+            HealthRangeOption(label="Healthy (80-100)", value="80-100"),
+        ]
+        statuses = [status.value for status in [AssetStatus.NEW, AssetStatus.AVAILABLE, AssetStatus.ASSIGNED, AssetStatus.IN_REPAIR, AssetStatus.NOT_USABLE, AssetStatus.RETIRED]]
+        return AssetHealthFilterOptions(branches=branches, categories=categories, health_ranges=health_ranges, statuses=statuses)
+
+    @staticmethod
     def get_health_classification(db: Session, current_user: Employee) -> dict[str, int]:
-        report = AssetInsightsService.get_health_report(db, current_user)
+        report = AssetInsightsService.get_health_report(db, current_user, page=1, per_page=10000)
         return {
             "Healthy": report.healthy_assets,
             "Good": report.good_assets,
@@ -835,8 +1142,14 @@ class AssetInsightsService:
         return out
 
     @staticmethod
-    def list_categories(db: Session) -> list[CategoryRead]:
-        rows = db.query(Category).order_by(Category.category_name.asc()).all()
+    def list_categories(db: Session, current_user: Employee) -> list[CategoryRead]:
+        from app.server.database.tenant import apply_tenant_filter
+
+        rows = (
+            apply_tenant_filter(db.query(Category), current_user, Category)
+            .order_by(Category.category_name.asc())
+            .all()
+        )
         return [
             CategoryRead(
                 category_id=r.category_id,
@@ -847,9 +1160,11 @@ class AssetInsightsService:
         ]
 
     @staticmethod
-    def list_subcategories(db: Session, category_id: str) -> list[SubCategoryRead]:
+    def list_subcategories(db: Session, current_user: Employee, category_id: str) -> list[SubCategoryRead]:
+        from app.server.database.tenant import apply_tenant_filter
+
         rows = (
-            db.query(SubCategory)
+            apply_tenant_filter(db.query(SubCategory), current_user, SubCategory)
             .filter(SubCategory.category_id == category_id)
             .order_by(SubCategory.sub_category_name.asc())
             .all()
@@ -875,8 +1190,13 @@ class AssetInsightsService:
             AssetListItem(
                 asset_id=asset.asset_id,
                 name=asset.name,
+                brand=asset.brand,
+                model=asset.model,
+                category_id=asset.category_id,
                 category=asset.category.category_name if asset.category else None,
+                sub_category_id=asset.sub_category_id,
                 sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                branch_id=asset.branch_id,
                 branch=asset.branch,
                 status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
                 total_quantity=asset.total_quantity,
