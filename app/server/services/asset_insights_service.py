@@ -205,7 +205,8 @@ class AssetInsightsService:
         status_value = instance.status.value if hasattr(instance.status, "value") else str(instance.status)
         status_penalty = status_penalty_map.get(status_value, 0)
 
-        purchase_cost = float(instance.purchase_cost or (model.purchase_cost if model else 0.0) or 0.0)
+        model_total_purchase_cost = float(getattr(model, "total_purchase_cost", 0.0) or 0.0) if model else 0.0
+        purchase_cost = model_total_purchase_cost or float((model.purchase_cost if model else 0.0) or 0.0)
         maintenance_cost = float(model.maintenance_total_cost if model else 0.0)
         repair_cost = float(model.repair_total_cost if model else 0.0)
         spend_ratio_penalty = 0
@@ -667,7 +668,11 @@ class AssetInsightsService:
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
 
-        purchase_cost = float(asset.purchase_cost or 0.0)
+        purchase_cost = float(getattr(asset, "total_purchase_cost", 0.0) or 0.0)
+        if purchase_cost <= 0:
+            unit_fallback = float(asset.purchase_cost or 0.0)
+            quantity_fallback = max(int(asset.total_quantity or 0), 1)
+            purchase_cost = unit_fallback * quantity_fallback
         salvage_value = float(asset.salvage_value or 0.0)
         maintenance_cost = float(asset.maintenance_total_cost or 0.0)
         repair_cost = float(asset.repair_total_cost or 0.0)

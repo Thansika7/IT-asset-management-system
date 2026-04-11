@@ -659,8 +659,12 @@ class StockService:
         }
         
         # Create instances
+        added_total_purchase_cost = 0.0
         if instances:
             for inst_data in instances:
+                instance_unit_cost = cost if cost is not None else (inst_data.purchase_cost if hasattr(inst_data, 'purchase_cost') else None)
+                if instance_unit_cost is not None:
+                    added_total_purchase_cost += float(instance_unit_cost)
                 # Use UUID-based instance ID for concurrency safety
                 new_inst = AssetInstance(
                     instance_id=f"INS-{uuid4().hex[:12].upper()}",
@@ -675,7 +679,7 @@ class StockService:
                     invoice_number=invoice_number or (inst_data.invoice_number if hasattr(inst_data, 'invoice_number') else None),
                     status=AssetStatus.AVAILABLE,  # New stock is always AVAILABLE
                     purchase_date=inst_data.purchase_date,
-                    purchase_cost=cost or inst_data.purchase_cost,
+                    purchase_cost=instance_unit_cost,
                     warranty_expiry=inst_data.warranty_expiry,
                     condition_notes=inst_data.condition_notes
                 )
@@ -684,6 +688,8 @@ class StockService:
         else:
             # Create generic instances if no specific instances provided
             for i in range(quantity):
+                if cost is not None:
+                    added_total_purchase_cost += float(cost)
                 new_inst = AssetInstance(
                     # Use UUID-based instance ID for concurrency safety
                     instance_id=f"INS-{uuid4().hex[:12].upper()}",
@@ -712,6 +718,9 @@ class StockService:
         asset.total_quantity = new_inventory.total
         asset.used = new_inventory.assigned
         asset.unused = new_inventory.available
+        if cost is not None:
+            asset.purchase_cost = float(cost)
+        asset.total_purchase_cost = float(asset.total_purchase_cost or 0.0) + added_total_purchase_cost
         
         # Update asset status based on available quantity
         if new_inventory.available > 0:
@@ -829,6 +838,9 @@ class StockService:
         asset.total_quantity = new_inventory.total
         asset.used = new_inventory.assigned
         asset.unused = new_inventory.available
+        if effective_purchase_cost is not None:
+            asset.purchase_cost = float(effective_purchase_cost)
+            asset.total_purchase_cost = float(asset.total_purchase_cost or 0.0) + (float(effective_purchase_cost) * quantity)
         if new_inventory.available > 0:
             asset.asset_status = AssetStatus.ACTIVE
         elif new_inventory.assigned > 0:

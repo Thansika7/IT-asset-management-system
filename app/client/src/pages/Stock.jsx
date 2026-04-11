@@ -479,6 +479,11 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
 
   const selectedCategory = categories.find((item) => item.id === ccat)
   const selectedCategoryName = (selectedCategory?.name || '').toLowerCase()
+  const unitPurchaseCostValue = Number(purchaseCost || 0)
+  const registerQuantityValue = Number(quantity || 0)
+  const registerTotalCost = Number.isFinite(unitPurchaseCostValue) && Number.isFinite(registerQuantityValue)
+    ? unitPurchaseCostValue * registerQuantityValue
+    : 0
   const commonSpecs = useMemo(() => {
     if (!ccat) return []
     if (selectedCategoryName.includes('software') || selectedCategoryName.includes('license')) {
@@ -547,6 +552,8 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
     queryFn: () => apiFetch(`/stock/sub-categories?category_id=${ccat}`),
     enabled: Boolean(ccat) && ccat !== NEW_OPTION_VALUE,
   })
+
+  const subCategoryCreateOptions = useMemo(() => normalizeOptions(subCategories), [subCategories])
 
   const { data: attributeOptions = [] } = useQuery({
     queryKey: ['stock-attribute-options', csub],
@@ -860,7 +867,7 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
                 <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="date" value={restockPurchaseDate} onChange={(e) => setRestockPurchaseDate(e.target.value)} />
               </label>
               <label className="text-xs font-medium text-slate-600">
-                Purchase cost
+                Unit Purchase Cost
                 <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" value={restockPurchaseCost} onChange={(e) => setRestockPurchaseCost(e.target.value)} />
               </label>
               <label className="text-xs font-medium text-slate-600">
@@ -1050,8 +1057,8 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
           >
             <option value="">Select category</option>
             {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
+              <option key={c.category_id || c.id} value={c.category_id || c.id}>
+                {c.category_name || c.name}
               </option>
             ))}
             <option value={NEW_OPTION_VALUE}>Add new category</option>
@@ -1076,9 +1083,9 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
               disabled={!ccat}
             >
               <option value="">Select sub-category</option>
-              {subCategories.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
+              {subCategoryCreateOptions.map((s) => (
+                <option key={s.sub_category_id || s.id} value={s.sub_category_id || s.id}>
+                  {s.sub_category_name || s.name}
                 </option>
               ))}
               <option value={NEW_OPTION_VALUE}>Add new sub-category</option>
@@ -1118,8 +1125,16 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
             <input type="date" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={purchaseDate} onChange={(e) => setPurchaseDate(e.target.value)} />
           </label>
           <label className="text-xs font-medium text-slate-600">
-            Purchase cost
+            Unit Purchase Cost
             <input type="number" step="0.01" min="0" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" placeholder="Purchase cost" value={purchaseCost} onChange={(e) => setPurchaseCost(e.target.value)} />
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            Total Cost (auto)
+            <input
+              readOnly
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+              value={registerTotalCost > 0 ? registerTotalCost.toFixed(2) : '0.00'}
+            />
           </label>
           <label className="text-xs font-medium text-slate-600">
             Vendor name

@@ -179,6 +179,21 @@ def _ensure_asset_instance_finance_columns() -> None:
         if "maintenance_cost_total" not in existing:
             conn.execute(text("ALTER TABLE asset_instances ADD COLUMN maintenance_cost_total FLOAT DEFAULT 0.0"))
 
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'assets'
+                """
+            )
+        )
+        existing_assets = {row[0] for row in rows}
+
+        if "total_purchase_cost" not in existing_assets:
+            conn.execute(text("ALTER TABLE assets ADD COLUMN total_purchase_cost FLOAT NOT NULL DEFAULT 0.0"))
+
 
 def _ensure_performance_indexes() -> None:
     """Create missing performance indexes for common tenant/status/time filters."""

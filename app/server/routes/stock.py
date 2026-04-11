@@ -232,8 +232,15 @@ def create_asset_entry(
                 Category,
                 allow_cross_branch=True,
             ).filter(Category.category_id == payload.category_id).first()
+            if not cat and current_user.role != EmployeeRole.SUPER_ADMIN:
+                cat = db.query(Category).filter(
+                    Category.category_id == payload.category_id,
+                    or_(Category.organization_id == resolved_org_id, Category.organization_id.is_(None)),
+                ).first()
             if not cat:
                 raise HTTPException(status_code=400, detail="Invalid category_id")
+            if cat.organization_id and resolved_org_id and cat.organization_id != resolved_org_id:
+                raise HTTPException(status_code=400, detail="category_id does not belong to your organization")
         elif payload.category_name:
             normalized_category_name = payload.category_name.strip()
             cat = apply_tenant_filter(
@@ -273,8 +280,16 @@ def create_asset_entry(
                 SubCategory.sub_category_id == payload.sub_category_id,
                 SubCategory.category_id == cat.category_id,
             ).first()
+            if not sub_category and current_user.role != EmployeeRole.SUPER_ADMIN:
+                sub_category = db.query(SubCategory).filter(
+                    SubCategory.sub_category_id == payload.sub_category_id,
+                    SubCategory.category_id == cat.category_id,
+                    or_(SubCategory.organization_id == resolved_org_id, SubCategory.organization_id.is_(None)),
+                ).first()
             if not sub_category:
                 raise HTTPException(status_code=400, detail="Invalid sub_category_id for selected category")
+            if sub_category.organization_id and resolved_org_id and sub_category.organization_id != resolved_org_id:
+                raise HTTPException(status_code=400, detail="sub_category_id does not belong to your organization")
         elif payload.sub_category_name:
             normalized_sub_category_name = payload.sub_category_name.strip()
             sub_category = apply_tenant_filter(
@@ -307,6 +322,8 @@ def create_asset_entry(
             resolved_branch_id = current_user.branch_id
 
         # Create Asset with vendor information
+        unit_purchase_cost = payload.purchase_cost
+        total_purchase_cost = (unit_purchase_cost or 0.0) * max(payload.total_quantity, 0)
         asset_kwargs = {
             "name": payload.name,
             "category_id": cat.category_id,
@@ -317,7 +334,8 @@ def create_asset_entry(
             "brand": asset_brand,
             "model": asset_model,
             "purchased_date": payload.purchased_date,
-            "purchase_cost": payload.purchase_cost,
+            "purchase_cost": unit_purchase_cost,
+            "total_purchase_cost": total_purchase_cost,
             "salvage_value": payload.salvage_value,
             "vendor_name": payload.vendor_name,
             "vendor_contact": payload.vendor_contact,
