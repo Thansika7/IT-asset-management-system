@@ -56,7 +56,7 @@ class EmployeeAssetService:
         EmployeeAssetService._employee_exists(db, current_user, employee_id)
 
         query = (
-            apply_tenant_filter(db.query(Tracking), current_user, Tracking)
+            apply_tenant_filter(db.query(Tracking), current_user, Tracking, allow_cross_branch=True)
             .join(AssetInstance, Tracking.instance_id == AssetInstance.instance_id)
             .join(Asset, AssetInstance.asset_id == Asset.asset_id)
             .join(Category, Asset.category_id == Category.category_id, isouter=True)
@@ -127,7 +127,7 @@ class EmployeeAssetService:
         EmployeeAssetService._employee_exists(db, current_user, employee_id)
 
         query = (
-            apply_tenant_filter(db.query(Tracking), current_user, Tracking)
+            apply_tenant_filter(db.query(Tracking), current_user, Tracking, allow_cross_branch=True)
             .join(AssetInstance, Tracking.instance_id == AssetInstance.instance_id)
             .join(Asset, AssetInstance.asset_id == Asset.asset_id)
             .join(Category, Asset.category_id == Category.category_id, isouter=True)
@@ -179,8 +179,7 @@ class EmployeeAssetService:
     @staticmethod
     def get_asset_owner(db: Session, current_user: Employee, instance_id: str) -> dict[str, Any]:
         instance = (
-            apply_tenant_filter(db.query(AssetInstance), current_user, AssetInstance)
-            .join(AssetInstance.model)
+            apply_tenant_filter(db.query(AssetInstance), current_user, AssetInstance, allow_cross_branch=True)
             .outerjoin(AssetInstance.assigned_to)
             .filter(AssetInstance.instance_id == instance_id)
             .first()
@@ -192,7 +191,7 @@ class EmployeeAssetService:
             raise ResourceNotFoundError("AssetInstance", instance_id)
 
         active_tracking = (
-            apply_tenant_filter(db.query(Tracking), current_user, Tracking)
+            apply_tenant_filter(db.query(Tracking), current_user, Tracking, allow_cross_branch=True)
             .filter(
                 Tracking.instance_id == instance_id,
                 Tracking.returned_at.is_(None),
@@ -285,7 +284,7 @@ class EmployeeAssetService:
         EmployeeAssetService._employee_exists(db, current_user, employee_id)
 
         active_tracking_query = (
-            apply_tenant_filter(db.query(Tracking), current_user, Tracking)
+            apply_tenant_filter(db.query(Tracking), current_user, Tracking, allow_cross_branch=True)
             .filter(
                 Tracking.emp_id == employee_id,
                 Tracking.instance_id.isnot(None),
@@ -294,7 +293,7 @@ class EmployeeAssetService:
         )
 
         total_assets = (
-            apply_tenant_filter(db.query(AssetInstance), current_user, AssetInstance)
+            apply_tenant_filter(db.query(AssetInstance), current_user, AssetInstance, allow_cross_branch=True)
             .filter(AssetInstance.assigned_to_id == employee_id)
             .count()
         )
@@ -304,7 +303,7 @@ class EmployeeAssetService:
         overdue_assets = active_tracking_query.filter(Tracking.assigned_date < cutoff).count()
 
         by_status_rows = (
-            apply_tenant_filter(db.query(AssetInstance), current_user, AssetInstance)
+            apply_tenant_filter(db.query(AssetInstance), current_user, AssetInstance, allow_cross_branch=True)
             .filter(AssetInstance.assigned_to_id == employee_id)
             .all()
         )

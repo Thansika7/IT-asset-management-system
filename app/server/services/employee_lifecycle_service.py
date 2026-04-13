@@ -48,11 +48,12 @@ class EmployeeLifecycleService:
         for trk in active:
             StockService.return_asset(db, trk.tracking_id, actor, movement_reason)
 
-        for r in apply_tenant_filter(db.query(Request), actor, Request).filter(Request.emp_id == emp_id).all():
-            db.delete(r)
-        for t in apply_tenant_filter(db.query(Tracking), actor, Tracking).filter(Tracking.emp_id == emp_id).all():
-            db.delete(t)
-        db.delete(target)
+        # Soft delete: Deactivate the employee instead of permanent deletion.
+        # This preserves historical integrity for logs and asset lifecycle records.
+        target.is_active = False
+        
+        # Optionally, you could also clear the user's branch or other fields if needed, 
+        # but is_active=False is standard for "removing" from active team.
 
         db.commit()
-        return {"status": "deleted", "employee_id": emp_id, "recovered_hardware": len(active)}
+        return {"status": "deactivated", "employee_id": emp_id, "recovered_hardware": len(active)}
