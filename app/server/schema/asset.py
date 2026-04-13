@@ -27,6 +27,7 @@ class Asset(Base):
         CheckConstraint("used >= 0", name="ck_assets_used_non_negative"),
         CheckConstraint("unused >= 0", name="ck_assets_unused_non_negative"),
         CheckConstraint("purchase_cost IS NULL OR purchase_cost >= 0", name="ck_assets_purchase_cost_non_negative"),
+        CheckConstraint("total_purchase_cost >= 0", name="ck_assets_total_purchase_cost_non_negative"),
         CheckConstraint("salvage_value IS NULL OR salvage_value >= 0", name="ck_assets_salvage_value_non_negative"),
         CheckConstraint("maintenance_total_cost >= 0", name="ck_assets_maintenance_non_negative"),
         CheckConstraint("sub_license_cost >= 0", name="ck_assets_sub_license_non_negative"),
@@ -46,7 +47,10 @@ class Asset(Base):
     model=Column(String(100), nullable=True)
     
     purchased_date=Column(Date, nullable=True)
+    # Unit purchase cost (per instance)
     purchase_cost=Column(Float, nullable=True)
+    # Accumulated total purchase spend across all created/restocked instances
+    total_purchase_cost=Column(Float, nullable=False, default=0.0)
     salvage_value=Column(Float, nullable=True)
     invoice_number=Column(String(100), nullable=True)
     vendor_name=Column(String(150), nullable=True)

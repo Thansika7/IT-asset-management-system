@@ -22,8 +22,6 @@ def _can_view_finance(user: Employee) -> bool:
         return True
     if not user.permissions:
         return False
-    if user.permissions.can_view_finance or user.permissions.can_manage_finance:
-        return True
     perms_json = user.permissions.permissions_json
     if isinstance(perms_json, dict):
         finance_scope = perms_json.get("finance")

@@ -1,5 +1,6 @@
 import enum
 import uuid
+from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, ForeignKey, JSON
 from sqlalchemy.orm import relationship
@@ -53,42 +54,15 @@ class Employee(Base):
 
 class EmployeePermission(Base):
     __tablename__="employee_permissions"
-    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True, index=True)
-    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
     id=Column(Integer, primary_key=True, index=True)
     employee_id=Column(String(50), ForeignKey("employees.employee_id", ondelete="CASCADE"), unique=True, nullable=False)
-    
-    # Legacy individual columns for backward compatibility during migration
-    can_view_assets=Column(Boolean, default=False)
-    can_create_assets=Column(Boolean, default=False)
-    can_update_assets=Column(Boolean, default=False)
-    can_delete_assets=Column(Boolean, default=False)
-    
-    can_create_request=Column(Boolean, default=False)
-    can_approve_request=Column(Boolean, default=False)
-    can_reject_request=Column(Boolean, default=False)
-    
-    can_view_finance=Column(Boolean, default=False)
-    can_manage_finance=Column(Boolean, default=False)
-    
-    can_view_tracking=Column(Boolean, default=False)
-    can_allocate_asset=Column(Boolean, default=False)
-    can_transfer_asset=Column(Boolean, default=False)
-    
-    can_view_branch=Column(Boolean, default=False)
-    can_create_branch=Column(Boolean, default=False)
-    can_update_branch=Column(Boolean, default=False)
-    
-    can_view_reports=Column(Boolean, default=False)
-    
-    can_manage_users=Column(Boolean, default=False)
-    can_manage_permissions=Column(Boolean, default=False)
 
-    # New JSON column for scalable permissions
-    permissions_json=Column(JSON, nullable=True)
-    temporary_permissions_json=Column(JSON, nullable=True)
-    valid_from=Column(DateTime(timezone=True), nullable=True)
-    valid_until=Column(DateTime(timezone=True), nullable=True)
+    organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=False, index=True)
+    branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True, index=True)
+
+    permissions_json=Column(JSON, nullable=False, default=dict)
+    created_at=Column(DateTime(timezone=True), server_default=func.now())
+    updated_at=Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     employee=relationship("Employee", back_populates="permissions")
 

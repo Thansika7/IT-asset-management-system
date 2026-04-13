@@ -249,28 +249,6 @@ def _merge_permission_maps(base: dict[str, dict[str, bool]], override: dict[str,
     return merged
 
 
-def _is_temporary_permission_active(user: Employee) -> bool:
-    permission_row = getattr(user, "permissions", None)
-    if not permission_row:
-        return False
-
-    now = datetime.now(timezone.utc)
-    valid_from = getattr(permission_row, "valid_from", None)
-    valid_until = getattr(permission_row, "valid_until", None)
-
-    if valid_from is not None:
-        from_time = valid_from.replace(tzinfo=timezone.utc) if valid_from.tzinfo is None else valid_from
-        if now < from_time:
-            return False
-
-    if valid_until is not None:
-        until_time = valid_until.replace(tzinfo=timezone.utc) if valid_until.tzinfo is None else valid_until
-        if now > until_time:
-            return False
-
-    return True
-
-
 def create_default_permissions(role: EmployeeRole, user_override: dict | None = None) -> dict[str, dict[str, bool]]:
     role_defaults = _normalize_permission_map(get_default_permission_json(role))
     override = _normalize_permission_map(user_override)
@@ -283,13 +261,7 @@ def get_effective_permissions(user: Employee) -> dict[str, dict[str, bool]]:
     permission_row = getattr(user, "permissions", None)
     user_override = _normalize_permission_map(getattr(permission_row, "permissions_json", None) if permission_row else None)
 
-    effective = _merge_permission_maps(role_defaults, user_override)
-
-    if permission_row and _is_temporary_permission_active(user):
-        temporary_override = _normalize_permission_map(getattr(permission_row, "temporary_permissions_json", None))
-        effective = _merge_permission_maps(effective, temporary_override)
-
-    return effective
+    return _merge_permission_maps(role_defaults, user_override)
 
 
 def has_permission(user: Employee, module: str, action: str) -> bool:

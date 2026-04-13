@@ -144,7 +144,7 @@ def _ensure_onboarding_preset_columns() -> None:
 
 
 def _ensure_employee_permission_columns() -> None:
-    """Backfill schema for temporary permission support in legacy databases."""
+    """Backfill schema for JSON-only employee permissions in legacy databases."""
     with engine.begin() as conn:
         rows = conn.execute(
             text(
@@ -157,12 +157,8 @@ def _ensure_employee_permission_columns() -> None:
         )
         existing = {row[0] for row in rows}
 
-        if "temporary_permissions_json" not in existing:
-            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN temporary_permissions_json JSON NULL"))
-        if "valid_from" not in existing:
-            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN valid_from TIMESTAMPTZ NULL"))
-        if "valid_until" not in existing:
-            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN valid_until TIMESTAMPTZ NULL"))
+        if "permissions_json" not in existing:
+            conn.execute(text("ALTER TABLE employee_permissions ADD COLUMN permissions_json JSON NOT NULL DEFAULT '{}'::json"))
 
 
 def _ensure_asset_instance_finance_columns() -> None:
@@ -183,6 +179,21 @@ def _ensure_asset_instance_finance_columns() -> None:
             conn.execute(text("ALTER TABLE asset_instances ADD COLUMN repair_cost_total FLOAT DEFAULT 0.0"))
         if "maintenance_cost_total" not in existing:
             conn.execute(text("ALTER TABLE asset_instances ADD COLUMN maintenance_cost_total FLOAT DEFAULT 0.0"))
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'assets'
+                """
+            )
+        )
+        existing_assets = {row[0] for row in rows}
+
+        if "total_purchase_cost" not in existing_assets:
+            conn.execute(text("ALTER TABLE assets ADD COLUMN total_purchase_cost FLOAT NOT NULL DEFAULT 0.0"))
 
 
 def _ensure_performance_indexes() -> None:
