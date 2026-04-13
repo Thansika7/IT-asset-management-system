@@ -147,7 +147,7 @@ def list_asset_instances(
     branch_id: Optional[str]=None,
     status: Optional[str]=None,
     page: int = 1,
-    per_page: int = 20,
+    allow_cross_branch: bool = False,
     db: Session=Depends(get_db),
     current_user: Employee=Depends(get_current_user)
 ):
@@ -155,10 +155,7 @@ def list_asset_instances(
     query = db.query(AssetInstance)
     
     from app.server.database.tenant import apply_tenant_filter
-    query = apply_tenant_filter(query, current_user, AssetInstance)
-    
-    if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM] and current_user.branch_id:
-        query = query.filter(AssetInstance.branch_id == current_user.branch_id)
+    query = apply_tenant_filter(query, current_user, AssetInstance, allow_cross_branch=allow_cross_branch)
 
     if asset_id:
         query = query.filter(AssetInstance.asset_id == asset_id)

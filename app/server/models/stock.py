@@ -176,6 +176,10 @@ class AssetAttributeUpdateRequest(BaseModel):
     changes: List[AssetAttributeUpdateItem] = Field(default_factory=list)
     event_type: LifecycleEvent = LifecycleEvent.ATTRIBUTE_UPDATED
     reason: Optional[str] = None
+    warranty_expiry: Optional[date] = None
+    expiry_date: Optional[date] = None
+    status: Optional[str] = None # Using string to handle enum value mapping
+    branch_id: Optional[str] = None
 
     @field_validator("reason")
     @classmethod

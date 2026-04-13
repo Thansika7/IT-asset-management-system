@@ -38,10 +38,11 @@ from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
 from app.server.schema.category import Category, SubCategory
 from app.server.schema.organization import Branch
 from app.server.schema.tracking import Tracking, MovementType
+from app.server.services.health_service import HealthService
 
 
 class AssetInsightsService:
-    NON_HARDWARE_CATEGORIES = {"software", "furniture", "accessories", "network"}
+    NON_HARDWARE_CATEGORIES = {"accessories", "network"}
 
     @staticmethod
     def _is_hardware_asset(asset: Asset) -> bool:
@@ -132,9 +133,60 @@ class AssetInsightsService:
 
     @staticmethod
     def _instance_health_score(db: Session, instance: AssetInstance) -> dict:
+        from app.server.schema.category import AssetBehavior
+        
         model = instance.model
-        category_name = model.category.category_name if model and model.category else ""
-        if not AssetInsightsService._is_hardware_category_name(category_name):
+        behavior = model.asset_behavior if model and model.asset_behavior else (model.category.asset_behavior if model and model.category else AssetBehavior.INSTANCE_BASED.value)
+        
+        if behavior in (AssetBehavior.LICENSE_BASED.value, AssetBehavior.SUBSCRIPTION_BASED.value):
+            # Software Scoring Logic
+            score = 100
+            today = date.today()
+            expiry = instance.expiry_date
+            
+            if expiry:
+                if expiry < today:
+                    score = 0 # Expired
+                else:
+                    days_left = (expiry - today).days
+                    if days_left < 30:
+                        score = 30 # Critical
+                    elif days_left < 90:
+                        score = 70 # Warning
+            
+            # Utilization Penalty (Model Level)
+            if model and model.total_quantity > 0:
+                utilization = (model.used / model.total_quantity)
+                if utilization > 1.0:
+                    score = min(score, 0) # Compliance issue
+                elif utilization > 0.95:
+                    score = min(score, 50) # Near capacity
+                elif utilization < 0.10:
+                    score = min(score, 60) # Under-utilized/Wasteful
+            
+            return {
+                "health_score": score,
+                "classification": AssetInsightsService._classify_health(score),
+                "asset_age_years": 0.0,
+                "usage_duration_days": AssetInsightsService._get_instance_usage_duration_days(db, instance.instance_id),
+                "repair_count": 0,
+                "failure_count": 0,
+                "performance_issues_count": 0,
+                "warranty_expired": False,
+                "age_penalty": 0,
+                "repair_penalty": 0,
+                "failure_penalty": 0,
+                "performance_penalty": 0,
+                "warranty_penalty": 0,
+                "usage_penalty": 0,
+                "recommendation_hint": (
+                    "Renew license immediately." if score < 20 else
+                    "Evalute license utilization/renewal soon." if score < 70 else
+                    "Healthy software asset."
+                ),
+            }
+
+        if not AssetInsightsService._is_hardware_category_name(model.category.category_name if model and model.category else ""):
             return {
                 "health_score": 100,
                 "classification": "Not Applicable",
@@ -150,7 +202,7 @@ class AssetInsightsService:
                 "performance_penalty": 0,
                 "warranty_penalty": 0,
                 "usage_penalty": 0,
-                "recommendation_hint": "Health score is not applicable for non-hardware assets.",
+                "recommendation_hint": "Health score is not applicable for this asset type.",
             }
 
         purchase_date = instance.purchase_date or (model.purchased_date if model else None)
@@ -158,33 +210,29 @@ class AssetInsightsService:
         if purchase_date:
             asset_age_years = max((date.today() - purchase_date).days / 365, 0)
 
-        if asset_age_years >= 4:
-            age_penalty = 25
-        elif asset_age_years >= 3:
-            age_penalty = 15
-        elif asset_age_years >= 2:
-            age_penalty = 10
-        elif asset_age_years >= 1:
-            age_penalty = 5
-        else:
-            age_penalty = 0
+        # 1. Lifecycle-aware Age Penalty
+        useful_life = (model.useful_life_years if model else 5) or 5
+        usage_ratio = asset_age_years / useful_life
+        
+        age_penalty = 0
+        if usage_ratio >= 1.0: age_penalty = 30
+        elif usage_ratio >= 0.8: age_penalty = 15
+        elif usage_ratio >= 0.5: age_penalty = 5
 
+        # 2. Lifecycle-aware Usage Penalty
         usage_duration_days = AssetInsightsService._get_instance_usage_duration_days(db, instance.instance_id)
-        if usage_duration_days >= 1460:
-            usage_penalty = 15
-        elif usage_duration_days >= 1095:
-            usage_penalty = 12
-        elif usage_duration_days >= 730:
-            usage_penalty = 8
-        elif usage_duration_days >= 365:
-            usage_penalty = 5
-        else:
-            usage_penalty = 0
+        total_life_days = useful_life * 365
+        util_ratio = usage_duration_days / total_life_days if total_life_days > 0 else 0
+        
+        usage_penalty = 0
+        if util_ratio >= 1.0: usage_penalty = 20
+        elif util_ratio >= 0.8: usage_penalty = 12
+        elif util_ratio >= 0.5: usage_penalty = 5
 
         repair_count = AssetInsightsService._instance_repair_count(db, instance.instance_id)
         failure_count = AssetInsightsService._instance_failure_count(db, instance.instance_id)
         performance_issues_count = failure_count
-        repair_penalty = repair_count * 8
+        repair_penalty = repair_count * 10
         failure_penalty = failure_count * 10
         performance_penalty = performance_issues_count * 5
 
@@ -965,31 +1013,45 @@ class AssetInsightsService:
         asset = AssetInsightsService._base_asset_query(db, current_user).filter(Asset.asset_id == asset_id).first()
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
-        if not AssetInsightsService._is_hardware_asset(asset):
-            return AssetRecommendationRead(
-                asset_id=asset_id,
-                recommendation="RETAIN",
-                reason="Replacement recommendation is not applicable for non-hardware assets.",
-            )
-
+        
         health = AssetInsightsService.get_asset_health(db, asset_id, current_user)
-        if health.health_score < 30:
-            return AssetRecommendationRead(
-                asset_id=asset_id,
-                recommendation="REPLACE",
-                reason="Health score is below 30; replacement is recommended.",
-            )
-        if 30 <= health.health_score <= 50:
-            return AssetRecommendationRead(
-                asset_id=asset_id,
-                recommendation="REPAIR",
-                reason="Health score is between 30 and 50; repair is preferred over replacement.",
-            )
-        # Good/Healthy assets are retained for reallocation
+        score = health.health_score
+        hint = getattr(health, "recommendation_hint", "No specific hint available.")
+
+        # Determine if it's software-based
+        from app.server.services.health_service import HealthService
+        from app.server.schema.category import AssetBehavior
+        
+        instances = db.query(AssetInstance).filter(AssetInstance.asset_id == asset_id).all()
+        behavior = HealthService._resolve_behavior(instances[0]) if instances else AssetBehavior.INSTANCE_BASED
+        
+        is_software = behavior in (AssetBehavior.LICENSE_BASED, AssetBehavior.SUBSCRIPTION_BASED)
+
+        if is_software:
+            if score < 30:
+                rec = "RENEW"
+                reason = f"Critical health ({score}); {hint}"
+            elif score < 70:
+                rec = "REVIEW"
+                reason = f"Warning health ({score}); {hint}"
+            else:
+                rec = "RETAIN"
+                reason = f"Healthy asset ({score}); {hint}"
+        else:
+            if score < 30:
+                rec = "REPLACE"
+                reason = f"Critical health ({score}); {hint}"
+            elif score <= 50:
+                rec = "REPAIR"
+                reason = f"Low health ({score}); {hint}"
+            else:
+                rec = "RETAIN"
+                reason = f"Healthy asset ({score}); {hint}"
+
         return AssetRecommendationRead(
             asset_id=asset_id,
-            recommendation="RETAIN",
-            reason="Health score is above 50; asset can continue in use or be reallocated.",
+            recommendation=rec,
+            reason=reason,
         )
 
     @staticmethod
@@ -998,6 +1060,22 @@ class AssetInsightsService:
         model = instance.model
         category = model.category.category_name if model and model.category else None
         sub_category = model.sub_category.sub_category_name if model and model.sub_category else None
+        score = metrics["health_score"]
+        hint = metrics["recommendation_hint"]
+        
+        # Determine behavior
+        from app.server.services.health_service import HealthService
+        from app.server.schema.category import AssetBehavior
+        behavior = HealthService._resolve_behavior(instance)
+        is_software = behavior in (AssetBehavior.LICENSE_BASED, AssetBehavior.SUBSCRIPTION_BASED)
+        
+        if is_software:
+            rec = "RENEW" if score < 30 else "REVIEW" if score < 70 else "RETAIN"
+            reason = f"Software state ({score}): {hint}"
+        else:
+            rec = "REPLACE" if score < 30 else "REPAIR" if score <= 50 else "RETAIN"
+            reason = f"Hardware state ({score}): {hint}"
+
         return AssetHealthReportItem(
             asset_id=instance.asset_id,
             instance_id=instance.instance_id,
@@ -1007,10 +1085,10 @@ class AssetInsightsService:
             sub_category=sub_category,
             branch=instance.branch or (model.branch if model else None),
             status=instance.status.value if hasattr(instance.status, "value") else str(instance.status),
-            health_score=metrics["health_score"],
+            health_score=score,
             classification=metrics["classification"],
-            recommendation=("REPLACE" if metrics["health_score"] < 30 else "REPAIR" if metrics["health_score"] <= 50 else "RETAIN"),
-            recommendation_reason=metrics["recommendation_hint"],
+            recommendation=rec,
+            recommendation_reason=reason,
             asset_age_years=metrics["asset_age_years"],
             usage_duration_days=metrics["usage_duration_days"],
             repair_count=metrics["repair_count"],
@@ -1056,7 +1134,10 @@ class AssetInsightsService:
 
         items: list[AssetHealthReportItem] = []
         for instance in query.all():
-            if not instance.model or not AssetInsightsService._is_hardware_asset(instance.model):
+            behavior = HealthService._resolve_behavior(instance)
+            is_health_applicable = HealthService._is_applicable_behavior(behavior)
+            
+            if not is_health_applicable:
                 continue
             report_item = AssetInsightsService._build_health_item(db, instance, current_user)
             if health_range:
