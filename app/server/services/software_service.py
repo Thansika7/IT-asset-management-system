@@ -15,7 +15,7 @@ from app.server.models.software import (
     SoftwareRemovalResponse,
     SoftwareUsageItem,
 )
-from app.server.schema.asset import Asset, AssetInstance, AssetStatus
+from app.server.schema.asset import Asset, AssetInstance, AssetStatus, AssetUsageType
 from app.server.schema.category import Category, SubCategory
 from app.server.schema.employee import Employee
 from app.server.schema.request import Request, RequestStatus, RequestType
@@ -25,7 +25,7 @@ from app.server.services.lifecycle_service import LifecycleService
 
 
 class SoftwareService:
-    ALLOWED_HARDWARE_SUBCATEGORIES = {"laptop", "desktop", "workstation", "computer"}
+    ALLOWED_HARDWARE_SUBCATEGORIES = {"laptop", "desktop"}
 
     @staticmethod
     def _ensure_employee(db: Session, employee_id: str, current_user: Employee) -> Employee:
@@ -86,8 +86,11 @@ class SoftwareService:
         if sub_category_name not in SoftwareService.ALLOWED_HARDWARE_SUBCATEGORIES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only Laptop, Desktop, Workstation, or Computer instances are allowed",
+                detail="Only Laptop or Desktop instances are allowed",
             )
+
+        if instance.model and instance.model.asset_usage_type == AssetUsageType.SHARED:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shared hardware cannot be used for software assignment")
 
         status_value = instance.status.value if hasattr(instance.status, "value") else str(instance.status)
         if status_value not in {AssetStatus.AVAILABLE.value, AssetStatus.ASSIGNED.value}:
@@ -119,6 +122,7 @@ class SoftwareService:
             )
             .filter(func.lower(Category.category_name) == "hardware")
             .filter(func.lower(SubCategory.sub_category_name).in_(SoftwareService.ALLOWED_HARDWARE_SUBCATEGORIES))
+            .filter(Asset.asset_usage_type != AssetUsageType.SHARED)
             .filter(
                 (AssetInstance.status == AssetStatus.AVAILABLE)
                 | ((AssetInstance.status == AssetStatus.ASSIGNED) & (AssetInstance.assigned_to_id == employee.employee_id))
@@ -169,6 +173,19 @@ class SoftwareService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Software assignment is allowed only for software requests",
                 )
+
+            duplicate = (
+                apply_tenant_filter(db.query(Tracking), current_user, Tracking)
+                .filter(
+                    Tracking.asset_id == payload.software_asset_id,
+                    Tracking.emp_id == req.emp_id,
+                    Tracking.movement_type == MovementType.SOFTWARE_ASSIGNED,
+                    Tracking.returned_at.is_(None),
+                )
+                .first()
+            )
+            if duplicate:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Software is already assigned to this employee")
 
             duplicate = apply_tenant_filter(db.query(Tracking), current_user, Tracking).filter(
                 Tracking.asset_id == payload.software_asset_id,
