@@ -1,4 +1,5 @@
 from typing import List, Optional
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -24,6 +25,8 @@ from app.server.models.stock import AssetDetailsRead, AssetTemplateDetailsRead
 from app.server.models.api import EmployeeAssetOwnerResponse
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.schema.asset import AssetStatus
+from app.server.schema.tracking import AssetLifecycle, Tracking, MovementType
+from app.server.database.tenant import apply_tenant_filter
 from app.server.services.asset_insights_service import AssetInsightsService
 from app.server.services.asset_usage_service import AssetUsageService
 from app.server.services.employee_asset_service import EmployeeAssetService
@@ -36,6 +39,8 @@ router = APIRouter(
     tags=["assets"],
     dependencies=[Depends(require_module_access("assets"))],
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _has_finance_permission(user: Employee) -> bool:
@@ -65,7 +70,7 @@ def list_assets(
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     effective_branch_id = branch_id
-    if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
+    if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE]:
         effective_branch_id = current_user.branch_id
 
     return AssetInsightsService.search_assets(
@@ -94,7 +99,9 @@ def list_asset_options(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
-    return AssetInsightsService.list_asset_options(db, current_user)
+    options = AssetInsightsService.list_asset_options(db, current_user)
+    logger.info("Dropdown returning %s items for /assets/options", len(options))
+    return options
 
 
 @router.get("/templates", response_model=list[AssetTemplateRead])
@@ -102,7 +109,9 @@ def list_asset_templates(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
-    return [AssetInsightsService.get_asset_template(db, asset.asset_id, current_user) for asset in AssetInsightsService.list_asset_options(db, current_user)]
+    options = AssetInsightsService.list_asset_options(db, current_user)
+    logger.info("Dropdown returning %s items for /assets/templates", len(options))
+    return [AssetInsightsService.get_asset_template(db, asset.asset_id, current_user) for asset in options]
 
 
 @router.get("/{asset_id}/specs", response_model=AssetTemplateRead)
@@ -112,6 +121,102 @@ def get_asset_specs(
     current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
 ):
     return AssetInsightsService.get_asset_template(db, asset_id, current_user)
+
+
+@router.get("/{asset_id}/template", response_model=AssetTemplateRead)
+def get_asset_template_autofill(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    return AssetInsightsService.get_asset_template(db, asset_id, current_user)
+
+
+@router.get("/{asset_id}/history")
+def get_asset_history(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM)),
+):
+    lifecycle_rows = (
+        apply_tenant_filter(db.query(AssetLifecycle), current_user, AssetLifecycle)
+        .filter(AssetLifecycle.asset_id == asset_id)
+        .order_by(AssetLifecycle.timestamp.desc())
+        .all()
+    )
+    tracking_rows = (
+        apply_tenant_filter(db.query(Tracking), current_user, Tracking)
+        .filter(Tracking.asset_id == asset_id)
+        .order_by(Tracking.assigned_date.desc())
+        .all()
+    )
+
+    repairs = [
+        row
+        for row in tracking_rows
+        if row.movement_type in {MovementType.REPAIR, MovementType.REPAIRED, MovementType.WARRANTY}
+    ]
+    temp_assignments = [
+        row
+        for row in tracking_rows
+        if row.movement_type in {MovementType.TEMP_ASSIGNED, MovementType.TEMP_RETURNED}
+    ]
+
+    return {
+        "asset_id": asset_id,
+        "lifecycle_events": [
+            {
+                "lifecycle_id": row.lifecycle_id,
+                "instance_id": row.instance_id,
+                "event_type": row.event_type.value if hasattr(row.event_type, "value") else str(row.event_type),
+                "old_status": row.old_status,
+                "new_status": row.new_status,
+                "performed_by": row.performed_by,
+                "timestamp": row.timestamp,
+                "notes": row.notes,
+                "metadata": row.event_metadata,
+                "tracking_id": row.tracking_id,
+            }
+            for row in lifecycle_rows
+        ],
+        "tracking": [
+            {
+                "tracking_id": row.tracking_id,
+                "instance_id": row.instance_id,
+                "emp_id": row.emp_id,
+                "movement_type": row.movement_type.value if hasattr(row.movement_type, "value") else str(row.movement_type),
+                "allocation_type": row.allocation_type.value if hasattr(row.allocation_type, "value") else str(row.allocation_type),
+                "movement_reason": row.movement_reason,
+                "assigned_date": row.assigned_date,
+                "returned_at": row.returned_at,
+                "is_temporary": bool(row.is_temporary),
+            }
+            for row in tracking_rows
+        ],
+        "repairs": [
+            {
+                "tracking_id": row.tracking_id,
+                "instance_id": row.instance_id,
+                "movement_type": row.movement_type.value if hasattr(row.movement_type, "value") else str(row.movement_type),
+                "movement_reason": row.movement_reason,
+                "assigned_date": row.assigned_date,
+                "returned_at": row.returned_at,
+            }
+            for row in repairs
+        ],
+        "temp_assignments": [
+            {
+                "tracking_id": row.tracking_id,
+                "instance_id": row.instance_id,
+                "movement_type": row.movement_type.value if hasattr(row.movement_type, "value") else str(row.movement_type),
+                "movement_reason": row.movement_reason,
+                "assigned_date": row.assigned_date,
+                "returned_at": row.returned_at,
+                "is_temporary": bool(row.is_temporary),
+            }
+            for row in temp_assignments
+        ],
+    }
 
 
 @router.get("/{asset_id}/details", response_model=AssetDetailsRead)

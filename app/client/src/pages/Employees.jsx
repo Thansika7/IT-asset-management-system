@@ -472,7 +472,7 @@ function RegisterModal({ filterOptions, orgOptions, branchOptions, onClose, onSu
 
   const availableStock = useMemo(() => {
     if (!Array.isArray(stock)) return []
-    return stock.filter((a) => a?.unused > 0)
+    return stock
   }, [stock])
 
   const filteredBranches = useMemo(() => {

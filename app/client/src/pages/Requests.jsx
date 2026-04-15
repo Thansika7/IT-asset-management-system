@@ -714,13 +714,39 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [], op
   const [brokenId, setBrokenId] = useState('')
   const [resolveNotes, setResolveNotes] = useState('')
   const [repairCost, setRepairCost] = useState('0')
-  const [disposable, setDisposable] = useState(false)
+  const [serviceIssue, setServiceIssue] = useState('')
+  const [serviceVendor, setServiceVendor] = useState('')
+  const [serviceCost, setServiceCost] = useState('0')
+  const [serviceStartDate, setServiceStartDate] = useState('')
+  const [expectedReturnDate, setExpectedReturnDate] = useState('')
+  const [oldAssetDisposition, setOldAssetDisposition] = useState('DAMAGED')
   const [tBranch, setTBranch] = useState('')
   const [rejectNotes, setRejectNotes] = useState('')
   const [aiRecommendation, setAiRecommendation] = useState(null)
   const [aiError, setAiError] = useState('')
   const [managerNotes, setManagerNotes] = useState('')
   const [transferConfirmOpen, setTransferConfirmOpen] = useState(false)
+  const [softwareAssetId, setSoftwareAssetId] = useState('')
+  const [selectedHardwareId, setSelectedHardwareId] = useState('')
+  const [softwareNotes, setSoftwareNotes] = useState('')
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState('')
+  const [removalReason, setRemovalReason] = useState('')
+  const stage = row?.stage
+
+  const isSoftwareRequest = String(row?.asset_category || '').trim().toLowerCase() === 'software'
+  const canSoftwareAssign = canExecuteRequest(user.role) && isSoftwareRequest && (stage === 'READY' || row.status === 'APPROVED_FOR_SUPPORT' || row.status === 'READY' || row.status === 'APPROVED')
+
+  const hardwareOptionsQuery = useQuery({
+    queryKey: ['software-hardware-options', row?.request_id, row?.emp_id],
+    queryFn: () => apiFetch(`/software/hardware-options?employee_id=${encodeURIComponent(row.emp_id)}`),
+    enabled: Boolean(canSoftwareAssign && row?.emp_id),
+  })
+
+  const assignmentHistoryQuery = useQuery({
+    queryKey: ['software-history', row?.request_id, row?.emp_id],
+    queryFn: () => apiFetch(`/software/history?employee_id=${encodeURIComponent(row.emp_id)}`),
+    enabled: Boolean(isSoftwareRequest && row?.emp_id),
+  })
 
   const necessityMut = useMutation({
     mutationFn: (requestId) => apiFetch(`/requests/${requestId}/recommend-necessity`, { method: 'POST' }),
@@ -757,13 +783,23 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [], op
     setBrokenId('')
     setResolveNotes('')
     setRepairCost('0')
-    setDisposable(false)
+    setServiceIssue('')
+    setServiceVendor('')
+    setServiceCost('0')
+    setServiceStartDate('')
+    setExpectedReturnDate('')
+    setOldAssetDisposition('DAMAGED')
     setTBranch(transferBranches[0] || '')
     setRejectNotes('')
     setAiRecommendation(null)
     setAiError('')
     setManagerNotes('')
     setTransferConfirmOpen(false)
+    setSoftwareAssetId(row?.asset_id || '')
+    setSelectedHardwareId('')
+    setSoftwareNotes('')
+    setSelectedAssignmentId('')
+    setRemovalReason('')
   }, [row?.request_id, row?.request_type, transferBranches, priorityOptions, severityOptions, requestTypeOptions])
 
   if (!row) {
@@ -774,7 +810,6 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [], op
     )
   }
 
-  const stage = row.stage
   const canDeleteRequest = stage === 'HR_VERIFICATION' && (
     user.role === R.ADMIN ||
     row.emp_id === user.employee_id ||
@@ -792,6 +827,7 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [], op
   const detailRows = [
     ['Request ID', row.request_id],
     ['Asset name', row.asset_name || 'Not provided'],
+    ['Asset ID', row.asset_id || 'Not linked'],
     ['Category', row.asset_category || 'Not provided'],
     ['Requested by', row.requester_name || row.emp_id || 'Not available'],
     ['Requester role', row.requester_role || 'Not available'],
@@ -807,6 +843,12 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [], op
     ['HR verified', prettyBool(row.hr_verified)],
     ['Requested at', formatDate(row.req_date)],
     ['Manager notes', row.manager_notes || 'No notes'],
+    ['Service issue', row.service_issue_description || 'Not started'],
+    ['Service vendor', row.service_vendor || 'Not set'],
+    ['Service cost', row.service_cost != null ? String(row.service_cost) : 'Not set'],
+    ['Service start', formatDate(row.service_start_date)],
+    ['Expected return', formatDate(row.expected_return_date)],
+    ['Temporary instance', row.temporary_instance_id || 'Not assigned'],
     ['Escalation', row.escalation_triggered && row.escalation_role ? `Overdue - escalate to ${row.escalation_role}` : 'Within current SLA'],
   ]
 
@@ -1050,39 +1092,207 @@ function DetailPanel({ row, user, mutations, onDelete, transferBranches = [], op
       ) : null}
 
 
-      {canExecuteRequest(user.role) && (stage === 'READY' || row.status === 'APPROVED_FOR_SUPPORT' || row.status === 'READY') ? (
-        <div className="space-y-3 border-t border-slate-100 pt-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Execute fulfillment</p>
-          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Provided instance id (AST-001-0001)" value={providedId} onChange={(e) => setProvidedId(e.target.value)} />
-          {(row.request_type === 'REPLACE' || row.request_type === 'SERVICE') ? <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Broken / serviced instance id" value={brokenId} onChange={(e) => setBrokenId(e.target.value)} /> : null}
+      {canSoftwareAssign ? (
+        <div className="space-y-4 border-t border-slate-100 pt-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Assign software</p>
+          <input
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Software asset ID"
+            value={softwareAssetId}
+            onChange={(e) => setSoftwareAssetId(e.target.value)}
+          />
+          <select
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            value={selectedHardwareId}
+            onChange={(e) => setSelectedHardwareId(e.target.value)}
+          >
+            <option value="">Select hardware instance</option>
+            {(hardwareOptionsQuery.data || []).map((item) => (
+              <option key={item.instance_id} value={item.instance_id}>
+                {item.instance_id} · {item.asset_name} · {item.sub_category || 'Hardware'} · {item.status}
+              </option>
+            ))}
+          </select>
+          <textarea
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="Notes (optional)"
+            rows={2}
+            value={softwareNotes}
+            onChange={(e) => setSoftwareNotes(e.target.value)}
+          />
           <button
             type="button"
             className="rounded-xl bg-slate-900 text-white text-sm font-medium px-4 py-2"
-            onClick={() => mutations.execMut.mutate({ id: row.request_id, provided_instance_id: providedId || undefined, broken_instance_id: brokenId || undefined })}
+            disabled={!softwareAssetId.trim() || !selectedHardwareId || mutations.softwareAssignMut.isPending}
+            onClick={() => mutations.softwareAssignMut.mutate({
+              request_id: row.request_id,
+              employee_id: row.emp_id,
+              software_asset_id: softwareAssetId.trim(),
+              instance_id: selectedHardwareId,
+              notes: softwareNotes.trim() || undefined,
+            })}
           >
-            Execute
+            {mutations.softwareAssignMut.isPending ? 'Assigning…' : 'Assign software'}
           </button>
-          {mutations.execMut.isError ? <p className="text-xs text-rose-600">{err(mutations.execMut)}</p> : null}
+          {hardwareOptionsQuery.isError ? <p className="text-xs text-rose-600">{hardwareOptionsQuery.error?.message}</p> : null}
+          {mutations.softwareAssignMut.isError ? <p className="text-xs text-rose-600">{err(mutations.softwareAssignMut)}</p> : null}
+
+          <div className="rounded-2xl border border-slate-200 p-3 space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Remove software</p>
+            <select
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              value={selectedAssignmentId}
+              onChange={(e) => setSelectedAssignmentId(e.target.value)}
+            >
+              <option value="">Select active assignment</option>
+              {(assignmentHistoryQuery.data || [])
+                .filter((item) => item.movement_type === 'SOFTWARE_ASSIGNED' && !item.returned_at)
+                .map((item) => (
+                  <option key={item.tracking_id} value={item.tracking_id}>
+                    {item.tracking_id} · {item.instance_id || '-'} · {item.employee_name || item.employee_id}
+                  </option>
+                ))}
+            </select>
+            <input
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              placeholder="Removal reason"
+              value={removalReason}
+              onChange={(e) => setRemovalReason(e.target.value)}
+            />
+            <button
+              type="button"
+              className="rounded-xl border border-slate-300 text-sm font-medium px-4 py-2"
+              disabled={!selectedAssignmentId || !removalReason.trim() || mutations.softwareRemoveMut.isPending}
+              onClick={() => mutations.softwareRemoveMut.mutate({
+                assignment_id: selectedAssignmentId,
+                reason: removalReason.trim(),
+              })}
+            >
+              {mutations.softwareRemoveMut.isPending ? 'Removing…' : 'Remove software'}
+            </button>
+            {mutations.softwareRemoveMut.isError ? <p className="text-xs text-rose-600">{err(mutations.softwareRemoveMut)}</p> : null}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 p-3 space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Assignment history</p>
+            <div className="max-h-52 overflow-auto space-y-1">
+              {(assignmentHistoryQuery.data || []).length === 0 ? (
+                <p className="text-xs text-slate-500">No software assignment history for this employee.</p>
+              ) : (
+                (assignmentHistoryQuery.data || []).map((item) => (
+                  <div key={item.tracking_id} className="rounded-lg border border-slate-100 px-2 py-1 text-xs text-slate-700">
+                    <span className="font-semibold">{item.movement_type}</span> · {item.software_name || item.software_asset_id} · {item.instance_id || '-'} · {formatDate(item.assigned_date)}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {canExecuteRequest(user.role) && !isSoftwareRequest && (stage === 'READY' || row.status === 'APPROVED_FOR_SUPPORT' || row.status === 'READY' || row.status === 'APPROVED') ? (
+        <div className="space-y-3 border-t border-slate-100 pt-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Support fulfillment</p>
+
+          {row.request_type === 'NEW' ? (
+            <>
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Provided instance id (AST-001-0001)" value={providedId} onChange={(e) => setProvidedId(e.target.value)} />
+              <button
+                type="button"
+                className="rounded-xl bg-slate-900 text-white text-sm font-medium px-4 py-2"
+                disabled={!providedId.trim() || mutations.assignNewMut.isPending}
+                onClick={() => mutations.assignNewMut.mutate({ id: row.request_id, body: { provided_instance_id: providedId.trim() } })}
+              >
+                {mutations.assignNewMut.isPending ? 'Assigning…' : 'Assign new asset'}
+              </button>
+              {mutations.assignNewMut.isError ? <p className="text-xs text-rose-600">{err(mutations.assignNewMut)}</p> : null}
+            </>
+          ) : null}
+
+          {row.request_type === 'REPLACE' ? (
+            <>
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Replacement instance id" value={providedId} onChange={(e) => setProvidedId(e.target.value)} />
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Broken instance id" value={brokenId} onChange={(e) => setBrokenId(e.target.value)} />
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={oldAssetDisposition} onChange={(e) => setOldAssetDisposition(e.target.value)}>
+                <option value="DAMAGED">Mark old asset damaged</option>
+                <option value="RETIRED">Retire old asset</option>
+              </select>
+              <button
+                type="button"
+                className="rounded-xl bg-slate-900 text-white text-sm font-medium px-4 py-2"
+                disabled={!providedId.trim() || mutations.replaceMut.isPending}
+                onClick={() => mutations.replaceMut.mutate({
+                  id: row.request_id,
+                  body: {
+                    provided_instance_id: providedId.trim(),
+                    broken_instance_id: brokenId.trim() || undefined,
+                    old_asset_disposition: oldAssetDisposition,
+                  },
+                })}
+              >
+                {mutations.replaceMut.isPending ? 'Replacing…' : 'Replace asset'}
+              </button>
+              {mutations.replaceMut.isError ? <p className="text-xs text-rose-600">{err(mutations.replaceMut)}</p> : null}
+            </>
+          ) : null}
+
+          {row.request_type === 'SERVICE' ? (
+            <>
+              <textarea className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Issue description" value={serviceIssue} onChange={(e) => setServiceIssue(e.target.value)} />
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Service vendor" value={serviceVendor} onChange={(e) => setServiceVendor(e.target.value)} />
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Service cost" value={serviceCost} onChange={(e) => setServiceCost(e.target.value)} />
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Broken / serviced instance id" value={brokenId} onChange={(e) => setBrokenId(e.target.value)} />
+              <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Temporary replacement instance id (optional)" value={providedId} onChange={(e) => setProvidedId(e.target.value)} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" type="datetime-local" value={serviceStartDate} onChange={(e) => setServiceStartDate(e.target.value)} />
+                <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" type="datetime-local" value={expectedReturnDate} onChange={(e) => setExpectedReturnDate(e.target.value)} />
+              </div>
+              <button
+                type="button"
+                className="rounded-xl bg-slate-900 text-white text-sm font-medium px-4 py-2"
+                disabled={!serviceIssue.trim() || mutations.startServiceMut.isPending}
+                onClick={() => mutations.startServiceMut.mutate({
+                  id: row.request_id,
+                  body: {
+                    issue_description: serviceIssue.trim(),
+                    service_vendor: serviceVendor.trim() || undefined,
+                    service_cost: parseFloat(serviceCost) || 0,
+                    service_start_date: serviceStartDate ? new Date(serviceStartDate).toISOString() : new Date().toISOString(),
+                    expected_return_date: expectedReturnDate ? new Date(expectedReturnDate).toISOString() : undefined,
+                    broken_instance_id: brokenId.trim() || undefined,
+                    temporary_instance_id: providedId.trim() || undefined,
+                  },
+                })}
+              >
+                {mutations.startServiceMut.isPending ? 'Starting service…' : 'Start service workflow'}
+              </button>
+              {mutations.startServiceMut.isError ? <p className="text-xs text-rose-600">{err(mutations.startServiceMut)}</p> : null}
+            </>
+          ) : null}
         </div>
       ) : null}
 
       {stage === 'IN_REPAIR' && canResolveService(user.role) ? (
         <div className="space-y-3 border-t border-slate-100 pt-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Resolve service</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Complete service</p>
           <textarea className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Resolution notes" value={resolveNotes} onChange={(e) => setResolveNotes(e.target.value)} />
           <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Repair cost" value={repairCost} onChange={(e) => setRepairCost(e.target.value)} />
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={disposable} onChange={(e) => setDisposable(e.target.checked)} />
-            Asset is non-repairable
-          </label>
+          <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Repaired instance id (optional)" value={brokenId} onChange={(e) => setBrokenId(e.target.value)} />
           <button
             type="button"
             className="rounded-xl bg-teal-700 text-white text-sm font-medium px-4 py-2"
-            onClick={() => mutations.resolveMut.mutate({ id: row.request_id, body: { resolution_notes: resolveNotes, repair_cost: parseFloat(repairCost) || 0, is_disposable: disposable } })}
+            onClick={() => mutations.completeServiceMut.mutate({
+              id: row.request_id,
+              body: {
+                resolution_notes: resolveNotes,
+                repair_cost: parseFloat(repairCost) || 0,
+                repaired_instance_id: brokenId.trim() || undefined,
+              },
+            })}
           >
-            Resolve service
+            Complete service
           </button>
-          {mutations.resolveMut.isError ? <p className="text-xs text-rose-600">{err(mutations.resolveMut)}</p> : null}
+          {mutations.completeServiceMut.isError ? <p className="text-xs text-rose-600">{err(mutations.completeServiceMut)}</p> : null}
         </div>
       ) : null}
 
@@ -1208,7 +1418,26 @@ export default function Requests() {
     onSuccess: invalidate,
   })
   const resolveMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/resolve`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
+  const assignNewMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/support/assign-new`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
+  const replaceMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/support/replace`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
+  const startServiceMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/support/service/start`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
+  const completeServiceMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/support/service/complete`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
   const transferMut = useMutation({ mutationFn: ({ id, body }) => apiFetch(`/requests/${id}/transfer-request`, { method: 'POST', body: JSON.stringify(body) }), onSuccess: invalidate })
+  const softwareAssignMut = useMutation({
+    mutationFn: (body) => apiFetch('/software/assign', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      invalidate()
+      qc.invalidateQueries({ queryKey: ['software-history'] })
+      qc.invalidateQueries({ queryKey: ['software-hardware-options'] })
+    },
+  })
+  const softwareRemoveMut = useMutation({
+    mutationFn: (body) => apiFetch('/software/remove', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      invalidate()
+      qc.invalidateQueries({ queryKey: ['software-history'] })
+    },
+  })
   const createMut = useMutation({ mutationFn: (body) => apiFetch('/requests/', { method: 'POST', body: JSON.stringify(body) }), onSuccess: () => invalidate() })
 
   return (
@@ -1325,7 +1554,7 @@ export default function Requests() {
               ×
             </button>
             <div className="p-6">
-              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, transferMut, invalidate }} onDelete={() => setDetailsOpen(false)} transferBranches={transferBranchesQuery.data || []} optionSets={optionSets} />
+              <DetailPanel row={selected} user={user} mutations={{ hrMut, triageMut, mgrMut, admMut, execMut, resolveMut, assignNewMut, replaceMut, startServiceMut, completeServiceMut, transferMut, softwareAssignMut, softwareRemoveMut, invalidate }} onDelete={() => setDetailsOpen(false)} transferBranches={transferBranchesQuery.data || []} optionSets={optionSets} />
             </div>
           </div>
         </div>

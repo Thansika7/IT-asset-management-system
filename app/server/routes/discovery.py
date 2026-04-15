@@ -1,4 +1,5 @@
 from typing import List
+import logging
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from app.server.middlewares.auth import require_roles
 from app.server.services.asset_insights_service import AssetInsightsService
 
 router = APIRouter(tags=["discovery"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/search", response_model=SearchResultsRead)
@@ -57,10 +59,12 @@ def recent_assets(
 def list_categories(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(
-        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
+        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
     ),
 ):
-    return AssetInsightsService.list_categories(db, current_user)
+    rows = AssetInsightsService.list_categories(db, current_user)
+    logger.info("Dropdown returning %s items for /categories", len(rows))
+    return rows
 
 
 @router.get("/categories/{category_id}/subcategories", response_model=List[SubCategoryRead])
@@ -68,10 +72,12 @@ def list_subcategories(
     category_id: str,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(
-        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
+        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
     ),
 ):
-    return AssetInsightsService.list_subcategories(db, current_user, category_id)
+    rows = AssetInsightsService.list_subcategories(db, current_user, category_id)
+    logger.info("Dropdown returning %s items for /categories/{category_id}/subcategories", len(rows))
+    return rows
 
 
 @router.get("/subcategories/{sub_category_id}/assets", response_model=List[AssetListItem])
@@ -79,7 +85,9 @@ def list_assets_by_subcategory(
     sub_category_id: str,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(
-        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
+        require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN, EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE)
     ),
 ):
-    return AssetInsightsService.list_assets_by_subcategory(db, current_user=current_user, sub_category_id=sub_category_id)
+    rows = AssetInsightsService.list_assets_by_subcategory(db, current_user=current_user, sub_category_id=sub_category_id)
+    logger.info("Dropdown returning %s items for /subcategories/{sub_category_id}/assets", len(rows))
+    return rows

@@ -40,6 +40,7 @@ function hasJsonPermission(permissions, module, action) {
 /** Navigation and route guards */
 export const NAV = {
   dashboard: (r) => r !== R.SUPER_ADMIN,
+  supportDashboard: (r) => [R.ADMIN, R.SUPPORT_TEAM].includes(r),
   myAssets: (r) => r !== R.SUPER_ADMIN,
   requests: (r) => r !== R.SUPER_ADMIN,
   tracking: (r) => r !== R.SUPER_ADMIN,

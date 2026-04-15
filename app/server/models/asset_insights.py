@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 class AssetListItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    id: Optional[str] = None
     asset_id: str
     name: str
     brand: Optional[str] = None
@@ -271,6 +272,8 @@ class SearchResultsRead(BaseModel):
 
 class CategoryRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    id: str
+    name: str
     category_id: str
     category_name: str
     description: Optional[str] = None
@@ -278,6 +281,8 @@ class CategoryRead(BaseModel):
 
 class SubCategoryRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    id: str
+    name: str
     sub_category_id: str
     category_id: str
     sub_category_name: str

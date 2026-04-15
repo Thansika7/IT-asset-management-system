@@ -508,7 +508,7 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
 
   const { data: selectedRestockDetailsData } = useQuery({
     queryKey: ['asset-details', restockAssetId],
-    queryFn: () => apiFetch(`/assets/${restockAssetId}/template-details`),
+    queryFn: () => apiFetch(`/assets/${restockAssetId}/template`),
     enabled: Boolean(restockAssetId) && restockAssetId !== NEW_OPTION_VALUE,
   })
 
@@ -842,9 +842,9 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
               </div>
               <div className="rounded-xl border border-cyan-100 bg-white p-3 space-y-2">
                 <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Current inventory</div>
-                <div className="text-xs text-slate-600">Total: {selectedRestockDetailsData?.inventory_counts?.total ?? selectedRestockTemplate?.total_quantity ?? 0}</div>
-                <div className="text-xs text-slate-600">Available: {selectedRestockDetailsData?.inventory_counts?.available ?? selectedRestockTemplate?.unused ?? 0}</div>
-                <div className="text-xs text-slate-600">Assigned: {selectedRestockDetailsData?.inventory_counts?.assigned ?? selectedRestockTemplate?.used ?? 0}</div>
+                <div className="text-xs text-slate-600">Total: {selectedRestockDetailsData?.inventory_counts?.total ?? selectedRestockDetailsData?.inventory?.total ?? selectedRestockTemplate?.total_quantity ?? 0}</div>
+                <div className="text-xs text-slate-600">Available: {selectedRestockDetailsData?.inventory_counts?.available ?? selectedRestockDetailsData?.inventory?.available ?? selectedRestockTemplate?.unused ?? 0}</div>
+                <div className="text-xs text-slate-600">Assigned: {selectedRestockDetailsData?.inventory_counts?.assigned ?? selectedRestockDetailsData?.inventory?.assigned ?? selectedRestockTemplate?.used ?? 0}</div>
               </div>
             </div>
 

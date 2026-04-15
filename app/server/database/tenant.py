@@ -14,7 +14,6 @@ class TenantContext:
 
 
 BRANCH_SCOPED_ROLES = {
-    EmployeeRole.MANAGER,
     EmployeeRole.HR,
     EmployeeRole.SUPPORT_TEAM,
     EmployeeRole.EMPLOYEE,
@@ -42,7 +41,8 @@ def apply_branch_filter(query: Query, current_user: Employee, model: Type[T], al
     Applies branch scope for branch-restricted roles.
 
     SUPER_ADMIN and ORG_ADMIN can see all branches within org scope.
-    MANAGER, HR, SUPPORT_TEAM and EMPLOYEE are restricted to their branch (when model supports branch_id)
+    HR, SUPPORT_TEAM and EMPLOYEE are restricted to their branch (when model supports branch_id).
+    MANAGER can view all branches within org scope.
     unless allow_cross_branch=True.
     """
     if current_user.role in {EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN}:

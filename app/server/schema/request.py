@@ -1,6 +1,6 @@
 import uuid
 import enum
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, String, Text, Boolean, Enum
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, String, Text, Boolean, Enum, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.server.database.database import Base
@@ -95,6 +95,8 @@ class Request(Base):
     # Instance references
     instance_id=Column(String(50), ForeignKey("asset_instances.instance_id"), nullable=True)  # Current/requested instance
     serial_number=Column(String(100), nullable=True)
+    temporary_instance_id=Column(String(50), ForeignKey("asset_instances.instance_id"), nullable=True)
+    temporary_tracking_id=Column(String(50), ForeignKey("tracking.tracking_id"), nullable=True)
     
     # Legacy compatibility fields
     asset_id=Column(String(50), ForeignKey("assets.asset_id"), nullable=True)
@@ -116,6 +118,11 @@ class Request(Base):
     severity=Column(String(20), nullable=True)
     urgency=Column(String(20), nullable=True)
     manager_notes=Column(Text, nullable=True)
+    service_issue_description=Column(Text, nullable=True)
+    service_vendor=Column(String(150), nullable=True)
+    service_cost=Column(Float, nullable=True)
+    service_start_date=Column(DateTime(timezone=True), nullable=True)
+    expected_return_date=Column(DateTime(timezone=True), nullable=True)
     
     # Concurrency Control
     request_locked=Column(Boolean, nullable=False, default=False)

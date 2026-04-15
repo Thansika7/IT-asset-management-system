@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from sqlalchemy import and_
 import os
-from app.server.schema.asset import Asset, AssetStatus, AssetInstance
+from app.server.schema.asset import Asset, AssetStatus, AssetInstance, AssetUsageType
 from app.server.schema.tracking import Tracking, MovementType, AllocationType, LifecycleEvent
 from app.server.schema.request import Request
 from app.server.schema.employee import Employee
@@ -46,7 +46,7 @@ class InstanceStateMachine:
         AssetStatus.NEW: [AssetStatus.AVAILABLE, AssetStatus.NOT_USABLE],
         AssetStatus.AVAILABLE: [AssetStatus.RESERVED, AssetStatus.ASSIGNED, AssetStatus.RETIRED],
         AssetStatus.RESERVED: [AssetStatus.ASSIGNED, AssetStatus.AVAILABLE],
-        AssetStatus.ASSIGNED: [AssetStatus.IN_REPAIR, AssetStatus.RETIRED, AssetStatus.AVAILABLE],
+        AssetStatus.ASSIGNED: [AssetStatus.IN_REPAIR, AssetStatus.RETIRED, AssetStatus.AVAILABLE, AssetStatus.DAMAGED],
         AssetStatus.USED: [AssetStatus.IN_REPAIR, AssetStatus.ASSIGNED, AssetStatus.AVAILABLE],
         AssetStatus.IN_REPAIR: [AssetStatus.AVAILABLE, AssetStatus.NOT_USABLE],
         AssetStatus.NOT_USABLE: [AssetStatus.RETIRED],
@@ -175,9 +175,9 @@ class StockService:
         snapshot = InventorySnapshot()
 
         for status, count in grouped:
-            if status in {AssetStatus.AVAILABLE, AssetStatus.NEW}:
+            if status == AssetStatus.AVAILABLE:
                 snapshot.available += int(count)
-            elif status in {AssetStatus.ASSIGNED, AssetStatus.USED}:
+            elif status == AssetStatus.ASSIGNED:
                 snapshot.assigned += int(count)
             elif status in {AssetStatus.IN_REPAIR, AssetStatus.WARRANTY}:
                 snapshot.in_repair += int(count)
@@ -205,9 +205,9 @@ class StockService:
         snapshot = InventorySnapshot()
 
         for status, count in grouped:
-            if status in {AssetStatus.AVAILABLE, AssetStatus.NEW}:
+            if status == AssetStatus.AVAILABLE:
                 snapshot.available += int(count)
-            elif status in {AssetStatus.ASSIGNED, AssetStatus.USED}:
+            elif status == AssetStatus.ASSIGNED:
                 snapshot.assigned += int(count)
             elif status in {AssetStatus.IN_REPAIR, AssetStatus.WARRANTY}:
                 snapshot.in_repair += int(count)
@@ -871,7 +871,17 @@ class StockService:
         return asset, created_instances
 
     @staticmethod
-    def allocate_asset(db: Session, asset_id: str, emp_id: str, alloc_type: AllocationType, user: Employee, reason: str = "ALLOCATION", instance_id: str = None) -> Tracking:
+    def allocate_asset(
+        db: Session,
+        asset_id: str,
+        emp_id: str,
+        alloc_type: AllocationType,
+        user: Employee,
+        reason: str = "ALLOCATION",
+        instance_id: str = None,
+        movement_type: MovementType = MovementType.ALLOCATE,
+        is_temporary: bool = False,
+    ) -> Tracking:
         """
         Allocate an asset instance to an employee.
         
@@ -886,6 +896,12 @@ class StockService:
         
         if not asset:
             raise ResourceNotFoundError("Asset", asset_id)
+
+        if asset.asset_status == AssetStatus.IN_REPAIR:
+            raise InvalidStateError("Assets in IN_REPAIR state cannot be assigned")
+
+        if asset.asset_usage_type == AssetUsageType.SHARED:
+            raise InvalidStateError("Shared assets cannot be assigned to employees")
         
         # Find an available instance
         target_instance = None
@@ -954,9 +970,10 @@ class StockService:
             branch=asset.branch,
             organization_id=asset.organization_id,
             branch_id=asset.branch_id,
-            movement_type=MovementType.ALLOCATE,
+            movement_type=movement_type,
             allocation_type=alloc_type,
-            movement_reason=reason
+            movement_reason=reason,
+            is_temporary=is_temporary,
         )
         db.add(trk)
         db.flush()

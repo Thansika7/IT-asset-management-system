@@ -10,6 +10,7 @@ import Dashboard from './pages/Dashboard'
 import Tracking from './pages/Tracking'
 import Employees from './pages/Employees'
 import Requests from './pages/Requests'
+import SupportDashboard from './pages/SupportDashboard'
 import Stock from './pages/Stock'
 import Finance from './pages/Finance'
 import HealthAnalytics from './pages/HealthAnalytics'
@@ -46,6 +47,7 @@ export default function App() {
           <Route path="branches" element={<RoleGate roles={[R.ORG_ADMIN]}><Branches /></RoleGate>} />
           <Route path="my-assets" element={<RoleGate roles={BUSINESS_ROLES}><MyAssets /></RoleGate>} />
           <Route path="requests" element={<RoleGate roles={BUSINESS_ROLES}><Requests /></RoleGate>} />
+          <Route path="support-dashboard" element={<RoleGate roles={[R.ADMIN, R.SUPPORT_TEAM]}><SupportDashboard /></RoleGate>} />
           <Route path="stock" element={<RoleGate roles={[R.ADMIN, R.MANAGER, R.HR, R.SUPPORT_TEAM]}><Stock /></RoleGate>} />
           <Route
             path="asset-usage"

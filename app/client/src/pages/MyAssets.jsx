@@ -34,7 +34,7 @@ function AdminAllocationForm({ onSuccess, adminId }) {
   })
 
   const stockItems = stockQuery.data?.items || []
-  const availableItems = stockItems.filter((a) => a.unused > 0)
+  const availableItems = stockItems
 
   const handleSubmit = (e) => {
     e.preventDefault()

@@ -27,6 +27,8 @@ from app.server.routes.asset_instances import router as asset_instances_router
 from app.server.routes.health import router as health_router
 from app.server.routes.finance import router as finance_router
 from app.server.routes.notifications import router as notifications_router
+from app.server.routes.software import router as software_router
+from app.server.routes.support import router as support_router
 from app.server.schema import asset, employee, category, attribute, request, tracking, audit
 import app.server.schema.cmdb  # noqa: F401 — register CMDB tables
 import app.server.schema.onboarding  # noqa: F401 — register onboarding preset tables
@@ -195,6 +197,79 @@ def _ensure_asset_instance_finance_columns() -> None:
             conn.execute(text("ALTER TABLE assets ADD COLUMN total_purchase_cost FLOAT NOT NULL DEFAULT 0.0"))
 
 
+def _ensure_support_workflow_columns() -> None:
+    """Backfill schema for support workflow and shared asset handling fields."""
+    with engine.begin() as conn:
+        req_rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'requests'
+                """
+            )
+        )
+        req_existing = {row[0] for row in req_rows}
+
+        if "temporary_instance_id" not in req_existing:
+            conn.execute(text("ALTER TABLE requests ADD COLUMN temporary_instance_id VARCHAR(50) NULL"))
+        if "temporary_tracking_id" not in req_existing:
+            conn.execute(text("ALTER TABLE requests ADD COLUMN temporary_tracking_id VARCHAR(50) NULL"))
+        if "service_issue_description" not in req_existing:
+            conn.execute(text("ALTER TABLE requests ADD COLUMN service_issue_description TEXT NULL"))
+        if "service_vendor" not in req_existing:
+            conn.execute(text("ALTER TABLE requests ADD COLUMN service_vendor VARCHAR(150) NULL"))
+        if "service_cost" not in req_existing:
+            conn.execute(text("ALTER TABLE requests ADD COLUMN service_cost FLOAT NULL"))
+        if "service_start_date" not in req_existing:
+            conn.execute(text("ALTER TABLE requests ADD COLUMN service_start_date TIMESTAMPTZ NULL"))
+        if "expected_return_date" not in req_existing:
+            conn.execute(text("ALTER TABLE requests ADD COLUMN expected_return_date TIMESTAMPTZ NULL"))
+
+        inst_rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'asset_instances'
+                """
+            )
+        )
+        inst_existing = {row[0] for row in inst_rows}
+        if "installation_location" not in inst_existing:
+            conn.execute(text("ALTER TABLE asset_instances ADD COLUMN installation_location VARCHAR(255) NULL"))
+
+        tracking_rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'tracking'
+                """
+            )
+        )
+        tracking_existing = {row[0] for row in tracking_rows}
+        if "is_temporary" not in tracking_existing:
+            conn.execute(text("ALTER TABLE tracking ADD COLUMN is_temporary BOOLEAN NOT NULL DEFAULT FALSE"))
+
+        asset_rows = conn.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'assets'
+                """
+            )
+        )
+        asset_existing = {row[0] for row in asset_rows}
+        if "asset_usage_type" not in asset_existing:
+            if engine.dialect.name == "postgresql":
+                conn.execute(text("DO $$ BEGIN CREATE TYPE asset_usage_type AS ENUM ('INDIVIDUAL','SHARED'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;"))
+                conn.execute(text("ALTER TABLE assets ADD COLUMN asset_usage_type asset_usage_type NOT NULL DEFAULT 'INDIVIDUAL'"))
+            else:
+                conn.execute(text("ALTER TABLE assets ADD COLUMN asset_usage_type VARCHAR(20) NOT NULL DEFAULT 'INDIVIDUAL'"))
+
+
 def _ensure_performance_indexes() -> None:
     """Create missing performance indexes for common tenant/status/time filters."""
     index_statements = [
@@ -236,13 +311,37 @@ def _ensure_performance_indexes() -> None:
             conn.execute(text(stmt))
 
 
+def _ensure_tracking_enum_values() -> None:
+    """Backfill enum values for software assignment lifecycle in PostgreSQL enum types."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'SOFTWARE_ASSIGNED'"))
+        conn.execute(text("ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'SOFTWARE_REMOVED'"))
+        conn.execute(text("ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'TEMP_ASSIGNED'"))
+        conn.execute(text("ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'TEMP_RETURNED'"))
+        conn.execute(text("ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'INSTALLED'"))
+        conn.execute(text("ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'SERVICED'"))
+        conn.execute(text("ALTER TYPE movement_type ADD VALUE IF NOT EXISTS 'REPAIRED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'SOFTWARE_ASSIGNED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'SOFTWARE_REMOVED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'SOFTWARE_UPDATED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'TEMP_ASSIGNED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'TEMP_RETURNED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'INSTALLED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'SERVICED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'REPAIRED'"))
+
+
 Base.metadata.create_all(bind=engine)
 _ensure_organization_subscription_columns()
 _ensure_request_branch_column()
 _ensure_onboarding_preset_columns()
 _ensure_employee_permission_columns()
 _ensure_asset_instance_finance_columns()
+_ensure_support_workflow_columns()
 _ensure_performance_indexes()
+_ensure_tracking_enum_values()
 
 @app.exception_handler(AppBaseException)
 async def app_exception_handler(request: Request, exc: AppBaseException):
@@ -376,6 +475,8 @@ app.include_router(asset_instances_router)
 app.include_router(health_router)
 app.include_router(finance_router)
 app.include_router(notifications_router)
+app.include_router(software_router)
+app.include_router(support_router)
 
 @app.get("/health")
 def health_check():

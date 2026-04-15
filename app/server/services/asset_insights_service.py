@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher, get_close_matches
 from typing import Optional
+import logging
 
 from sqlalchemy import String, func, or_
 from sqlalchemy.orm import Session, joinedload
@@ -42,6 +43,7 @@ from app.server.schema.tracking import Tracking, MovementType
 
 class AssetInsightsService:
     NON_HARDWARE_CATEGORIES = {"software", "furniture", "accessories", "network"}
+    logger = logging.getLogger(__name__)
 
     @staticmethod
     def _is_hardware_asset(asset: Asset) -> bool:
@@ -64,9 +66,7 @@ class AssetInsightsService:
             return query
         if current_user.role == EmployeeRole.ORG_ADMIN:
             return query
-        if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
-            return query.filter(Asset.branch_id == current_user.branch_id)
-        if current_user.role == EmployeeRole.EMPLOYEE and current_user.branch_id:
+        if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE]:
             return query.filter(Asset.branch_id == current_user.branch_id)
         return query
 
@@ -296,7 +296,7 @@ class AssetInsightsService:
         from app.server.database.tenant import apply_tenant_filter
 
         query = apply_tenant_filter(query, current_user, AssetInstance)
-        if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM]:
+        if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE]:
             query = query.filter(AssetInstance.branch_id == current_user.branch_id)
         return query.join(AssetInstance.model).outerjoin(Category).outerjoin(Branch)
 
@@ -332,22 +332,7 @@ class AssetInsightsService:
             query = query.filter(Asset.branch_id == branch_id)
 
         if status:
-            normalized = status.strip().lower()
-            if normalized == "available":
-                query = query.filter(Asset.unused > 0)
-            elif normalized == "allocated":
-                query = query.filter(Asset.used > 0)
-            elif normalized == "low_stock":
-                query = query.filter(Asset.unused <= Asset.low_stock_threshold)
-            else:
-                query = query.filter(Asset.asset_status == status.strip().upper())
-
-        if available_only:
-            query = query.filter(Asset.unused > 0)
-        if allocated_only:
-            query = query.filter(Asset.used > 0)
-        if low_stock_only:
-            query = query.filter(Asset.unused <= Asset.low_stock_threshold)
+            query = query.filter(Asset.asset_status == status.strip().upper())
 
         if search:
             needle = f"%{search.strip()}%"
@@ -367,26 +352,31 @@ class AssetInsightsService:
         total = query.count()
         assets = query.order_by(Asset.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
 
-        items = [
-            AssetListItem(
-                asset_id=asset.asset_id,
-                name=asset.name,
-                brand=asset.brand,
-                model=asset.model,
-                category_id=asset.category_id,
-                category=asset.category.category_name if asset.category else None,
-                sub_category_id=asset.sub_category_id,
-                sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
-                branch_id=asset.branch_id,
-                branch=asset.branch,
-                status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
-                total_quantity=asset.total_quantity,
-                used=asset.used,
-                unused=asset.unused,
-                low_stock=asset.unused <= (asset.low_stock_threshold or 0),
+        from app.server.services.stock_service import StockService
+
+        items = []
+        for asset in assets:
+            inv = StockService.get_inventory(db, asset.asset_id)
+            items.append(
+                AssetListItem(
+                    id=asset.asset_id,
+                    asset_id=asset.asset_id,
+                    name=asset.name,
+                    brand=asset.brand,
+                    model=asset.model,
+                    category_id=asset.category_id,
+                    category=asset.category.category_name if asset.category else None,
+                    sub_category_id=asset.sub_category_id,
+                    sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                    branch_id=asset.branch_id,
+                    branch=asset.branch,
+                    status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
+                    total_quantity=inv.total,
+                    used=inv.assigned,
+                    unused=inv.available,
+                    low_stock=inv.available <= (asset.low_stock_threshold or 0),
+                )
             )
-            for asset in assets
-        ]
         
         return {
             "items": items,
@@ -399,26 +389,33 @@ class AssetInsightsService:
     def list_asset_options(db: Session, current_user: Employee) -> list[AssetListItem]:
         query = AssetInsightsService._base_asset_query(db, current_user)
         assets = query.order_by(Asset.name.asc(), Asset.asset_id.asc()).all()
-        return [
-            AssetListItem(
-                asset_id=asset.asset_id,
-                name=asset.name,
-                brand=asset.brand,
-                model=asset.model,
-                category_id=asset.category_id,
-                category=asset.category.category_name if asset.category else None,
-                sub_category_id=asset.sub_category_id,
-                sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
-                branch_id=asset.branch_id,
-                branch=asset.branch,
-                status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
-                total_quantity=asset.total_quantity,
-                used=asset.used,
-                unused=asset.unused,
-                low_stock=asset.unused <= (asset.low_stock_threshold or 0),
+        AssetInsightsService.logger.info("Dropdown returning %s items for asset options", len(assets))
+
+        from app.server.services.stock_service import StockService
+
+        out = []
+        for asset in assets:
+            inv = StockService.get_inventory(db, asset.asset_id)
+            out.append(
+                AssetListItem(
+                    asset_id=asset.asset_id,
+                    name=asset.name,
+                    brand=asset.brand,
+                    model=asset.model,
+                    category_id=asset.category_id,
+                    category=asset.category.category_name if asset.category else None,
+                    sub_category_id=asset.sub_category_id,
+                    sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                    branch_id=asset.branch_id,
+                    branch=asset.branch,
+                    status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
+                    total_quantity=inv.total,
+                    used=inv.assigned,
+                    unused=inv.available,
+                    low_stock=inv.available <= (asset.low_stock_threshold or 0),
+                )
             )
-            for asset in assets
-        ]
+        return out
 
     @staticmethod
     def get_asset_template(db: Session, asset_id: str, current_user: Employee) -> AssetTemplateRead:
@@ -610,23 +607,8 @@ class AssetInsightsService:
         low_stock_only: bool = False,
     ) -> bool:
         if status:
-            normalized = status.strip().lower()
-            if normalized == "available":
-                if asset.unused <= 0: return False
-            elif normalized == "allocated":
-                if asset.used <= 0: return False
-            elif normalized == "low_stock":
-                if asset.unused > (asset.low_stock_threshold or 0): return False
-            else:
-                if (asset.asset_status.value if asset.asset_status else "").upper() != status.strip().upper():
-                    return False
-
-        if available_only and asset.unused <= 0:
-            return False
-        if allocated_only and asset.used <= 0:
-            return False
-        if low_stock_only and asset.unused > (asset.low_stock_threshold or 0):
-            return False
+            if (asset.asset_status.value if asset.asset_status else "").upper() != status.strip().upper():
+                return False
 
         if search:
             needle = search.strip().lower()
@@ -1336,8 +1318,11 @@ class AssetInsightsService:
             .order_by(Category.category_name.asc())
             .all()
         )
+        AssetInsightsService.logger.info("Dropdown returning %s items for categories", len(rows))
         return [
             CategoryRead(
+                id=r.category_id,
+                name=r.category_name,
                 category_id=r.category_id,
                 category_name=r.category_name,
                 description=r.description,
@@ -1355,8 +1340,11 @@ class AssetInsightsService:
             .order_by(SubCategory.sub_category_name.asc())
             .all()
         )
+        AssetInsightsService.logger.info("Dropdown returning %s items for subcategories category_id=%s", len(rows), category_id)
         return [
             SubCategoryRead(
+                id=r.sub_category_id,
+                name=r.sub_category_name,
                 sub_category_id=r.sub_category_id,
                 category_id=r.category_id,
                 sub_category_name=r.sub_category_name,
@@ -1372,8 +1360,10 @@ class AssetInsightsService:
             current_user,
         )
         assets = query.filter(Asset.sub_category_id == sub_category_id).all()
+        AssetInsightsService.logger.info("Dropdown returning %s items for subcategory assets sub_category_id=%s", len(assets), sub_category_id)
         return [
             AssetListItem(
+                id=asset.asset_id,
                 asset_id=asset.asset_id,
                 name=asset.name,
                 brand=asset.brand,

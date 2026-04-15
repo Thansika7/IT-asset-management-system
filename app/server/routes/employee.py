@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+import logging
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -51,6 +52,7 @@ from app.server.schema.tracking import AllocationType
 
 router=APIRouter(prefix="/employees", tags=["employees"])
 me_router=APIRouter(prefix="/me", tags=["self_service"])
+logger = logging.getLogger(__name__)
 
 
 def _can_view_employee_directory(user: Employee) -> bool:
@@ -320,6 +322,13 @@ def get_employee_filter_options(
     role_values = [row[0].value if hasattr(row[0], "value") else str(row[0]) for row in roles if row[0] is not None]
     organization_values = organizations_query.order_by(Organization.organization_name.asc()).all()
     branch_values = branches_query.order_by(Branch.branch_name.asc()).all()
+    logger.info(
+        "Dropdown returning statuses=%s roles=%s organizations=%s branches=%s for /employees/filter-options",
+        len(status_values),
+        len(role_values),
+        len(organization_values),
+        len(branch_values),
+    )
 
     return {
         "statuses": sorted(set(status_values)),

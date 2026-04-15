@@ -1,4 +1,5 @@
 from typing import Optional
+import logging
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import or_
@@ -12,12 +13,13 @@ from app.server.schema.organization import Branch, BranchStatus
 
 
 router = APIRouter(prefix="/branches", tags=["branches"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/")
 def list_branches(
     search: Optional[str] = None,
-    active_only: bool = True,
+    active_only: bool = False,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
@@ -32,4 +34,6 @@ def list_branches(
                 Branch.location.ilike(needle),
             )
         )
-    return query.order_by(Branch.branch_name.asc()).all()
+    rows = query.order_by(Branch.branch_name.asc()).all()
+    logger.info("Dropdown returning %s items for /branches", len(rows))
+    return rows

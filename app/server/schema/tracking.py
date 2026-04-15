@@ -13,6 +13,13 @@ class MovementType(str, enum.Enum):
     REPLACE="REPLACE"
     ONBOARD="ONBOARD"
     OFFBOARD="OFFBOARD"
+    SOFTWARE_ASSIGNED="SOFTWARE_ASSIGNED"
+    SOFTWARE_REMOVED="SOFTWARE_REMOVED"
+    TEMP_ASSIGNED="TEMP_ASSIGNED"
+    TEMP_RETURNED="TEMP_RETURNED"
+    INSTALLED="INSTALLED"
+    SERVICED="SERVICED"
+    REPAIRED="REPAIRED"
 class AllocationType(str, enum.Enum):
     TEMPORARY="TEMPORARY"
     PERMANENT="PERMANENT"
@@ -34,6 +41,14 @@ class LifecycleEvent(str, enum.Enum):
     HARDWARE_UPGRADED="HARDWARE_UPGRADED"
     LICENSE_EXTENDED="LICENSE_EXTENDED"
     CONFIG_CHANGED="CONFIG_CHANGED"
+    SOFTWARE_ASSIGNED="SOFTWARE_ASSIGNED"
+    SOFTWARE_REMOVED="SOFTWARE_REMOVED"
+    SOFTWARE_UPDATED="SOFTWARE_UPDATED"
+    TEMP_ASSIGNED="TEMP_ASSIGNED"
+    TEMP_RETURNED="TEMP_RETURNED"
+    INSTALLED="INSTALLED"
+    SERVICED="SERVICED"
+    REPAIRED="REPAIRED"
 
 class Tracking(Base):
     __tablename__="tracking"
@@ -63,6 +78,7 @@ class Tracking(Base):
     is_acknowledged=Column(Boolean, nullable=False, default=False)
     acknowledged_at=Column(DateTime(timezone=True), nullable=True)
     transfer_status=Column(String(50), nullable=True)
+    is_temporary=Column(Boolean, nullable=False, default=False)
     
     asset=relationship("Asset", back_populates="tracking_records")
     instance=relationship("AssetInstance", back_populates="tracking_records")
