@@ -475,7 +475,17 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
   const [updateVendorName, setUpdateVendorName] = useState('')
   const [updatePurchaseCost, setUpdatePurchaseCost] = useState('')
   const [updateWarranty, setUpdateWarranty] = useState('')
+  const [updateExpiryDate, setUpdateExpiryDate] = useState('')
+  const [restockCategoryId, setRestockCategoryId] = useState('')
+  const [updateCategoryId, setUpdateCategoryId] = useState('')
   const [updateSpecRows, setUpdateSpecRows] = useState([newSpecRow()])
+  const [updateStatus, setUpdateStatus] = useState('')
+  const [updateTargetBranchId, setUpdateTargetBranchId] = useState('')
+
+  const { data: assetStatuses = [] } = useQuery({
+    queryKey: ['asset-statuses'],
+    queryFn: () => apiFetch('/assets/statuses'),
+  })
 
   const selectedCategory = categories.find((item) => item.id === ccat)
   const selectedCategoryName = (selectedCategory?.name || '').toLowerCase()
@@ -500,7 +510,21 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
     queryFn: () => apiFetch('/assets/templates'),
   })
 
-  const assetTemplateOptions = useMemo(() => normalizeOptions(assetTemplatesRaw), [assetTemplatesRaw])
+  const restockAssetOptions = useMemo(() => {
+    let list = assetTemplatesRaw
+    if (restockCategoryId) {
+      list = list.filter((item) => item.category_id === restockCategoryId)
+    }
+    return normalizeOptions(list)
+  }, [assetTemplatesRaw, restockCategoryId])
+
+  const updateAssetOptions = useMemo(() => {
+    let list = assetTemplatesRaw
+    if (updateCategoryId) {
+      list = list.filter((item) => item.category_id === updateCategoryId)
+    }
+    return normalizeOptions(list)
+  }, [assetTemplatesRaw, updateCategoryId])
 
   const selectedRestockTemplate = useMemo(() => {
     return assetTemplatesRaw.find((item) => item.asset_id === restockAssetId) || null
@@ -528,7 +552,7 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
 
   const { data: updateInstancesRaw = { items: [] } } = useQuery({
     queryKey: ['asset-update-instances', updateAssetId],
-    queryFn: () => apiFetch(`/stock/instances?asset_id=${updateAssetId}&page=1&per_page=200`),
+    queryFn: () => apiFetch(`/stock/instances?asset_id=${updateAssetId}&allow_cross_branch=true&page=1&per_page=200`),
     enabled: Boolean(updateAssetId),
   })
 
@@ -676,7 +700,19 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
   const handleUpdateAssetChange = (assetId) => {
     setUpdateAssetId(assetId)
     setUpdateInstanceId('')
+    setUpdateStatus('')
+    setUpdateTargetBranchId('')
   }
+
+  useEffect(() => {
+    if (updateInstanceId && updateInstances.length) {
+      const inst = updateInstances.find(i => i.instance_id === updateInstanceId)
+      if (inst) {
+        setUpdateStatus(inst.status || '')
+        setUpdateTargetBranchId(inst.branch_id || '')
+      }
+    }
+  }, [updateInstanceId, updateInstances])
 
   useEffect(() => {
     if (!restockSeed || restockAssetId === NEW_OPTION_VALUE) return
@@ -694,6 +730,7 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
     setUpdateVendorName(updateDetailsData.vendor_name || '')
     setUpdatePurchaseCost(updateDetailsData.purchase_cost != null ? String(updateDetailsData.purchase_cost) : '')
     setUpdateWarranty(updateDetailsData.warranty_expiry || '')
+    setUpdateExpiryDate(updateDetailsData.expiry_date || '')
     setUpdateSpecRows(
       attrs.length
         ? attrs.map((spec) => ({
@@ -766,19 +803,37 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
             <h3 className="font-bold text-slate-900">Smart restock existing asset</h3>
             <p className="text-xs text-slate-500 mt-1">Pick an existing asset template, autofill its details, and add only new instances.</p>
           </div>
-          <select
-            className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-sm md:min-w-[320px]"
-            value={restockAssetId}
-            onChange={(e) => handleRestockAssetChange(e.target.value)}
-          >
-            <option value="">Select an existing asset</option>
-            {assetTemplateOptions.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-            <option value={NEW_OPTION_VALUE}>Add New</option>
-          </select>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <select
+              className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-sm md:w-[200px]"
+              value={restockCategoryId}
+              onChange={(e) => {
+                setRestockCategoryId(e.target.value)
+                setRestockAssetId('')
+              }}
+            >
+              <option value="">Filter by category</option>
+              {categories.map((c) => (
+                <option key={c.category_id || c.id} value={c.category_id || c.id}>
+                  {c.category_name || c.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className="rounded-lg border border-cyan-200 bg-white px-3 py-2 text-sm md:min-w-[320px]"
+              value={restockAssetId}
+              onChange={(e) => handleRestockAssetChange(e.target.value)}
+              disabled={!restockCategoryId}
+            >
+              <option value="">{restockCategoryId ? 'Select asset model' : 'Select category first'}</option>
+              {restockAssetOptions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+              <option value={NEW_OPTION_VALUE}>Add New</option>
+            </select>
+          </div>
         </div>
 
         {restockAssetId && restockAssetId !== NEW_OPTION_VALUE ? (
@@ -1275,7 +1330,8 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
               changes.push({ attribute_id: warrantyAttr.id, new_value: updateWarranty.trim() })
             }
 
-            if (!changes.length) return
+            const hasChanges = changes.length > 0 || updateWarranty.trim() || updateExpiryDate.trim()
+            if (!hasChanges) return
 
             updateAssetMut.mutate({
               instanceId: updateInstanceId,
@@ -1283,6 +1339,10 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
                 event_type: 'ATTRIBUTE_UPDATED',
                 reason: 'UPDATE_ASSET_DATA',
                 changes,
+                warranty_expiry: updateWarranty || null,
+                expiry_date: updateExpiryDate || null,
+                status: updateStatus || null,
+                branch_id: updateTargetBranchId || null,
               },
             })
           }}
@@ -1294,10 +1354,34 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="text-xs font-medium text-slate-600">
-              Select asset
-              <select className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateAssetId} onChange={(e) => handleUpdateAssetChange(e.target.value)}>
-                <option value="">Choose asset</option>
-                {assetTemplateOptions.map((item) => (
+              Filter by category
+              <select
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                value={updateCategoryId}
+                onChange={(e) => {
+                  setUpdateCategoryId(e.target.value)
+                  setUpdateAssetId('')
+                  setUpdateInstanceId('')
+                }}
+              >
+                <option value="">All categories</option>
+                {categories.map((c) => (
+                  <option key={c.category_id || c.id} value={c.category_id || c.id}>
+                    {c.category_name || c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              Select asset model
+              <select
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                value={updateAssetId}
+                onChange={(e) => handleUpdateAssetChange(e.target.value)}
+                disabled={!updateCategoryId}
+              >
+                <option value="">{updateCategoryId ? 'Choose asset model' : 'Select category first'}</option>
+                {updateAssetOptions.map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
               </select>
@@ -1305,11 +1389,14 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
             <label className="text-xs font-medium text-slate-600">
               Select instance
               <select className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateInstanceId} onChange={(e) => setUpdateInstanceId(e.target.value)} disabled={!updateAssetId}>
-                <option value="">Choose instance</option>
+                <option value="">{updateAssetId ? 'Choose instance' : 'Select asset model first'}</option>
                 {updateInstances.map((item) => (
-                  <option key={item.instance_id} value={item.instance_id}>{item.instance_id}</option>
+                  <option key={item.instance_id} value={item.instance_id}>
+                    {item.instance_id} {item.serial_number ? `(${item.serial_number})` : ''} - {item.status}
+                  </option>
                 ))}
               </select>
+              {updateAssetId && !updateInstances.length && <p className="text-[10px] text-amber-600 mt-1">No instances found for this asset.</p>}
             </label>
             <label className="text-xs font-medium text-slate-600">
               Vendor
@@ -1319,9 +1406,31 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
               Cost
               <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updatePurchaseCost} onChange={(e) => setUpdatePurchaseCost(e.target.value)} placeholder="Purchase cost" />
             </label>
-            <label className="text-xs font-medium text-slate-600 md:col-span-2">
-              Warranty
-              <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateWarranty} onChange={(e) => setUpdateWarranty(e.target.value)} placeholder="Warranty" />
+            <label className="text-xs font-medium text-slate-600">
+              Warranty Expiry
+              <input type="date" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateWarranty} onChange={(e) => setUpdateWarranty(e.target.value)} />
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              Asset Expiry
+              <input type="date" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateExpiryDate} onChange={(e) => setUpdateExpiryDate(e.target.value)} />
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              Update status
+              <select className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateStatus} onChange={(e) => setUpdateStatus(e.target.value)}>
+                <option value="">Choose status</option>
+                {assetStatuses.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              Update branch (Location)
+              <select className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" value={updateTargetBranchId} onChange={(e) => setUpdateTargetBranchId(e.target.value)}>
+                <option value="">Global / Central</option>
+                {branches.map((b) => (
+                  <option key={b.branch_id || b.id} value={b.branch_id || b.id}>{b.branch_name || b.name}</option>
+                ))}
+              </select>
             </label>
           </div>
 

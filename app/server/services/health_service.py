@@ -61,7 +61,11 @@ class HealthService:
 
     @staticmethod
     def _is_applicable_behavior(behavior: str) -> bool:
-        return behavior == AssetBehavior.INSTANCE_BASED.value
+        return behavior in (
+            AssetBehavior.INSTANCE_BASED.value,
+            AssetBehavior.LICENSE_BASED.value,
+            AssetBehavior.SUBSCRIPTION_BASED.value,
+        )
 
     @staticmethod
     def _classify(score: int) -> str:
@@ -137,6 +141,58 @@ class HealthService:
         return 0
 
     @staticmethod
+    def _build_software_health(instance: AssetInstance) -> dict[str, Any]:
+        behavior = HealthService._resolve_behavior(instance)
+        score = 100
+        penalties: dict[str, int] = {}
+
+        # 1. Expiry Penalties
+        expiry = instance.expiry_date
+        today = date.today()
+        if expiry:
+            if expiry < today:
+                penalties["expired"] = 100
+            else:
+                days_left = (expiry - today).days
+                if days_left < 30:
+                    penalties["expiring_critical"] = 70
+                elif days_left < 90:
+                    penalties["expiring_soon"] = 30
+        
+        # 2. Data Integrity
+        if behavior == AssetBehavior.LICENSE_BASED.value and not instance.license_key:
+            penalties["missing_license_key"] = 10
+
+        # 3. Status Penalty
+        if instance.status in (AssetStatus.NOT_USABLE, AssetStatus.RETIRED, AssetStatus.DISPOSED):
+            penalties["inactive_status"] = 50
+
+        for val in penalties.values():
+            score -= val
+        score = max(0, min(100, score))
+
+        status = HealthService._classify(score)
+        recommendation = "RENEW/REPLACE" if score < 30 else "MONITOR"
+
+        return {
+            "instance_id": instance.instance_id,
+            "asset_id": instance.asset_id,
+            "asset_name": instance.model.name if instance.model else instance.asset_id,
+            "asset_behavior": behavior,
+            "applicable": True,
+            "score": score,
+            "status": status,
+            "recommendation": recommendation,
+            "factors": {
+                "expiry_date": str(expiry) if expiry else None,
+                "days_until_expiry": (expiry - today).days if expiry else None,
+                "has_license_key": bool(instance.license_key),
+                "instance_status": instance.status.value if hasattr(instance.status, "value") else str(instance.status),
+            },
+            "penalties": penalties,
+        }
+
+    @staticmethod
     def _build_instance_health(instance: AssetInstance, events: list[AssetLifecycle]) -> dict[str, Any]:
         behavior = HealthService._resolve_behavior(instance)
         applicable = HealthService._is_applicable_behavior(behavior)
@@ -148,12 +204,16 @@ class HealthService:
                 "asset_name": instance.model.name if instance.model else instance.asset_id,
                 "asset_behavior": behavior,
                 "applicable": False,
-                "reason": "Health score applies only to instance_based categories",
+                "reason": "Health score applies only to instance, license, or subscription based categories",
                 "score": None,
                 "status": "SKIPPED",
                 "recommendation": "N/A",
                 "factors": {},
             }
+
+        if behavior in (AssetBehavior.LICENSE_BASED.value, AssetBehavior.SUBSCRIPTION_BASED.value):
+            return HealthService._build_software_health(instance)
+
 
         score = 100
         age_years = HealthService._age_years(instance)
@@ -161,12 +221,28 @@ class HealthService:
         downtime_days = HealthService._downtime_days(events, instance.status)
         warranty_expired = bool(instance.warranty_expiry and instance.warranty_expiry < date.today())
 
+        # 1. Lifecycle-aware Age Penalty
+        useful_life = (instance.model.useful_life_years if instance.model else 5) or 5
+        usage_ratio = age_years / useful_life
+        
+        age_penalty = 0
+        if usage_ratio >= 1.0:
+            age_penalty = 30 # Over useful life
+        elif usage_ratio >= 0.8:
+            age_penalty = 15 # Near end of life
+        elif usage_ratio >= 0.5:
+            age_penalty = 5  # Mid-life
+            
+        # 2. Repair Penalty
+        # Increase weight for repairs on physical assets
+        repair_penalty = repair_count * 10
+
         # Prompt-prescribed penalties
         penalties: dict[str, int] = {
             "warranty_expired": 10 if warranty_expired else 0,
-            "repair_count": repair_count * 8,
+            "repair_count": repair_penalty,
             "status": HealthService._status_penalty(instance.status),
-            "age": 15 if age_years > 3 else 0,
+            "age": age_penalty,
             "downtime": 10 if downtime_days > HealthService.DOWNTIME_THRESHOLD_DAYS else 0,
         }
 

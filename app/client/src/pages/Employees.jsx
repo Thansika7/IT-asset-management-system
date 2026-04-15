@@ -217,7 +217,7 @@ export default function Employees() {
           <h1 className="text-2xl font-bold text-slate-900">Team</h1>
           <p className="text-sm text-slate-600 mt-1">
             Active employees from <code className="text-xs bg-slate-100 px-1 rounded">GET /employees/</code>. HR and admin
-            can <strong className="font-medium text-slate-800">remove</strong> an employee (deleted from the database) and recover hardware to stock.
+            can <strong className="font-medium text-slate-800">deactivate</strong> an employee and recover hardware to stock.
           </p>
         </div>
         <div className="flex gap-2">
@@ -416,9 +416,11 @@ function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <button type="button" className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" aria-label="Close" onClick={onCancel} />
       <div className="relative w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-xl p-6">
-        <h3 className="text-lg font-bold text-slate-900">Remove employee?</h3>
+        <h3 className="text-lg font-bold text-slate-900">Deactivate employee?</h3>
         <p className="text-sm text-slate-600 mt-2">
-          <strong>{name}</strong> <span className="font-mono text-xs text-slate-500">({empId})</span> will be <strong>permanently deleted</strong> from the database (including their requests and tracking history). Open assignments are returned to inventory first (
+          <strong>{name}</strong> <span className="font-mono text-xs text-slate-500">({empId})</span> will be marked as <strong>inactive</strong>. 
+          They will no longer be able to log in, but their history is preserved for audit logs. 
+          Open assignments are returned to inventory first (
           <code className="text-xs bg-slate-100 px-1 rounded">POST /employees/…/deactivate</code>).
         </p>
         {error ? <p className="text-xs text-rose-600 mt-3">{error}</p> : null}
@@ -432,7 +434,7 @@ function ConfirmDeactivate({ name, empId, busy, error, onCancel, onConfirm }) {
             onClick={onConfirm}
             className="flex-1 rounded-xl bg-rose-600 text-white py-2.5 text-sm font-semibold disabled:opacity-50"
           >
-            {busy ? 'Working…' : 'Remove'}
+            {busy ? 'Working…' : 'Deactivate'}
           </button>
         </div>
       </div>
@@ -466,7 +468,10 @@ function RegisterModal({ filterOptions, orgOptions, branchOptions, onClose, onSu
   const [extraIds, setExtraIds] = useState('')
   const formRef = useRef(null)
 
-  const roleOptions = Array.isArray(filterOptions?.roles) ? filterOptions.roles : []
+  const roleOptions = [R.EMPLOYEE, R.MANAGER, R.HR, R.SUPPORT_TEAM]
+  if (user?.role === R.SUPER_ADMIN) {
+    roleOptions.push(R.ORG_ADMIN)
+  }
   const statusOptions = Array.isArray(filterOptions?.statuses) ? filterOptions.statuses : []
   const stock = stockRaw?.items || []
 
@@ -565,16 +570,20 @@ function RegisterModal({ filterOptions, orgOptions, branchOptions, onClose, onSu
                 <option value="">Select branch</option>
                 {filteredBranches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
               </select>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={organizationId} onChange={(e) => { setOrganizationId(e.target.value); setBranchId('') }} disabled={user?.role !== R.SUPER_ADMIN}>
-                <option value="">Select organization</option>
-                {orgOptions.map((org) => (<option key={org.id} value={org.id}>{org.name}</option>))}
-              </select>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
-                {roleOptions.map((item) => (<option key={item} value={item}>{labelForRole(item)}</option>))}
-              </select>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={employeeStatus} onChange={(e) => setEmployeeStatus(e.target.value)}>
-                {statusOptions.map((item) => (<option key={item} value={item}>{item}</option>))}
-              </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-600 ml-1">Role</label>
+                  <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
+                    {roleOptions.map((item) => (<option key={item} value={item}>{labelForRole(item)}</option>))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-600 ml-1">Status</label>
+                  <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={employeeStatus} onChange={(e) => setEmployeeStatus(e.target.value)}>
+                    {statusOptions.map((item) => (<option key={item} value={item}>{item}</option>))}
+                  </select>
+                </div>
+              </div>
               {error ? (<p className="text-xs text-rose-600 whitespace-pre-wrap break-words rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">{error}</p>) : null}
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-medium">Cancel</button>
@@ -644,30 +653,24 @@ function RegisterModal({ filterOptions, orgOptions, branchOptions, onClose, onSu
                   </option>
                 ))}
               </select>
-              <select
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                value={organizationId}
-                onChange={(e) => {
-                  setOrganizationId(e.target.value)
-                  setBranchId('')
-                }}
-                disabled={user?.role !== R.SUPER_ADMIN}
-              >
-                <option value="">Select organization</option>
-                {orgOptions.map((org) => (
-                  <option key={org.id} value={org.id}>{org.name}</option>
-                ))}
-              </select>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
-                {roleOptions.map((item) => (
-                  <option key={item} value={item}>{labelForRole(item)}</option>
-                ))}
-              </select>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={employeeStatus} onChange={(e) => setEmployeeStatus(e.target.value)}>
-                {statusOptions.map((item) => (
-                  <option key={item} value={item}>{item}</option>
-                ))}
-              </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-600 ml-1">Role</label>
+                  <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={role} onChange={(e) => setRole(e.target.value)}>
+                    {roleOptions.map((item) => (
+                      <option key={item} value={item}>{labelForRole(item)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-600 ml-1">Status</label>
+                  <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={employeeStatus} onChange={(e) => setEmployeeStatus(e.target.value)}>
+                    {statusOptions.map((item) => (
+                      <option key={item} value={item}>{item}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
               <div>
                 <label className="text-xs font-semibold text-slate-600">Onboarding kit (optional)</label>

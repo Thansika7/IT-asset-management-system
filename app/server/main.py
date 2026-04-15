@@ -38,7 +38,6 @@ from app.server.middlewares.cors import setup_cors
 from app.server.exceptions.base import AppBaseException
 from app.server.logging_utils import StructuredDefaultsFilter, StructuredJsonFormatter, IST
 
-# --- Configure Daily Rotating Logs ---
 class DailyFileHandler(logging.FileHandler):
     def __init__(self, directory="logs"):
         self.directory = directory
@@ -53,18 +52,30 @@ class DailyFileHandler(logging.FileHandler):
             self.baseFilename = os.path.abspath(current_date_filename)
             self.stream = self._open()
         super().emit(record)
+        # Flush immediately so every log entry lands on disk in real-time
+        self.flush()
 
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[
-        DailyFileHandler("logs"),
-        logging.StreamHandler()
-    ]
-)
+
+def configure_application_logging() -> None:
+    """Route application logs to file and keep uvicorn console output."""
+    file_handler = DailyFileHandler("logs")
+    file_handler.setFormatter(StructuredJsonFormatter())
+    file_handler.addFilter(StructuredDefaultsFilter())
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.handlers = []
+    root_logger.addHandler(file_handler)
+
+    # Keep uvicorn's own terminal handlers, and also persist uvicorn logs to file.
+    for uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvicorn_logger = logging.getLogger(uvicorn_logger_name)
+        uvicorn_logger.setLevel(logging.INFO)
+        uvicorn_logger.addHandler(file_handler)
+
+
+configure_application_logging()
 logger = logging.getLogger(__name__)
-for handler in logging.getLogger().handlers:
-    handler.setFormatter(StructuredJsonFormatter())
-    handler.addFilter(StructuredDefaultsFilter())
 
 app=FastAPI(title="Asset Control System")
 
@@ -421,7 +432,147 @@ async def structured_request_logging(request: Request, call_next):
     )
     return response
 
+def _seed_categories():
+    from app.server.schema.category import Category, AssetBehavior
+    db = SessionLocal()
+    try:
+        # 1. Software Licenses
+        lic_cat = db.query(Category).filter(Category.category_name == "Software Licenses").first()
+        if not lic_cat:
+            lic_cat = Category(
+                category_name="Software Licenses",
+                description="General software license assets tracked by key and expiry.",
+                asset_behavior=AssetBehavior.LICENSE_BASED.value,
+                organization_id=None # Global
+            )
+            db.add(lic_cat)
+            logger.info("Seeded category: Software Licenses")
+
+        # 2. Cloud Subscriptions
+        sub_cat = db.query(Category).filter(Category.category_name == "Cloud Subscriptions").first()
+        if not sub_cat:
+            sub_cat = Category(
+                category_name="Cloud Subscriptions",
+                description="Subscription-based digital services (SaaS).",
+                asset_behavior=AssetBehavior.SUBSCRIPTION_BASED.value,
+                organization_id=None # Global
+            )
+            db.add(sub_cat)
+            logger.info("Seeded category: Cloud Subscriptions")
+        
+        # 3. Hardware
+        hw_cat = db.query(Category).filter(Category.category_name == "Hardware").first()
+        if not hw_cat:
+            hw_cat = Category(
+                category_name="Hardware",
+                description="Physical IT equipment and assets.",
+                asset_behavior=AssetBehavior.INSTANCE_BASED.value,
+                organization_id=None # Global
+            )
+            db.add(hw_cat)
+            db.flush() # Ensure hw_cat has its ID for relationships
+            logger.info("Seeded category: Hardware")
+
+        from app.server.schema.category import SubCategory
+        from app.server.schema.attribute import AssetAttribute
+
+        # 4. Common Hardware Sub-categories
+        sub_configs = [
+            {"cat": "Hardware", "name": "Laptops", "attrs": ["RAM", "CPU", "Storage"]},
+            {"cat": "Hardware", "name": "Desktops", "attrs": ["RAM", "CPU", "Storage"]},
+            {"cat": "Hardware", "name": "Monitors", "attrs": ["Resolution", "Ports"]},
+        ]
+
+        # 5. Seed Interior Category
+        int_cat = db.query(Category).filter(Category.category_name == "Interior").first()
+        if not int_cat:
+            int_cat = Category(
+                category_name="Interior",
+                description="Office furniture, cabins, and interior fixtures.",
+                asset_behavior=AssetBehavior.INSTANCE_BASED.value,
+                organization_id=None
+            )
+            db.add(int_cat)
+            db.flush()
+            logger.info("Seeded category: Interior")
+        
+        sub_configs.extend([
+            {"cat": "Interior", "name": "Chairs", "attrs": ["Material", "Ergonomic"]},
+            {"cat": "Interior", "name": "Tables", "attrs": ["Dimensions", "Material"]},
+            {"cat": "Interior", "name": "Cabins", "attrs": ["Area", "Capacity"]},
+        ])
+
+        # 6. Seed Utilities Category
+        ut_cat = db.query(Category).filter(Category.category_name == "Utilities").first()
+        if not ut_cat:
+            ut_cat = Category(
+                category_name="Utilities",
+                description="Facility utilities like HVAC, power systems, and fans.",
+                asset_behavior=AssetBehavior.INSTANCE_BASED.value,
+                organization_id=None
+            )
+            db.add(ut_cat)
+            db.flush()
+            logger.info("Seeded category: Utilities")
+
+        sub_configs.extend([
+            {"cat": "Utilities", "name": "AC Units", "attrs": ["BTU", "Energy Rating", "Inverter"]},
+            {"cat": "Utilities", "name": "Fans", "attrs": ["Wattage", "Sweep Size", "Speed Settings"]},
+            {"cat": "Utilities", "name": "UPS Systems", "attrs": ["KVA", "Backup Time"]},
+            {"cat": "Utilities", "name": "Generators", "attrs": ["KVA", "Fuel Type"]},
+        ])
+
+        from app.server.schema.category import SubCategory
+        from app.server.schema.attribute import AssetAttribute
+
+        for config in sub_configs:
+            # Find the parent category ID
+            parent_cat = db.query(Category).filter(Category.category_name == config["cat"]).first()
+            if not parent_cat: continue
+
+            sub = db.query(SubCategory).filter(
+                SubCategory.category_id == parent_cat.category_id,
+                SubCategory.sub_category_name == config["name"]
+            ).first()
+            if not sub:
+                sub = SubCategory(
+                    category_id=parent_cat.category_id,
+                    sub_category_name=config["name"],
+                    description=f"Standard {config['name']} details.",
+                    organization_id=None
+                )
+                db.add(sub)
+                db.flush()
+                logger.info(f"Seeded sub-category: {config['name']}")
+
+                for attr_name in config["attrs"]:
+                    attr = db.query(AssetAttribute).filter(
+                        AssetAttribute.sub_category_id == sub.sub_category_id,
+                        AssetAttribute.attribute_name == attr_name
+                    ).first()
+                    if not attr:
+                        db.add(AssetAttribute(
+                            sub_category_id=sub.sub_category_id,
+                            attribute_name=attr_name,
+                            data_type="String",
+                            is_required=False,
+                            organization_id=None
+                        ))
+        
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to seed categories: {e}")
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
+def startup_event():
+    init_admin()
+    _seed_categories()
+
+
 def init_admin():
     db=SessionLocal()
     admin_email_env=os.getenv("ADMIN_EMAIL")
@@ -429,7 +580,9 @@ def init_admin():
     admin_password=os.getenv("ADMIN_PASSWORD") or str(uuid.uuid4())
     if admin_email_env:
         admin_email = admin_email_env.lower()
-        admin_emp=db.query(Employee).filter(Employee.email==admin_email).first()
+        admin_emp = db.query(Employee).filter(
+            (Employee.email == admin_email) | (Employee.employee_id == "ADMIN-001")
+        ).first()
         if not admin_emp:
             admin_emp = Employee(
                 employee_id="ADMIN-001",
@@ -481,4 +634,3 @@ app.include_router(support_router)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
-

@@ -300,6 +300,10 @@ def update_asset_attributes(
         user=current_user,
         event_type=payload.event_type,
         reason=payload.reason,
+        warranty_expiry=payload.warranty_expiry,
+        expiry_date=payload.expiry_date,
+        status=payload.status,
+        branch_id=payload.branch_id,
     )
     db.commit()
     return response

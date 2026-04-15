@@ -4,14 +4,14 @@ A full-stack, enterprise-grade application for managing corporate IT hardware an
 
 ---
 
-## 🛠 Technology Stack
+##  Technology Stack
 * **Backend:** Python + FastAPI, SQLAlchemy (SQLite/PostgreSQL compatible), Pydantic
 * **Frontend:** React + Vite, Tailwind CSS (v4), Shadcn/UI primitives, TanStack Query, Lucide-React
 * **Authentication:** Stateful JWT via cookies/authorization headers
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 Follow these steps to set up the system entirely from scratch on a new machine.
 
@@ -70,7 +70,7 @@ Follow these steps to set up the system entirely from scratch on a new machine.
 
 ---
 
-## 👥 Default Capabilities
+##  Default Capabilities
 
 You should log in to `http://localhost:5173` using the `.env` `ADMIN_EMAIL` details.
 

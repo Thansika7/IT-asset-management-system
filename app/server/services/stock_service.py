@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from sqlalchemy import and_
+from datetime import date
 import os
 from app.server.schema.asset import Asset, AssetStatus, AssetInstance, AssetUsageType
 from app.server.schema.tracking import Tracking, MovementType, AllocationType, LifecycleEvent
@@ -1247,8 +1248,15 @@ class StockService:
         user: Employee,
         event_type: LifecycleEvent = LifecycleEvent.ATTRIBUTE_UPDATED,
         reason: str | None = None,
+        warranty_expiry: date | None = None,
+        expiry_date: date | None = None,
+        status: str | None = None,
+        branch_id: str | None = None,
     ) -> AssetAttributeUpdateResponse:
         """Update tracked asset attribute values and record lifecycle/audit entries."""
+        from app.server.schema.asset import AssetStatus
+        from app.server.schema.organization import Branch
+
         instance = (
             apply_tenant_filter(db.query(AssetInstance), user, AssetInstance)
             .filter(AssetInstance.instance_id == instance_id)
@@ -1271,7 +1279,61 @@ class StockService:
 
         resolved_reason = reason or event_type.value
         update_results: list[AssetAttributeUpdateResult] = []
+        
+        # 0. Handle Status and Branch updates (Core Instance properties)
+        core_changes = []
+        
+        if status and instance.status.value != status:
+            old_status = instance.status
+            new_status = AssetStatus(status)
+            InstanceStateMachine.validate_transition(old_status, new_status)
+            instance.status = new_status
+            core_changes.append({"field": "status", "old": old_status.value, "new": new_status.value})
 
+        if branch_id and instance.branch_id != branch_id:
+            old_branch = instance.branch_id
+            # Verify branch exists in organization reach
+            branch_check = apply_tenant_filter(db.query(Branch), user, Branch).filter(Branch.branch_id == branch_id).first()
+            if not branch_check:
+                raise ResourceNotFoundError("Branch", branch_id)
+            instance.branch_id = branch_id
+            core_changes.append({"field": "branch_id", "old": old_branch, "new": branch_id})
+
+        if warranty_expiry is not None and instance.warranty_expiry != warranty_expiry:
+            old_w = instance.warranty_expiry
+            instance.warranty_expiry = warranty_expiry
+            core_changes.append({"field": "warranty_expiry", "old": str(old_w), "new": str(warranty_expiry)})
+        
+        if expiry_date is not None and instance.expiry_date != expiry_date:
+            old_e = instance.expiry_date
+            instance.expiry_date = expiry_date
+            core_changes.append({"field": "expiry_date", "old": str(old_e), "new": str(expiry_date)})
+
+        if core_changes:
+            db.flush()
+            # If status or branch changed, we might want to override the event_type for the main log
+            effective_event = event_type
+            if any(c["field"] == "branch_id" for c in core_changes):
+                effective_event = LifecycleEvent.TRANSFER
+            elif any(c["field"] == "status" for c in core_changes):
+                effective_event = LifecycleEvent.STATUS_CHANGED
+                
+            for cc in core_changes:
+                AuditService.log_change(
+                    db, "asset_instances", instance.instance_id, "UPDATE", user,
+                    {cc["field"]: cc["old"]}, {cc["field"]: cc["new"]}, resolved_reason
+                )
+                LifecycleService.log_event(
+                    db, instance_id=instance.instance_id, asset_id=instance.asset_id,
+                    event_type=effective_event, performed_by=user,
+                    old_status=cc["old"] if cc["field"] == "status" else instance.status.value,
+                    new_status=cc["new"] if cc["field"] == "status" else instance.status.value,
+                    notes=f"Core update: {cc['field']} ({cc['old']} -> {cc['new']})",
+                    organization_id=instance.organization_id,
+                    metadata={"field": cc["field"], "old_value": cc["old"], "new_value": cc["new"]}
+                )
+
+        # 1. Attribute Updates
         for update in updates:
             attribute_query = apply_tenant_filter(
                 db.query(AssetAttribute),
@@ -1374,8 +1436,8 @@ class StockService:
                 )
             )
 
-        if not update_results:
-            raise InvalidStateError("No attribute values changed")
+        if not update_results and not core_changes:
+            raise InvalidStateError("No attribute values or core fields changed")
 
         return AssetAttributeUpdateResponse(
             instance_id=instance.instance_id,

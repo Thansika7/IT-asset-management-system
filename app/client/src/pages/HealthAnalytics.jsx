@@ -60,7 +60,7 @@ export default function HealthAnalytics() {
             Health analytics
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Hardware-only, instance-level health scoring with search, branch/category filters, and backend pagination.
+            Instance-level health scoring for hardware and software assets with search, branch/category filters, and backend pagination.
           </p>
         </div>
         <button
@@ -168,7 +168,7 @@ export default function HealthAnalytics() {
           <section className="rounded-3xl border border-slate-200 bg-white overflow-hidden shadow-sm">
             <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
               <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-slate-900">{criticalOnly ? 'Critical assets' : 'Health report'}</h2>
-              <p className="text-xs text-slate-500">Hardware only</p>
+              <p className="text-xs text-slate-500">Hardware & Software</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1100px] text-sm">
@@ -223,7 +223,7 @@ export default function HealthAnalytics() {
 
       <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 p-4 text-xs text-slate-500 flex items-center gap-2">
         <AlertTriangle className="w-4 h-4 text-amber-500" />
-        Hardware-only health scoring excludes software, furniture, accessories, and network assets.
+        Health scoring includes hardware (Instance-based) and software (License/Subscription) assets. Excludes furniture and other accessory categories.
       </div>
     </div>
   )
