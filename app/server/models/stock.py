@@ -39,6 +39,7 @@ class AssetCreate(BaseModel):
     category_id: Optional[str] = None
     category_name: Optional[str] = None
     asset_behavior: Optional[str] = None
+    asset_usage_type: Optional[str] = "INDIVIDUAL"
     sub_category_id: Optional[str] = None
     sub_category_name: Optional[str] = None
     organization_id: Optional[str] = None
@@ -93,6 +94,16 @@ class AssetCreate(BaseModel):
         if v not in allowed:
             raise ValueError(f"asset_behavior must be one of {sorted(allowed)}")
         return v
+
+    @field_validator("asset_usage_type")
+    @classmethod
+    def validate_asset_usage_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        normalized = v.strip().upper()
+        if normalized not in {"INDIVIDUAL", "SHARED"}:
+            raise ValueError("asset_usage_type must be INDIVIDUAL or SHARED")
+        return normalized
 
     @field_validator("useful_life_years")
     @classmethod
@@ -238,6 +249,7 @@ class AssetTemplateRead(BaseModel):
     branch: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
+    asset_usage_type: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_contact: Optional[str] = None
     invoice_number: Optional[str] = None
@@ -272,6 +284,7 @@ class AssetDetailsRead(BaseModel):
     sub_category: Optional[str] = None
     branch_id: Optional[str] = None
     branch: Optional[str] = None
+    asset_usage_type: Optional[str] = None
     vendor_name: Optional[str] = None
     vendor_contact: Optional[str] = None
     purchase_cost: Optional[float] = None

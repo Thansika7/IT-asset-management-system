@@ -7,12 +7,15 @@ from app.server.database.database import get_db
 from app.server.models.request import (
     AdminDirectAllocationCreate,
     AdminDirectAllocationResponse,
+    RequestAssignNew,
     RequestCreate,
     RequestCrossBranchTransfer,
     RequestFilterOptions,
     RequestFormOptions,
     RequestHRValidation,
-    RequestHRVerify,
+    RequestReplace,
+    RequestServiceComplete,
+    RequestServiceStart,
     RequestListResponse,
     RequestManagerNotes,
     RequestNecessityRecommendationResponse,
@@ -139,16 +142,6 @@ def hr_validation(
     """HR validates request eligibility. SUBMITTED -> HR_VALIDATED or HR_REJECTED."""
     return RequestService.validate_request_by_hr(db, request_id, payload, current_user)
 
-@router.post("/{request_id}/review/hr-legacy", response_model=RequestResponse)
-def hr_review_legacy(
-    request_id: str, 
-    payload: RequestHRVerify, 
-    db: Session=Depends(get_db),
-    current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
-):
-    """Legacy HR review endpoint. Use /review/hr instead."""
-    return RequestService.review_request_by_hr(db, request_id, payload, current_user)
-
 @router.post("/{request_id}/cancel", response_model=RequestResponse)
 def cancel_request(
     request_id: str,
@@ -218,6 +211,46 @@ def execute_request(
         broken_instance_id=broken_instance_id,
     )
     return {"status": "success", "executed_action": req.request_type, "new_status": req.status}
+
+
+@router.post("/{request_id}/support/assign-new", response_model=RequestResponse)
+def support_assign_new(
+    request_id: str,
+    payload: RequestAssignNew,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN)),
+):
+    return RequestService.assign_new_request(db, request_id, payload, current_user)
+
+
+@router.post("/{request_id}/support/replace", response_model=RequestResponse)
+def support_replace(
+    request_id: str,
+    payload: RequestReplace,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN)),
+):
+    return RequestService.replace_request(db, request_id, payload, current_user)
+
+
+@router.post("/{request_id}/support/service/start", response_model=RequestResponse)
+def support_start_service(
+    request_id: str,
+    payload: RequestServiceStart,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN)),
+):
+    return RequestService.start_service_request(db, request_id, payload, current_user)
+
+
+@router.post("/{request_id}/support/service/complete", response_model=RequestResponse)
+def support_complete_service(
+    request_id: str,
+    payload: RequestServiceComplete,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPPORT_TEAM, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN)),
+):
+    return RequestService.complete_service_request(db, request_id, payload, current_user)
 
 @router.post("/{request_id}/transfer-request", response_model=RequestResponse)
 def transfer_request(

@@ -11,6 +11,9 @@ export function normalizeOptionItem(item) {
   const id =
     item.id ??
     item.value ??
+    item.asset_id ??
+    item.instance_id ??
+    item.request_id ??
     item.branch_id ??
     item.category_id ??
     item.sub_category_id ??
@@ -21,6 +24,9 @@ export function normalizeOptionItem(item) {
   const name =
     item.name ??
     item.label ??
+    item.asset_name ??
+    item.request_name ??
+    item.title ??
     item.branch_name ??
     item.category_name ??
     item.sub_category_name ??

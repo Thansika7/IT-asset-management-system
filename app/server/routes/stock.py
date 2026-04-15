@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import case, func, or_, and_
 from typing import List, Optional
@@ -20,6 +21,7 @@ from app.server.database.tenant import apply_tenant_filter
 
 # Tagging as internal/manual-override to prioritize the automated Request lifecycle
 router=APIRouter(prefix="/stock", tags=["stock_inventory_manual"])
+logger = logging.getLogger(__name__)
 
 @router.get("/", response_model=StockListResponse)
 def list_inventory_status(
@@ -325,6 +327,7 @@ def create_asset_entry(
             "name": payload.name,
             "category_id": cat.category_id,
             "asset_behavior": payload.asset_behavior or cat.asset_behavior,
+            "asset_usage_type": payload.asset_usage_type or "INDIVIDUAL",
             "sub_category_id": sub_category.sub_category_id if sub_category else None,
             "organization_id": resolved_org_id,
             "branch_id": resolved_branch_id,
@@ -811,6 +814,7 @@ def get_categories(
     rows = rows.order_by(Category.category_name.asc()).all()
     if not rows and current_user.role == EmployeeRole.ORG_ADMIN:
         rows = db.query(Category).order_by(Category.category_name.asc()).all()
+    logger.info("Dropdown returning %s items for /stock/categories", len(rows))
     return [
         {
             "id": row.category_id,
@@ -839,6 +843,7 @@ def get_sub_categories(
         if category_id:
             fallback_query = fallback_query.filter(SubCategory.category_id == category_id)
         rows = fallback_query.order_by(SubCategory.sub_category_name.asc()).all()
+    logger.info("Dropdown returning %s items for /stock/sub-categories", len(rows))
     return [
         {
             "id": row.sub_category_id,
@@ -870,6 +875,7 @@ def get_attribute_options(
         if sub_category_id:
             fallback_query = fallback_query.filter(AssetAttribute.sub_category_id == sub_category_id)
         attributes = fallback_query.order_by(AssetAttribute.attribute_name.asc()).all()
+    logger.info("Dropdown returning %s items for /stock/attributes/options", len(attributes))
     return [
         {
             "attribute_id": item.attribute_id,
@@ -889,7 +895,7 @@ def get_asset_statuses():
 @router.get("/branches-list")
 
 def get_branches_list(
-    active_only: bool = True,
+    active_only: bool = False,
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
@@ -897,6 +903,7 @@ def get_branches_list(
     if active_only:
         query = query.filter(Branch.status == BranchStatus.ACTIVE)
     rows = query.order_by(Branch.branch_name.asc()).all()
+    logger.info("Dropdown returning %s items for /stock/branches-list", len(rows))
     return [
         {
             "id": row.branch_id,

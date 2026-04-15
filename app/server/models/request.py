@@ -60,13 +60,6 @@ class PriorityLevel(str, Enum):
     MEDIUM = "MEDIUM"
     LOW = "LOW"
 
-# Legacy P-level priorities
-class PriorityLevelLegacy(str, Enum):
-    P1 = "P1"
-    P2 = "P2"
-    P3 = "P3"
-    P4 = "P4"
-
 class RequestCreate(BaseModel):
     """
     Create a new request.
@@ -183,10 +176,6 @@ class RequestCrossBranchTransfer(BaseModel):
             raise ValueError("Value must not be blank")
         return value
 
-class RequestHRVerify(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    is_needed: bool
-
 class RequestHRValidation(BaseModel):
     """HR validates request eligibility."""
     model_config = ConfigDict(extra="forbid")
@@ -227,6 +216,106 @@ class RequestResolve(BaseModel):
             raise ValueError("repair_cost cannot be negative")
         return float(v)
 
+
+class RequestServiceStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    issue_description: str
+    service_vendor: Optional[str] = None
+    service_cost: float
+    service_start_date: datetime
+    expected_return_date: Optional[datetime] = None
+    broken_instance_id: Optional[str] = None
+    temporary_instance_id: Optional[str] = None
+
+    @field_validator("issue_description")
+    @classmethod
+    def validate_issue_description(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("issue_description must not be blank")
+        return value
+
+    @field_validator("service_vendor", "broken_instance_id", "temporary_instance_id")
+    @classmethod
+    def normalize_optional_text(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
+    @field_validator("service_cost")
+    @classmethod
+    def validate_service_cost(cls, v: float) -> float:
+        if v is None or float(v) < 0:
+            raise ValueError("service_cost must be zero or positive")
+        return float(v)
+
+
+class RequestServiceComplete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resolution_notes: str
+    repair_cost: float = 0.0
+    repaired_instance_id: Optional[str] = None
+
+    @field_validator("resolution_notes")
+    @classmethod
+    def validate_resolution_notes_complete(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("resolution_notes must not be blank")
+        return value
+
+    @field_validator("repaired_instance_id")
+    @classmethod
+    def normalize_repaired_instance(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
+    @field_validator("repair_cost")
+    @classmethod
+    def validate_repair_cost_complete(cls, v: float) -> float:
+        if float(v) < 0:
+            raise ValueError("repair_cost cannot be negative")
+        return float(v)
+
+
+class RequestAssignNew(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provided_instance_id: str
+
+    @field_validator("provided_instance_id")
+    @classmethod
+    def validate_provided_instance_id(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("provided_instance_id must not be blank")
+        return value
+
+
+class RequestReplace(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provided_instance_id: str
+    broken_instance_id: Optional[str] = None
+    old_asset_disposition: str = "DAMAGED"
+
+    @field_validator("provided_instance_id", "broken_instance_id")
+    @classmethod
+    def validate_instance_fields(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        value = v.strip()
+        return value or None
+
+    @field_validator("old_asset_disposition")
+    @classmethod
+    def validate_disposition(cls, v: str) -> str:
+        normalized = v.strip().upper()
+        if normalized not in {"DAMAGED", "RETIRED"}:
+            raise ValueError("old_asset_disposition must be DAMAGED or RETIRED")
+        return normalized
+
 class RequestManagerNotes(BaseModel):
     model_config = ConfigDict(extra="forbid")
     manager_notes: str
@@ -248,6 +337,7 @@ class RequestResponse(BaseModel):
     request_type: str = "ASSET"
     resignation_status: Optional[str] = None
     asset_name: str
+    asset_id: Optional[str] = None
     asset_category: str
     reason: str
     status: str
@@ -269,6 +359,13 @@ class RequestResponse(BaseModel):
     priority_response_time: Optional[str] = None
     req_date: datetime
     manager_notes: Optional[str] = None
+    temporary_instance_id: Optional[str] = None
+    temporary_tracking_id: Optional[str] = None
+    service_issue_description: Optional[str] = None
+    service_vendor: Optional[str] = None
+    service_cost: Optional[float] = None
+    service_start_date: Optional[datetime] = None
+    expected_return_date: Optional[datetime] = None
 
 
 class RequestListResponse(BaseModel):

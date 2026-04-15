@@ -1,4 +1,5 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+import logging
 
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
@@ -8,12 +9,15 @@ from fastapi import HTTPException, status
 from typing import List, Optional
 
 from app.server.models.request import (
+    RequestAssignNew,
     RequestCreate,
     RequestCrossBranchTransfer,
     RequestFormAssetOption,
     RequestFormOptions,
     RequestHRValidation,
-    RequestHRVerify,
+    RequestReplace,
+    RequestServiceComplete,
+    RequestServiceStart,
     RequestManagerNotes,
     RequestResolve,
     RequestReview,
@@ -21,8 +25,8 @@ from app.server.models.request import (
     RequestFilterOptions,
 )
 from app.server.schema.request import Request, RequestStatus
-from app.server.schema.asset import Asset, AssetStatus, AssetInstance
-from app.server.schema.tracking import Tracking, MovementType, AllocationType
+from app.server.schema.asset import Asset, AssetStatus, AssetInstance, AssetUsageType
+from app.server.schema.tracking import Tracking, MovementType, AllocationType, LifecycleEvent
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.schema.organization import Branch, BranchStatus
 from app.server.schema.category import Category
@@ -32,6 +36,8 @@ from app.server.services.account_service import AccountService
 from app.server.services.audit_service import AuditService
 from app.server.services.notification_service import NotificationPriority, NotificationService
 from app.server.database.tenant import apply_tenant_filter
+
+logger = logging.getLogger(__name__)
 
 
 class RequestService:
@@ -790,12 +796,6 @@ class RequestService:
         return RequestService._serialize_request(req)
 
     @staticmethod
-    def review_request_by_hr(db: Session, request_id: str, payload: RequestHRVerify, user: Employee):
-        """Backward-compatible HR endpoint delegated to the unified lifecycle flow."""
-        mapped_payload = RequestHRValidation(is_valid=payload.is_needed)
-        return RequestService.validate_request_by_hr(db, request_id, mapped_payload, user)
-
-    @staticmethod
     def triage_asset_request(db: Session, request_id: str, payload: RequestTriage, user: Employee):
         """Support triages request. HR_VALIDATED -> TRIAGED. Reserves instance with SELECT FOR UPDATE."""
         with db.begin():
@@ -1055,13 +1055,16 @@ class RequestService:
         db.refresh(req)
 
         stage_recipients = RequestService._get_higher_authority_emails_for_request(db, req.employee, user)
-        EmailService.notify_request_stage_update(
-            employee_name=req.employee.name,
-            asset_name=req.asset_name,
-            branch=req.employee.branch or "-",
-            stage_name=req.stage,
-            recipients=stage_recipients,
-        )
+        try:
+            EmailService.notify_request_stage_update(
+                employee_name=req.employee.name,
+                asset_name=req.asset_name,
+                branch=req.employee.branch or "-",
+                stage_name=req.stage,
+                recipients=stage_recipients,
+            )
+        except Exception as exc:
+            logger.warning("Notification failure for stage update request_id=%s: %s", req.request_id, str(exc))
         return RequestService._serialize_request(req)
 
     @staticmethod
@@ -1074,87 +1077,363 @@ class RequestService:
         provided_instance_id: Optional[str] = None,
         broken_instance_id: Optional[str] = None,
     ):
+        decision = (provided_asset_id and ("NEW" if broken_asset_id is None else "REPLACE")) or None
         with db.begin():
             req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
             if not req:
                 raise HTTPException(status_code=404)
+            decision = (req.request_type or req.action_type or decision or "NEW").strip().upper()
+
+        if decision == "NEW":
+            payload = RequestAssignNew(provided_instance_id=provided_instance_id or "")
+            return RequestService.assign_new_request(db, request_id, payload, user)
+        if decision == "REPLACE":
+            payload = RequestReplace(
+                provided_instance_id=provided_instance_id or "",
+                broken_instance_id=broken_instance_id,
+                old_asset_disposition="DAMAGED",
+            )
+            return RequestService.replace_request(db, request_id, payload, user)
+        if decision == "SERVICE":
+            payload = RequestServiceStart(
+                issue_description="Service started from legacy execute endpoint",
+                service_vendor="Internal IT",
+                service_cost=0.0,
+                service_start_date=datetime.now(timezone.utc),
+                expected_return_date=None,
+                broken_instance_id=broken_instance_id,
+                temporary_instance_id=provided_instance_id,
+            )
+            return RequestService.start_service_request(db, request_id, payload, user)
+
+        raise HTTPException(
+            status_code=400,
+            detail="Request has no actionable type (NEW, REPLACE, or SERVICE). Complete help desk triage first.",
+        )
+
+    @staticmethod
+    def assign_new_request(db: Session, request_id: str, payload: RequestAssignNew, user: Employee):
+        try:
+            req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
+            if not req:
+                raise HTTPException(status_code=404, detail="Request not found")
+
+            if req.status == RequestStatus.COMPLETED and req.instance_id == payload.provided_instance_id:
+                return req
+
             RequestService.validate_tenant_scope(req, user)
             RequestService.validate_branch_scope(req, user)
-            # Accept both new (APPROVED) and legacy (APPROVED_FOR_SUPPORT, READY) statuses
+            if (req.request_type or "").upper() != "NEW":
+                raise HTTPException(status_code=400, detail="Request type is not NEW")
             if req.status not in [RequestStatus.APPROVED, "APPROVED_FOR_SUPPORT", "READY"] and req.stage != "READY":
-                raise HTTPException(status_code=400, detail="Request not actionable")
+                raise HTTPException(status_code=400, detail="Request is not ready for assignment")
 
-            decision = (req.request_type or req.action_type or "NEW").strip().upper()
+            provided_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == payload.provided_instance_id).with_for_update().first()
+            if not provided_instance:
+                raise HTTPException(status_code=404, detail="Provided instance not found")
 
-            provided_instance = None
-            if provided_instance_id:
-                provided_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == provided_instance_id).first()
-                if not provided_instance:
-                    raise HTTPException(status_code=404, detail="Provided instance not found")
+            provided_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == provided_instance.asset_id).with_for_update().first()
+            if provided_asset and provided_asset.asset_usage_type == AssetUsageType.SHARED:
+                raise HTTPException(status_code=400, detail="Shared assets cannot be assigned to employees")
+            if provided_asset and provided_asset.asset_status == AssetStatus.IN_REPAIR:
+                raise HTTPException(status_code=400, detail="Assets in IN_REPAIR cannot be assigned")
 
-            resolved_provided_asset_id = provided_asset_id or (provided_instance.asset_id if provided_instance else None)
-            if decision in ["NEW", "REPLACE"]:
-                if not resolved_provided_asset_id:
-                    raise HTTPException(status_code=400, detail="provided_instance_id or provided_asset_id is required")
+            StockService.allocate_asset(
+                db,
+                provided_instance.asset_id,
+                req.emp_id,
+                AllocationType.PERMANENT,
+                user,
+                f"FULFILL_REQ_{request_id}",
+                instance_id=provided_instance.instance_id,
+                movement_type=MovementType.ALLOCATE,
+                is_temporary=False,
+            )
 
-                StockService.allocate_asset(
-                    db,
-                    resolved_provided_asset_id,
-                    req.emp_id,
-                    AllocationType.PERMANENT,
-                    user,
-                    f"FULFILL_REQ_{request_id}",
-                    instance_id=provided_instance_id,
-                )
+            old_status = req.status
+            req.instance_id = provided_instance.instance_id
+            req.status = RequestStatus.COMPLETED
+            req.stage = "COMPLETED"
+            req.assigned_at = datetime.now(timezone.utc)
+            req.completed_at = datetime.now(timezone.utc)
 
-                resolved_broken_asset_id = broken_asset_id
-                if not resolved_broken_asset_id and broken_instance_id:
-                    broken_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == broken_instance_id).first()
-                    if broken_instance:
-                        resolved_broken_asset_id = broken_instance.asset_id
+            AuditService.log_change(
+                db,
+                "requests",
+                request_id,
+                "UPDATE",
+                user,
+                {"status": old_status},
+                {"status": req.status, "instance_id": req.instance_id},
+                "REQUEST_NEW_ASSIGNED",
+            )
 
-                if decision == "REPLACE" and resolved_broken_asset_id:
-                    active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.asset_id == resolved_broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
-                    if active_trk:
-                        StockService.return_asset(db, active_trk.tracking_id, user, "REPLACEMENT_RETURN")
-                req.status = RequestStatus.ASSIGNED
-                req.assigned_at = datetime.now(timezone.utc)
-            elif decision == "SERVICE":
-                resolved_broken_instance_id = broken_instance_id or req.instance_id
-                resolved_broken_asset_id = broken_asset_id
-                if resolved_broken_instance_id and not resolved_broken_asset_id:
-                    broken_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == resolved_broken_instance_id).first()
-                    if broken_instance:
-                        resolved_broken_asset_id = broken_instance.asset_id
-
-                active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.asset_id == resolved_broken_asset_id, Tracking.emp_id == req.emp_id, Tracking.returned_at == None).first()
-                if not active_trk:
-                    raise HTTPException(status_code=400, detail="Employee does not currently hold this asset")
-                asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == resolved_broken_asset_id).with_for_update().first()
-                asset.asset_status = AssetStatus.IN_REPAIR
-                if resolved_broken_instance_id:
-                    req.instance_id = resolved_broken_instance_id
-                if provided_instance_id or resolved_provided_asset_id:
-                    StockService.allocate_asset(
-                        db,
-                        resolved_provided_asset_id,
-                        req.emp_id,
-                        AllocationType.TEMPORARY,
-                        user,
-                        f"LOANER_FOR_REQ_{request_id}",
-                        instance_id=provided_instance_id,
-                    )
-                req.serviced_asset_id = resolved_broken_asset_id
-                req.status = RequestStatus.ASSIGNED
-                req.assigned_at = datetime.now(timezone.utc)
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Request has no actionable type (NEW, REPLACE, or SERVICE). Complete help desk triage first.",
-                )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
         db.refresh(req)
-        EmailService.notify_asset_assigned(req.employee.name, req.asset_name, RequestService.get_manager_email_for_branch(db, req.employee.branch, user))
+        return req
+
+    @staticmethod
+    def replace_request(db: Session, request_id: str, payload: RequestReplace, user: Employee):
+        try:
+            req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
+            if not req:
+                raise HTTPException(status_code=404, detail="Request not found")
+
+            if req.status == RequestStatus.COMPLETED and req.instance_id == payload.provided_instance_id:
+                return req
+
+            RequestService.validate_tenant_scope(req, user)
+            RequestService.validate_branch_scope(req, user)
+            if (req.request_type or "").upper() != "REPLACE":
+                raise HTTPException(status_code=400, detail="Request type is not REPLACE")
+            if req.status not in [RequestStatus.APPROVED, "APPROVED_FOR_SUPPORT", "READY"] and req.stage != "READY":
+                raise HTTPException(status_code=400, detail="Request is not ready for replacement")
+
+            new_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == payload.provided_instance_id).with_for_update().first()
+            if not new_instance:
+                raise HTTPException(status_code=404, detail="Replacement instance not found")
+            if new_instance.status != AssetStatus.AVAILABLE:
+                raise HTTPException(status_code=400, detail="Replacement asset must be AVAILABLE")
+
+            old_instance_id = payload.broken_instance_id or req.instance_id
+            if not old_instance_id:
+                raise HTTPException(status_code=400, detail="Broken instance is required for replacement")
+            old_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == old_instance_id).with_for_update().first()
+            if not old_instance:
+                raise HTTPException(status_code=404, detail="Broken instance not found")
+
+            new_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == new_instance.asset_id).first()
+            old_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == old_instance.asset_id).first()
+            if (new_asset and new_asset.asset_usage_type == AssetUsageType.SHARED) or (old_asset and old_asset.asset_usage_type == AssetUsageType.SHARED):
+                raise HTTPException(status_code=400, detail="Shared assets cannot be used in replacement assignment")
+            if (new_asset and new_asset.asset_status == AssetStatus.IN_REPAIR) or (old_asset and old_asset.asset_status == AssetStatus.IN_REPAIR):
+                raise HTTPException(status_code=400, detail="Assets in IN_REPAIR cannot be replaced")
+            if new_asset and old_asset and new_asset.category_id != old_asset.category_id:
+                raise HTTPException(status_code=400, detail="Replacement asset must be from the same category")
+
+            StockService.allocate_asset(
+                db,
+                new_instance.asset_id,
+                req.emp_id,
+                AllocationType.PERMANENT,
+                user,
+                f"REPLACE_REQ_{request_id}",
+                instance_id=new_instance.instance_id,
+                movement_type=MovementType.REPLACE,
+                is_temporary=False,
+            )
+
+            if payload.old_asset_disposition == "RETIRED":
+                StockService.retire_instance(db, old_instance.instance_id, user, reason=f"REPLACED_REQ_{request_id}")
+            else:
+                StockService.mark_damaged(db, old_instance.instance_id, user, reason=f"REPLACED_REQ_{request_id}")
+
+            from app.server.services.lifecycle_service import LifecycleService
+
+            LifecycleService.log_event(
+                db,
+                instance_id=new_instance.instance_id,
+                asset_id=new_instance.asset_id,
+                event_type=LifecycleEvent.REPLACED,
+                performed_by=user,
+                old_status=AssetStatus.AVAILABLE.value,
+                new_status=AssetStatus.ASSIGNED.value,
+                notes=f"Replaced instance {old_instance.instance_id}",
+                organization_id=req.organization_id,
+                metadata={"request_id": req.request_id, "replaced_instance_id": old_instance.instance_id},
+            )
+
+            old_status = req.status
+            req.serviced_instance_id = old_instance.instance_id
+            req.instance_id = new_instance.instance_id
+            req.status = RequestStatus.COMPLETED
+            req.stage = "COMPLETED"
+            req.assigned_at = datetime.now(timezone.utc)
+            req.completed_at = datetime.now(timezone.utc)
+
+            AuditService.log_change(
+                db,
+                "requests",
+                request_id,
+                "UPDATE",
+                user,
+                {"status": old_status},
+                {
+                    "status": req.status,
+                    "instance_id": req.instance_id,
+                    "serviced_instance_id": req.serviced_instance_id,
+                    "old_asset_disposition": payload.old_asset_disposition,
+                },
+                "REQUEST_REPLACED",
+            )
+
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+        db.refresh(req)
+        return req
+
+    @staticmethod
+    def start_service_request(db: Session, request_id: str, payload: RequestServiceStart, user: Employee):
+        try:
+            req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
+            if not req:
+                raise HTTPException(status_code=404, detail="Request not found")
+            RequestService.validate_tenant_scope(req, user)
+            RequestService.validate_branch_scope(req, user)
+            if (req.request_type or "").upper() != "SERVICE":
+                raise HTTPException(status_code=400, detail="Request type is not SERVICE")
+            if req.status not in [RequestStatus.APPROVED, "APPROVED_FOR_SUPPORT", "READY", RequestStatus.ASSIGNED] and req.stage not in {"READY", "WIP_SERVICE", "IN_REPAIR"}:
+                raise HTTPException(status_code=400, detail="Request is not ready for service")
+            if payload.service_cost is None:
+                raise HTTPException(status_code=400, detail="Service must log cost")
+            if not payload.broken_instance_id and not req.instance_id:
+                raise HTTPException(status_code=400, detail="broken_instance_id is required for service start")
+
+            broken_instance_id = payload.broken_instance_id or req.instance_id
+            if not broken_instance_id:
+                raise HTTPException(status_code=400, detail="Broken instance is required for service")
+
+            if req.status == RequestStatus.IN_REPAIR and req.instance_id == broken_instance_id:
+                return req
+
+            broken_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == broken_instance_id).with_for_update().first()
+            if not broken_instance:
+                raise HTTPException(status_code=404, detail="Broken instance not found")
+
+            broken_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == broken_instance.asset_id).with_for_update().first()
+            if broken_asset and broken_asset.asset_usage_type == AssetUsageType.SHARED:
+                raise HTTPException(status_code=400, detail="Shared assets cannot be employee-service assigned")
+
+            StockService.mark_in_repair(
+                db,
+                broken_instance.instance_id,
+                user,
+                reason=f"SERVICE_START_{request_id}",
+                repair_cost=0.0,
+            )
+
+            repair_tracking = Tracking(
+                asset_id=broken_instance.asset_id,
+                instance_id=broken_instance.instance_id,
+                emp_id=req.emp_id,
+                organization_id=req.organization_id,
+                branch_id=req.branch_id,
+                movement_type=MovementType.REPAIR,
+                allocation_type=AllocationType.PERMANENT,
+                movement_reason=f"SERVICE_START_{request_id}",
+            )
+            db.add(repair_tracking)
+
+            if payload.temporary_instance_id:
+                temp_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == payload.temporary_instance_id).with_for_update().first()
+                if not temp_instance:
+                    raise HTTPException(status_code=404, detail="Temporary asset instance not found")
+                if temp_instance.status != AssetStatus.AVAILABLE:
+                    raise HTTPException(status_code=400, detail="Temporary asset cannot be already assigned")
+
+                temp_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == temp_instance.asset_id).first()
+                if temp_asset and temp_asset.asset_usage_type == AssetUsageType.SHARED:
+                    raise HTTPException(status_code=400, detail="Shared assets cannot be assigned to employee")
+                if broken_asset and temp_asset and broken_asset.category_id != temp_asset.category_id:
+                    raise HTTPException(status_code=400, detail="Temporary asset must match category of serviced asset")
+
+                temp_tracking = StockService.allocate_asset(
+                    db,
+                    temp_instance.asset_id,
+                    req.emp_id,
+                    AllocationType.TEMPORARY,
+                    user,
+                    reason=f"TEMP_ASSIGNED_REQ_{request_id}",
+                    instance_id=temp_instance.instance_id,
+                    movement_type=MovementType.TEMP_ASSIGNED,
+                    is_temporary=True,
+                )
+
+                db.flush()
+                temp_instance.status = AssetStatus.ASSIGNED
+
+                from app.server.services.lifecycle_service import LifecycleService
+
+                LifecycleService.log_event(
+                    db,
+                    instance_id=temp_instance.instance_id,
+                    asset_id=temp_instance.asset_id,
+                    event_type=LifecycleEvent.TEMP_ASSIGNED,
+                    performed_by=user,
+                    old_status=AssetStatus.AVAILABLE.value,
+                    new_status=AssetStatus.ASSIGNED.value,
+                    notes=f"Temporary assignment for request {request_id}",
+                    tracking_id=temp_tracking.tracking_id,
+                    organization_id=req.organization_id,
+                    metadata={"request_id": request_id, "is_temporary": True},
+                )
+                req.temporary_instance_id = temp_instance.instance_id
+                req.temporary_tracking_id = temp_tracking.tracking_id
+
+            old_status = req.status
+            req.instance_id = broken_instance.instance_id
+            req.serviced_asset_id = broken_instance.asset_id
+            req.service_issue_description = payload.issue_description
+            req.service_vendor = payload.service_vendor
+            req.service_cost = float(payload.service_cost)
+            req.service_start_date = payload.service_start_date
+            req.expected_return_date = payload.expected_return_date
+            req.status = RequestStatus.IN_REPAIR
+            req.stage = "IN_REPAIR"
+
+            # SLA tracking starts with service start.
+            req.sla_due = payload.expected_return_date or (payload.service_start_date + timedelta(hours=RequestService._urgency_sla_hours(req.urgency)))
+            now_utc = datetime.now(timezone.utc)
+            req.sla_breached = bool(req.sla_due and now_utc > req.sla_due)
+
+            if req.sla_breached:
+                try:
+                    NotificationService.emit(
+                        db,
+                        actor=user,
+                        recipient_scope=f"BRANCH:{req.branch_id or '-'}",
+                        event_type="SERVICE_SLA_BREACHED",
+                        title="Service SLA delayed",
+                        message=f"Service request {req.request_id} breached SLA at start.",
+                        priority=NotificationPriority.HIGH,
+                        dedup_key=f"service_sla_breached_start:{req.request_id}",
+                        cooldown_hours=24,
+                        metadata={"request_id": req.request_id, "sla_due": req.sla_due.isoformat() if req.sla_due else None},
+                    )
+                except Exception as exc:
+                    logger.warning("Notification failure for service SLA request_id=%s: %s", req.request_id, str(exc))
+
+            AuditService.log_change(
+                db,
+                "requests",
+                request_id,
+                "UPDATE",
+                user,
+                {"status": old_status},
+                {
+                    "status": req.status,
+                    "service_vendor": req.service_vendor,
+                    "service_cost": req.service_cost,
+                    "temporary_instance_id": req.temporary_instance_id,
+                    "sla_due": req.sla_due.isoformat() if req.sla_due else None,
+                    "sla_breached": req.sla_breached,
+                },
+                "SERVICE_STARTED",
+            )
+
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+        db.refresh(req)
         return req
 
     @staticmethod
@@ -1210,39 +1489,166 @@ class RequestService:
 
     @staticmethod
     def resolve_service_request(db: Session, request_id: str, payload: RequestResolve, user: Employee):
-        with db.begin():
-            req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id, Request.status == "WIP_SERVICE").with_for_update().first()
+        complete_payload = RequestServiceComplete(
+            resolution_notes=payload.resolution_notes,
+            repair_cost=float(payload.repair_cost or 0.0),
+            repaired_instance_id=None,
+        )
+        return RequestService.complete_service_request(db, request_id, complete_payload, user)
+
+    @staticmethod
+    def complete_service_request(db: Session, request_id: str, payload: RequestServiceComplete, user: Employee):
+        try:
+            req = apply_tenant_filter(db.query(Request), user, Request).filter(Request.request_id == request_id).with_for_update().first()
             if not req:
-                raise HTTPException(status_code=400, detail="No active service request found")
+                raise HTTPException(status_code=404, detail="Request not found")
+
+            if req.status == RequestStatus.COMPLETED:
+                return req
+
             RequestService.validate_tenant_scope(req, user)
             RequestService.validate_branch_scope(req, user)
-            loaner_reason = f"LOANER_FOR_REQ_{request_id}"
-            loaner_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(Tracking.emp_id == req.emp_id, Tracking.movement_reason == loaner_reason, Tracking.returned_at == None).first()
-            if loaner_trk:
-                StockService.return_asset(db, loaner_trk.tracking_id, user, f"LOANER_RETURN_RESOLVE_{request_id}")
-            repaired_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == req.serviced_asset_id).with_for_update().first()
+            if (req.request_type or "").upper() != "SERVICE":
+                raise HTTPException(status_code=400, detail="Request type is not SERVICE")
+            if req.status not in [RequestStatus.IN_REPAIR, RequestStatus.WIP_SERVICE, RequestStatus.ASSIGNED] and req.stage not in {"IN_REPAIR", "WIP_SERVICE"}:
+                raise HTTPException(status_code=400, detail="No active service request found")
+            if not (payload.resolution_notes or "").strip():
+                raise HTTPException(status_code=400, detail="resolution_notes is required for service completion")
+
+            repaired_instance_id = payload.repaired_instance_id or req.instance_id
+            if not repaired_instance_id:
+                raise HTTPException(status_code=400, detail="Repaired instance is required")
+
+            repaired_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == repaired_instance_id).with_for_update().first()
+            if not repaired_instance:
+                raise HTTPException(status_code=404, detail="Repaired instance not found")
+
+            repaired_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == repaired_instance.asset_id).with_for_update().first()
+            if repaired_asset and repaired_asset.asset_usage_type == AssetUsageType.SHARED:
+                raise HTTPException(status_code=400, detail="Shared assets cannot be completed through employee service workflow")
+
+            StockService.mark_repaired(db, repaired_instance.instance_id, user, reason=f"SERVICE_COMPLETE_{request_id}")
+
+            # Enforce status transition after service completion.
+            repaired_instance.status = AssetStatus.AVAILABLE
+
+            repaired_tracking = Tracking(
+                asset_id=repaired_instance.asset_id,
+                instance_id=repaired_instance.instance_id,
+                emp_id=req.emp_id,
+                organization_id=req.organization_id,
+                branch_id=req.branch_id,
+                movement_type=MovementType.REPAIRED,
+                allocation_type=AllocationType.PERMANENT,
+                movement_reason=f"SERVICE_COMPLETE_{request_id}",
+            )
+            db.add(repaired_tracking)
+
+            service_cost = float(req.service_cost if req.service_cost is not None else payload.repair_cost)
+            if service_cost < 0:
+                raise HTTPException(status_code=400, detail="service_cost cannot be negative")
+
+            old_instance_cost = float(repaired_instance.repair_cost_total or 0.0)
+            repaired_instance.repair_cost_total = old_instance_cost + service_cost
+
+            old_asset_cost = float(repaired_asset.repair_total_cost or 0.0) if repaired_asset else 0.0
             if repaired_asset:
-                if payload.repair_cost > 0:
-                    AccountService.add_maintenance_cost(db, repaired_asset.asset_id, payload.repair_cost, user, f"SERVICE_REQ_{request_id}")
-                if payload.is_disposable:
-                    repaired_asset.asset_status = AssetStatus.RETIRED
-                else:
-                    repaired_asset.asset_status = AssetStatus.ACTIVE
-                    new_trk = Tracking(
-                        asset_id=repaired_asset.asset_id,
+                repaired_asset.repair_total_cost = old_asset_cost + service_cost
+                if service_cost > 0:
+                    repaired_asset.repair_count = int(repaired_asset.repair_count or 0) + 1
+
+            AuditService.log_change(
+                db,
+                "asset_instances",
+                repaired_instance.instance_id,
+                "UPDATE",
+                user,
+                {"repair_cost_total": old_instance_cost},
+                {"repair_cost_total": float(repaired_instance.repair_cost_total or 0.0)},
+                "SERVICE_COST_AGGREGATED",
+            )
+
+            if repaired_asset:
+                AuditService.log_change(
+                    db,
+                    "assets",
+                    repaired_asset.asset_id,
+                    "UPDATE",
+                    user,
+                    {"repair_total_cost": old_asset_cost},
+                    {"repair_total_cost": float(repaired_asset.repair_total_cost or 0.0)},
+                    "SERVICE_COST_AGGREGATED",
+                )
+
+            if req.temporary_tracking_id:
+                temp_tracking = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(
+                    Tracking.tracking_id == req.temporary_tracking_id,
+                    Tracking.returned_at == None,
+                ).with_for_update().first()
+                if temp_tracking:
+                    StockService.return_asset(db, temp_tracking.tracking_id, user, reason=f"TEMP_RETURN_REQ_{request_id}", status_override=AssetStatus.AVAILABLE)
+
+                    if temp_tracking.instance_id:
+                        temp_instance = apply_tenant_filter(db.query(AssetInstance), user, AssetInstance).filter(AssetInstance.instance_id == temp_tracking.instance_id).with_for_update().first()
+                        if temp_instance:
+                            temp_instance.status = AssetStatus.AVAILABLE
+
+                    temp_return_tracking = Tracking(
+                        asset_id=temp_tracking.asset_id,
+                        instance_id=temp_tracking.instance_id,
                         emp_id=req.emp_id,
-                        branch=repaired_asset.branch,
-                        organization_id=repaired_asset.organization_id,
-                        branch_id=repaired_asset.branch_id,
-                        movement_type=MovementType.ALLOCATE,
-                        allocation_type=AllocationType.PERMANENT,
-                        movement_reason="REPAIRED_ASSET_RETURNED",
+                        organization_id=req.organization_id,
+                        branch_id=req.branch_id,
+                        movement_type=MovementType.TEMP_RETURNED,
+                        allocation_type=AllocationType.TEMPORARY,
+                        movement_reason=f"TEMP_RETURN_REQ_{request_id}",
+                        is_temporary=True,
                     )
-                    db.add(new_trk)
-                    db.flush()
-                    AuditService.log_change(db, "tracking", new_trk.tracking_id, "CREATE", user, None, {"asset_id": repaired_asset.asset_id}, "SERVICE_RESOLVE_RETURN")
-            req.status = "COMPLETED"
+                    db.add(temp_return_tracking)
+
+                    from app.server.services.lifecycle_service import LifecycleService
+
+                    if temp_tracking.instance_id:
+                        LifecycleService.log_event(
+                            db,
+                            instance_id=temp_tracking.instance_id,
+                            asset_id=temp_tracking.asset_id,
+                            event_type=LifecycleEvent.TEMP_RETURNED,
+                            performed_by=user,
+                            old_status=AssetStatus.ASSIGNED.value,
+                            new_status=AssetStatus.AVAILABLE.value,
+                            notes=f"Temporary asset returned for request {request_id}",
+                            tracking_id=temp_return_tracking.tracking_id,
+                            organization_id=req.organization_id,
+                            metadata={"request_id": request_id, "is_temporary": True},
+                        )
+
+            old_status = req.status
+            req.status = RequestStatus.COMPLETED
             req.stage = "COMPLETED"
+            req.completed_at = datetime.now(timezone.utc)
+
+            AuditService.log_change(
+                db,
+                "requests",
+                request_id,
+                "UPDATE",
+                user,
+                {"status": old_status},
+                {
+                    "status": req.status,
+                    "completed_at": req.completed_at.isoformat() if req.completed_at else None,
+                    "resolution_notes": payload.resolution_notes,
+                    "repair_cost": float(payload.repair_cost),
+                    "service_cost_aggregated": service_cost,
+                },
+                "SERVICE_COMPLETED",
+            )
+
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
         db.refresh(req)
         return req
@@ -1367,6 +1773,10 @@ class RequestService:
             req.action_type = f"TRANSFER:{target_branch_name}"
             transfer_tracking = None
             if req.serviced_asset_id:
+                service_asset = apply_tenant_filter(db.query(Asset), user, Asset).filter(Asset.asset_id == req.serviced_asset_id).with_for_update().first()
+                if service_asset and service_asset.asset_status == AssetStatus.IN_REPAIR:
+                    raise HTTPException(status_code=400, detail="Assets in IN_REPAIR cannot be transferred")
+
                 transfer_tracking = Tracking(
                     asset_id=req.serviced_asset_id,
                     asset_name=req.asset_name,
@@ -1418,13 +1828,16 @@ class RequestService:
 
         # Send Email
         recipients = [target_manager_email] + target_support_emails
-        EmailService.notify_cross_branch_transfer_request(
-            requester_branch=req.employee.branch,
-            target_branch=target_branch_name,
-            asset_name=req.asset_name,
-            recipients=recipients,
-            reply_to_email=user.email
-        )
+        try:
+            EmailService.notify_cross_branch_transfer_request(
+                requester_branch=req.employee.branch,
+                target_branch=target_branch_name,
+                asset_name=req.asset_name,
+                recipients=recipients,
+                reply_to_email=user.email
+            )
+        except Exception as exc:
+            logger.warning("Notification failure for cross-branch transfer request_id=%s: %s", req.request_id, str(exc))
         return req
 
     @staticmethod

@@ -47,7 +47,7 @@ export default function OnboardingKits() {
     queryFn: () => apiFetch('/branches'),
   })
 
-  const available = useMemo(() => (stockData?.items || []).filter((a) => a.unused > 0), [stockData])
+  const available = useMemo(() => stockData?.items || [], [stockData])
   const roleOptions = employeeFilterOptions?.roles || []
   const presetItems = presetsData?.items || []
   const total = presetsData?.total || 0

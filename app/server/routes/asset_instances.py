@@ -1,4 +1,5 @@
 from typing import Optional
+import logging
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import or_
@@ -20,6 +21,7 @@ from app.server.schema.organization import Branch, BranchStatus
 
 
 router = APIRouter(prefix="/asset-instances", tags=["asset_instances"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=AssetInstancePagedResponse)
@@ -46,7 +48,7 @@ def list_asset_instances(
 		)
 	)
 
-	if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM] and current_user.branch_id:
+	if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE] and current_user.branch_id:
 		query = query.filter(AssetInstance.branch_id == current_user.branch_id)
 
 	if status:
@@ -106,7 +108,7 @@ def list_asset_instance_options(
 	current_user: Employee = Depends(get_current_user),
 ):
 	scoped = apply_tenant_filter(db.query(AssetInstance), current_user, AssetInstance)
-	if current_user.role in [EmployeeRole.MANAGER, EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM] and current_user.branch_id:
+	if current_user.role in [EmployeeRole.HR, EmployeeRole.SUPPORT_TEAM, EmployeeRole.EMPLOYEE] and current_user.branch_id:
 		scoped = scoped.filter(AssetInstance.branch_id == current_user.branch_id)
 
 	branch_ids = [
@@ -153,6 +155,14 @@ def list_asset_instance_options(
 
 	status_allow = {"NEW", "AVAILABLE", "ASSIGNED", "IN_REPAIR", "NOT_USABLE", "RETIRED"}
 	statuses = [status.value for status in AssetStatus if status.value in status_allow]
+
+	logger.info(
+		"Dropdown returning statuses=%s branches=%s categories=%s assignees=%s for /asset-instances/options",
+		len(statuses),
+		len(branches),
+		len(categories),
+		len(assignees),
+	)
 
 	return {
 		"statuses": statuses,

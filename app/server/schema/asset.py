@@ -20,6 +20,11 @@ class AssetStatus(str, enum.Enum):
     LOST="LOST"
     DAMAGED="DAMAGED"
 
+
+class AssetUsageType(str, enum.Enum):
+    INDIVIDUAL = "INDIVIDUAL"
+    SHARED = "SHARED"
+
 class Asset(Base):
     __tablename__="assets"
     __table_args__ = (
@@ -40,6 +45,7 @@ class Asset(Base):
     name=Column(String(150), nullable=False, index=True)
     category_id=Column(String(50), ForeignKey("categories.category_id"), nullable=False)
     asset_behavior=Column(String(50), nullable=True, index=True)
+    asset_usage_type=Column(Enum(AssetUsageType, name="asset_usage_type"), nullable=False, default=AssetUsageType.INDIVIDUAL, index=True)
     organization_id=Column(String(50), ForeignKey("organizations.organization_id"), nullable=True)
     branch_id=Column(String(50), ForeignKey("branches.branch_id"), nullable=True)
     sub_category_id=Column(String(50), ForeignKey("sub_categories.sub_category_id"), nullable=True)
@@ -112,6 +118,7 @@ class AssetInstance(Base):
     instance_metadata=Column(JSON, nullable=True)
     
     condition_notes=Column(Text, nullable=True)
+    installation_location=Column(String(255), nullable=True)
     
     # Lifecycle tracking timestamps
     created_at=Column(DateTime(timezone=True), server_default=func.now())
