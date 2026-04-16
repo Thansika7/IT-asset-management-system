@@ -36,4 +36,15 @@ def list_branches(
         )
     rows = query.order_by(Branch.branch_name.asc()).all()
     logger.info("Dropdown returning %s items for /branches", len(rows))
-    return rows
+    return [
+        {
+            "id": row.branch_id,
+            "branch_id": row.branch_id,
+            "name": row.branch_name,
+            "branch_name": row.branch_name,
+            "location": row.location,
+            "status": row.status.value if hasattr(row.status, "value") else row.status,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]

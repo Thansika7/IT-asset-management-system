@@ -3,6 +3,8 @@ from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict
 
+from app.server.models.stock import AssetTemplateSpecRead
+
 
 class AssetListItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -39,6 +41,9 @@ class AssetDetailRead(BaseModel):
     category: Optional[str] = None
     sub_category: Optional[str] = None
     brand: Optional[str] = None
+    model: Optional[str] = None
+    asset_behavior: Optional[str] = None
+    asset_usage_type: Optional[str] = None
     branch: Optional[str] = None
     status: str
     total_quantity: int
@@ -47,6 +52,9 @@ class AssetDetailRead(BaseModel):
     low_stock: bool
     low_stock_threshold: int
     purchased_date: Optional[date] = None
+    expiry_date: Optional[date] = None
+    warranty_expiry: Optional[date] = None
+    subscription_term: Optional[str] = None
     purchase_cost: float
     buying_value: float
     salvage_value: float
@@ -68,6 +76,7 @@ class AssetDetailRead(BaseModel):
     vendor_name: Optional[str] = None
     vendor_contact: Optional[str] = None
     invoice_number: Optional[str] = None
+    specifications: List[AssetTemplateSpecRead] = []
 
 
 class AssetFinanceRead(BaseModel):

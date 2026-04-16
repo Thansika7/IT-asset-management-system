@@ -7,8 +7,12 @@ from uuid import uuid4
 
 from app.server.database.database import get_db
 from app.server.auth.service import get_current_user
-from app.server.models.stock import AssetCreate, StockAdd, StockResponse, AllocateRequest, ReturnRequest, StockListResponse, AssetInstanceListResponse, InventorySnapshot
-from app.server.schema.asset import Asset, AssetInstance, AssetStatus
+from app.server.models.stock import (
+    AssetCreate, StockAdd, StockResponse, AllocateRequest, ReturnRequest, 
+    StockListResponse, AssetInstanceListResponse, InventorySnapshot,
+    CategoryCreate, SubCategoryCreate, CategoryHierarchyRead
+)
+from app.server.schema.asset import Asset, AssetInstance, AssetStatus, AssetUsageType
 from app.server.schema.category import Category, SubCategory, AssetBehavior
 from app.server.schema.attribute import AssetAttribute, AssetAttributeValue
 from app.server.schema.organization import Branch, BranchStatus
@@ -17,6 +21,7 @@ from app.server.middlewares.auth import require_roles, RequirePermission
 from app.server.services.stock_service import StockService
 from app.server.services.lifecycle_service import LifecycleService
 from app.server.services.cron_service import CronService
+from app.server.services.taxonomy import CANONICAL_CATEGORY_ORDER, canonical_subcategory_names_for_category, visible_category_names
 from app.server.database.tenant import apply_tenant_filter
 
 # Tagging as internal/manual-override to prioritize the automated Request lifecycle
@@ -149,6 +154,7 @@ def list_asset_instances(
     branch_id: Optional[str]=None,
     status: Optional[str]=None,
     page: int = 1,
+    per_page: int = 20,
     allow_cross_branch: bool = False,
     db: Session=Depends(get_db),
     current_user: Employee=Depends(get_current_user)
@@ -242,24 +248,15 @@ def create_asset_entry(
                 raise HTTPException(status_code=400, detail="category_id does not belong to your organization")
         elif payload.category_name:
             normalized_category_name = payload.category_name.strip()
-            cat = apply_tenant_filter(
-                db.query(Category),
-                current_user,
-                Category,
-                allow_cross_branch=True,
-            ).filter(func.lower(Category.category_name) == normalized_category_name.lower()).first()
-            if not cat:
-                # Fallback for globally seeded categories (organization_id is NULL).
-                cat = db.query(Category).filter(
-                    func.lower(Category.category_name) == normalized_category_name.lower(),
-                    Category.organization_id.is_(None),
-                ).first()
+            cat = db.query(Category).filter(
+                func.lower(Category.category_name) == normalized_category_name.lower(),
+            ).first()
             if not cat:
                 cat = Category(
                     category_name=normalized_category_name,
                     asset_behavior=(payload.asset_behavior or AssetBehavior.INSTANCE_BASED.value),
-                    organization_id=resolved_org_id,
-                    branch_id=resolved_branch_id or current_user.branch_id,
+                    organization_id=None,
+                    branch_id=None,
                 )
                 db.add(cat)
                 db.flush()
@@ -291,28 +288,16 @@ def create_asset_entry(
                 raise HTTPException(status_code=400, detail="sub_category_id does not belong to your organization")
         elif payload.sub_category_name:
             normalized_sub_category_name = payload.sub_category_name.strip()
-            sub_category = apply_tenant_filter(
-                db.query(SubCategory),
-                current_user,
-                SubCategory,
-                allow_cross_branch=True,
-            ).filter(
+            sub_category = db.query(SubCategory).filter(
                 SubCategory.category_id == cat.category_id,
                 func.lower(SubCategory.sub_category_name) == normalized_sub_category_name.lower(),
             ).first()
             if not sub_category:
-                # Fallback for globally seeded sub-categories linked to global categories.
-                sub_category = db.query(SubCategory).filter(
-                    SubCategory.category_id == cat.category_id,
-                    func.lower(SubCategory.sub_category_name) == normalized_sub_category_name.lower(),
-                    or_(SubCategory.organization_id == resolved_org_id, SubCategory.organization_id.is_(None)),
-                ).first()
-            if not sub_category:
                 sub_category = SubCategory(
                     category_id=cat.category_id,
                     sub_category_name=normalized_sub_category_name,
-                    organization_id=resolved_org_id,
-                    branch_id=resolved_branch_id or current_user.branch_id,
+                    organization_id=None,
+                    branch_id=None,
                 )
                 db.add(sub_category)
                 db.flush()
@@ -803,18 +788,34 @@ def trigger_expiration_check(
     result = CronService.check_and_notify_expirations(db, current_user)
     return result
 
+# ============================================================================
+# TAXONOMY MANAGEMENT
+# ============================================================================
+
+@router.get("/taxonomy", response_model=List[CategoryHierarchyRead])
+def get_taxonomy_hierarchy(
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    """Returns categories and their sub-categories for dependent dropdowns."""
+    return StockService.get_taxonomy_hierarchy(db, current_user)
+
 @router.get("/categories")
 def get_categories(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    rows = apply_tenant_filter(db.query(Category), current_user, Category, allow_cross_branch=True)
-    if current_user.role != EmployeeRole.SUPER_ADMIN:
-        rows = rows.filter(or_(Category.organization_id == current_user.organization_id, Category.organization_id.is_(None)))
-    rows = rows.order_by(Category.category_name.asc()).all()
-    if not rows and current_user.role == EmployeeRole.ORG_ADMIN:
-        rows = db.query(Category).order_by(Category.category_name.asc()).all()
-    logger.info("Dropdown returning %s items for /stock/categories", len(rows))
+    """List categories available to the current user."""
+    from app.server.services.taxonomy import visible_category_names, CANONICAL_CATEGORY_ORDER
+    
+    rows = apply_tenant_filter(db.query(Category), current_user, Category, allow_cross_branch=True).all()
+    
+    visible_names = set(visible_category_names([row.category_name for row in rows]))
+    rows = [row for row in rows if row.category_name in visible_names]
+    
+    order_map = {name: index for index, name in enumerate(CANONICAL_CATEGORY_ORDER)}
+    rows.sort(key=lambda row: (order_map.get(row.category_name, 999), row.category_name.lower()))
+    
     return [
         {
             "id": row.category_id,
@@ -822,9 +823,32 @@ def get_categories(
             "category_id": row.category_id,
             "category_name": row.category_name,
             "description": row.description,
+            "asset_behavior": row.asset_behavior
         }
         for row in rows
     ]
+
+@router.post("/categories", status_code=201)
+def create_category(
+    payload: CategoryCreate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
+):
+    """Admin endpoint to manually add a new category."""
+    cat = StockService.create_category(
+        db, payload.name, current_user, 
+        behavior=payload.behavior, 
+        description=payload.description
+    )
+    db.commit()
+    return {
+        "id": cat.category_id,
+        "name": cat.category_name,
+        "category_id": cat.category_id,
+        "category_name": cat.category_name,
+        "description": cat.description,
+        "asset_behavior": cat.asset_behavior,
+    }
 
 @router.get("/sub-categories")
 def get_sub_categories(
@@ -832,18 +856,22 @@ def get_sub_categories(
     db: Session = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
+    """List sub-categories, optionally filtered by category."""
     query = apply_tenant_filter(db.query(SubCategory), current_user, SubCategory, allow_cross_branch=True)
-    if current_user.role != EmployeeRole.SUPER_ADMIN:
-        query = query.filter(or_(SubCategory.organization_id == current_user.organization_id, SubCategory.organization_id.is_(None)))
+    category_name = None
     if category_id:
         query = query.filter(SubCategory.category_id == category_id)
+        category_row = (
+            apply_tenant_filter(db.query(Category), current_user, Category, allow_cross_branch=True)
+            .filter(Category.category_id == category_id)
+            .first()
+        )
+        category_name = category_row.category_name if category_row else None
+        
     rows = query.order_by(SubCategory.sub_category_name.asc()).all()
-    if not rows and current_user.role == EmployeeRole.ORG_ADMIN:
-        fallback_query = db.query(SubCategory)
-        if category_id:
-            fallback_query = fallback_query.filter(SubCategory.category_id == category_id)
-        rows = fallback_query.order_by(SubCategory.sub_category_name.asc()).all()
-    logger.info("Dropdown returning %s items for /stock/sub-categories", len(rows))
+    allowed_subcategory_names = canonical_subcategory_names_for_category(category_name)
+    if allowed_subcategory_names:
+        rows = [row for row in rows if row.sub_category_name in allowed_subcategory_names]
     return [
         {
             "id": row.sub_category_id,
@@ -855,6 +883,27 @@ def get_sub_categories(
         }
         for row in rows
     ]
+
+@router.post("/sub-categories", status_code=201)
+def create_subcategory(
+    payload: SubCategoryCreate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(require_roles(EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
+):
+    """Admin endpoint to manually add a new sub-category."""
+    sub = StockService.create_subcategory(
+        db, payload.category_id, payload.name, current_user,
+        description=payload.description
+    )
+    db.commit()
+    return {
+        "id": sub.sub_category_id,
+        "name": sub.sub_category_name,
+        "sub_category_id": sub.sub_category_id,
+        "sub_category_name": sub.sub_category_name,
+        "category_id": sub.category_id,
+        "description": sub.description,
+    }
 
 
 @router.get("/attributes/options")

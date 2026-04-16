@@ -241,7 +241,7 @@ class FinanceService:
             db,
             instance_id=instance.instance_id,
             asset_id=instance.asset_id,
-            event_type=LifecycleEvent.REPAIR_COMPLETED,
+            event_type=LifecycleEvent.SERVICED,
             performed_by=current_user,
             old_status=instance.status.value if hasattr(instance.status, "value") else str(instance.status),
             new_status=instance.status.value if hasattr(instance.status, "value") else str(instance.status),

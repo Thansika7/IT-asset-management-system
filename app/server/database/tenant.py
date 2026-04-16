@@ -32,7 +32,13 @@ def apply_org_filter(query: Query, current_user: Employee, model: Type[T]) -> Qu
     if current_user.role == EmployeeRole.SUPER_ADMIN:
         return query
     if hasattr(model, "organization_id"):
-        return query.filter(model.organization_id == current_user.organization_id)
+        from sqlalchemy import or_
+        return query.filter(
+            or_(
+                model.organization_id == current_user.organization_id,
+                model.organization_id.is_(None)
+            )
+        )
     return query
 
 

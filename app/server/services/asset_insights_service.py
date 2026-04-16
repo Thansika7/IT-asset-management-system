@@ -40,10 +40,11 @@ from app.server.schema.category import Category, SubCategory
 from app.server.schema.organization import Branch
 from app.server.schema.tracking import Tracking, MovementType
 from app.server.services.health_service import HealthService
+from app.server.services.taxonomy import CANONICAL_CATEGORY_ORDER, canonical_subcategory_names_for_category, visible_category_names
 
 
 class AssetInsightsService:
-    NON_HARDWARE_CATEGORIES = {"software", "furniture", "accessories", "network"}
+    NON_HARDWARE_CATEGORIES = {"software", "software licenses", "cloud subscriptions", "utilities", "facilities", "interiors", "furniture", "accessories", "network"}
     logger = logging.getLogger(__name__)
 
     @staticmethod
@@ -786,12 +787,36 @@ class AssetInsightsService:
         health = AssetInsightsService.get_asset_health(db, asset_id, current_user)
         recommendation = AssetInsightsService.get_replacement_recommendation(db, asset_id, current_user)
 
+        first_instance = (
+            db.query(AssetInstance)
+            .filter(AssetInstance.asset_id == asset_id)
+            .order_by(AssetInstance.created_at.asc())
+            .first()
+        )
+
+        spec_rows = (
+            db.query(
+                AssetAttribute.attribute_id,
+                AssetAttribute.attribute_name,
+                AssetAttribute.data_type,
+                AssetAttribute.is_required,
+                AssetAttributeValue.value,
+            )
+            .join(AssetAttributeValue, AssetAttribute.attribute_id == AssetAttributeValue.attribute_id)
+            .filter(AssetAttributeValue.asset_id == asset_id)
+            .order_by(AssetAttribute.attribute_name.asc())
+            .all()
+        )
+
         return AssetDetailRead(
             asset_id=asset.asset_id,
             name=asset.name,
             category=asset.category.category_name if asset.category else None,
             sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
             brand=asset.brand,
+            model=asset.model,
+            asset_behavior=asset.asset_behavior,
+            asset_usage_type=asset.asset_usage_type,
             branch=asset.branch,
             status=asset.asset_status.value if asset.asset_status else "UNKNOWN",
             total_quantity=asset.total_quantity,
@@ -800,6 +825,9 @@ class AssetInsightsService:
             low_stock=asset.unused <= (asset.low_stock_threshold or 0),
             low_stock_threshold=asset.low_stock_threshold or 0,
             purchased_date=finance.purchased_date,
+            expiry_date=first_instance.expiry_date if first_instance else None,
+            warranty_expiry=first_instance.warranty_expiry if first_instance else None,
+            subscription_term=first_instance.subscription_term if first_instance else None,
             purchase_cost=finance.purchase_cost,
             buying_value=finance.buying_value,
             salvage_value=finance.salvage_value,
@@ -821,6 +849,16 @@ class AssetInsightsService:
             vendor_name=asset.vendor_name,
             vendor_contact=asset.vendor_contact,
             invoice_number=asset.invoice_number,
+            specifications=[
+                AssetTemplateSpecRead(
+                    attribute_id=row.attribute_id,
+                    attribute_name=row.attribute_name,
+                    value=row.value,
+                    data_type=row.data_type or "text",
+                    is_required=bool(row.is_required),
+                )
+                for row in spec_rows
+            ],
         )
 
     @staticmethod
@@ -1395,10 +1433,13 @@ class AssetInsightsService:
         from app.server.database.tenant import apply_tenant_filter
 
         rows = (
-            apply_tenant_filter(db.query(Category), current_user, Category)
-            .order_by(Category.category_name.asc())
+            apply_tenant_filter(db.query(Category), current_user, Category, allow_cross_branch=True)
             .all()
         )
+        visible_names = set(visible_category_names([row.category_name for row in rows]))
+        rows = [row for row in rows if row.category_name in visible_names]
+        order_map = {name: index for index, name in enumerate(CANONICAL_CATEGORY_ORDER)}
+        rows.sort(key=lambda row: (order_map.get(row.category_name, 99), row.category_name.lower()))
         AssetInsightsService.logger.info("Dropdown returning %s items for categories", len(rows))
         return [
             CategoryRead(
@@ -1415,12 +1456,22 @@ class AssetInsightsService:
     def list_subcategories(db: Session, current_user: Employee, category_id: str) -> list[SubCategoryRead]:
         from app.server.database.tenant import apply_tenant_filter
 
+        category_row = (
+            apply_tenant_filter(db.query(Category), current_user, Category, allow_cross_branch=True)
+            .filter(Category.category_id == category_id)
+            .first()
+        )
+        category_name = category_row.category_name if category_row else None
+        allowed_subcategory_names = canonical_subcategory_names_for_category(category_name)
+
         rows = (
-            apply_tenant_filter(db.query(SubCategory), current_user, SubCategory)
+            apply_tenant_filter(db.query(SubCategory), current_user, SubCategory, allow_cross_branch=True)
             .filter(SubCategory.category_id == category_id)
             .order_by(SubCategory.sub_category_name.asc())
             .all()
         )
+        if allowed_subcategory_names:
+            rows = [row for row in rows if row.sub_category_name in allowed_subcategory_names]
         AssetInsightsService.logger.info("Dropdown returning %s items for subcategories category_id=%s", len(rows), category_id)
         return [
             SubCategoryRead(

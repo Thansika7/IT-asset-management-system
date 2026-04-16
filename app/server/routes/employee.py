@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from sqlalchemy.exc import IntegrityError
 import logging
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -67,181 +68,209 @@ def _can_view_employee_directory(user: Employee) -> bool:
 @router.post("/register", response_model=EmployeeRead, status_code=201)
 def register_employee(
     payload: EmployeeCreate,
+    background_tasks: BackgroundTasks,
     db: Session=Depends(get_db),
     current_user: Employee=Depends(require_roles(EmployeeRole.HR, EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN))
 ):
-    if payload.password:
-        email_lower = payload.email.lower()
-        existing = db.query(Employee).filter(Employee.email == email_lower).first()
-        if existing:
-            raise InvalidStateError("The provided company email is already associated with an existing account.")
-    else:
-        email_lower = None
+    try:
+        if payload.password:
+            email_lower = payload.email.lower()
+            existing = db.query(Employee).filter(Employee.email == email_lower).first()
+            if existing:
+                raise HTTPException(status_code=400, detail="The provided company email is already associated with an existing account.")
+        else:
+            email_lower = None
 
-    if payload.phone:
-        existing_phone = db.query(Employee).filter(Employee.phone == payload.phone).first()
-        if existing_phone:
-            raise InvalidStateError("The provided phone number is already associated with an existing account.")
+        if payload.phone:
+            existing_phone = db.query(Employee).filter(Employee.phone == payload.phone).first()
+            if existing_phone:
+                raise HTTPException(status_code=400, detail="The provided phone number is already associated with an existing account.")
 
-    if payload.personal_email:
-        pe = payload.personal_email.strip().lower()
-        taken = db.query(Employee).filter(Employee.personal_email == pe).first()
-        if taken:
-            raise InvalidStateError("The provided personal email is already associated with an existing account.")
+        if payload.personal_email:
+            pe = payload.personal_email.strip().lower()
+            taken = db.query(Employee).filter(Employee.personal_email == pe).first()
+            if taken:
+                raise HTTPException(status_code=400, detail="The provided personal email is already associated with an existing account.")
 
-    if current_user.role == EmployeeRole.SUPER_ADMIN:
-        resolved_organization_id = payload.organization_id or current_user.organization_id
-    else:
-        resolved_organization_id = current_user.organization_id
-    if not resolved_organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="organization_id is required (set on your account or provide it as a super admin).",
-        )
-
-    # Prefer branch_id; if UI sends branch name, resolve it to a branch_id in this organization.
-    resolved_branch_id = payload.branch_id
-    if not resolved_branch_id and payload.branch:
-        branch_name = payload.branch.strip()
-        if branch_name:
-            branch_obj = (
-                db.query(Branch)
-                .filter(
-                    Branch.organization_id == resolved_organization_id,
-                    Branch.branch_name == branch_name,
-                )
-                .first()
+        if current_user.role == EmployeeRole.SUPER_ADMIN:
+            resolved_organization_id = payload.organization_id or current_user.organization_id
+        else:
+            resolved_organization_id = current_user.organization_id
+        if not resolved_organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="organization_id is required (set on your account or provide it as a super admin).",
             )
-            if not branch_obj:
-                raise HTTPException(status_code=400, detail="Invalid branch (no such branch in your organization)")
-            resolved_branch_id = branch_obj.branch_id
-    if resolved_branch_id:
-        branch_obj = db.query(Branch).filter(Branch.branch_id == resolved_branch_id).first()
-        if not branch_obj:
-            raise HTTPException(status_code=400, detail="Invalid branch_id")
-        if branch_obj.organization_id != resolved_organization_id:
-            raise HTTPException(status_code=400, detail="branch_id does not belong to the selected organization")
-    if current_user.role == EmployeeRole.HR:
-        if current_user.branch_id and resolved_branch_id and resolved_branch_id != current_user.branch_id:
-            raise HTTPException(status_code=403, detail="HR can register employees only in their own branch")
-        if current_user.branch_id and not resolved_branch_id:
-            resolved_branch_id = current_user.branch_id
 
-    # Role Population Constraints
-    # 1. Global Admin Limit
-    if payload.role == EmployeeRole.SUPER_ADMIN:
-        admin_count = db.query(Employee).filter(Employee.role == EmployeeRole.SUPER_ADMIN, Employee.is_active == True).count()
-        if admin_count >= 1:
-            raise HTTPException(status_code=400, detail="A Global System Administrator already exists. Only 1 Admin is allowed.")
-
-    # 2. Branch-specific limits
-    if payload.role in [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR]:
-        if not resolved_branch_id:
-            raise HTTPException(status_code=400, detail="branch_id is required for manager/hr/support_team roles")
-        current_count = db.query(Employee).filter(
-            Employee.branch_id == resolved_branch_id,
-            Employee.role == payload.role,
-            Employee.is_active == True
-        ).count()
-        
-        if payload.role == EmployeeRole.MANAGER and current_count >= 1:
-            raise HTTPException(status_code=400, detail=f"Branch already has a Manager. Only 1 is allowed per branch.")
-        if payload.role == EmployeeRole.SUPPORT_TEAM and current_count >= 5:
-            raise HTTPException(status_code=400, detail=f"Branch already has a Support Team member. Only 1 is allowed per branch.")
-        if payload.role == EmployeeRole.HR and current_count >= 3:
-            raise HTTPException(status_code=400, detail=f"Branch already has 3 HR members. Only 3 are allowed per branch.")
-
-    # Enforcement: Singleton Manager per Branch
-    if payload.role == EmployeeRole.MANAGER:
-        existing_manager = db.query(Employee).filter(
-            Employee.branch_id == resolved_branch_id,
-            Employee.role == EmployeeRole.MANAGER,
-            Employee.is_active == True
-        ).first()
-        if existing_manager:
-            raise InvalidStateError("A manager already exists for this branch.")
-
-    temp_pw_for_mail: str | None = None
-    if payload.password:
-        user = Employee(
-            name=payload.name,
-            email=email_lower,
-            personal_email=(payload.personal_email.strip().lower() if payload.personal_email else None),
-            phone=payload.phone,
-            organization_id=resolved_organization_id,
-            branch_id=resolved_branch_id,
-            role=payload.role,
-            password_hash=get_password_hash(payload.password),
-            password_reset_required=False,
-            is_active=True,
-        )
-    else:
-        org = db.query(Organization).filter(Organization.organization_id == resolved_organization_id).first()
-        company_email = generate_company_email(payload.name, db, org.domain if org else None)
-        temp_pw_for_mail = generate_temp_password()
-        user = Employee(
-            name=payload.name,
-            email=company_email,
-            personal_email=payload.personal_email.strip().lower(),
-            phone=payload.phone,
-            organization_id=resolved_organization_id,
-            branch_id=resolved_branch_id,
-            role=payload.role,
-            password_hash=get_password_hash(temp_pw_for_mail),
-            password_reset_required=True,
-            is_active=True,
-        )
-    db.add(user)
-    db.flush()
-
-    default_json = create_default_permissions(user.role)
-    user.permissions = EmployeePermission(
-        employee_id=user.employee_id,
-        organization_id=user.organization_id,
-        branch_id=user.branch_id,
-        permissions_json=default_json,
-    )
-    db.add(user.permissions)
-    db.flush()
-
-
-    if temp_pw_for_mail:
-        EmailService.send_provisioning_credentials(user.personal_email, user.name, user.email, temp_pw_for_mail)
-
-    asset_ids = list(payload.onboarding_asset_ids)
-
-    if payload.preset_id:
-        preset_query = db.query(OnboardingPreset).filter(OnboardingPreset.preset_id == payload.preset_id)
-        if current_user.role != EmployeeRole.SUPER_ADMIN:
-            preset_query = preset_query.filter(OnboardingPreset.organization_id == resolved_organization_id)
-        preset = preset_query.first()
-        if not preset:
-            raise HTTPException(status_code=404, detail="Onboarding preset not found")
-
-        if preset.target_role and preset.target_role != user.role.value:
-            raise HTTPException(status_code=400, detail="Selected onboarding preset is not valid for the employee role")
-
-        if preset.branch:
-            if not resolved_branch_id:
-                raise HTTPException(status_code=400, detail="Selected onboarding preset requires a branch")
+        # Prefer branch_id; if UI sends branch name, resolve it to a branch_id in this organization.
+        resolved_branch_id = payload.branch_id
+        if not resolved_branch_id and payload.branch:
+            branch_name = payload.branch.strip()
+            if branch_name:
+                branch_obj = (
+                    db.query(Branch)
+                    .filter(
+                        Branch.organization_id == resolved_organization_id,
+                        Branch.branch_name == branch_name,
+                    )
+                    .first()
+                )
+                if not branch_obj:
+                    raise HTTPException(status_code=400, detail="Invalid branch (no such branch in your organization)")
+                resolved_branch_id = branch_obj.branch_id
+        if resolved_branch_id:
             branch_obj = db.query(Branch).filter(Branch.branch_id == resolved_branch_id).first()
-            if not branch_obj or branch_obj.branch_name != preset.branch:
-                raise HTTPException(status_code=400, detail="Selected onboarding preset does not match employee branch")
+            if not branch_obj:
+                raise HTTPException(status_code=400, detail="Invalid branch_id")
+            if branch_obj.organization_id != resolved_organization_id:
+                raise HTTPException(status_code=400, detail="branch_id does not belong to the selected organization")
+        if current_user.role == EmployeeRole.HR:
+            if current_user.branch_id and resolved_branch_id and resolved_branch_id != current_user.branch_id:
+                raise HTTPException(status_code=403, detail="HR can register employees only in their own branch")
+            if current_user.branch_id and not resolved_branch_id:
+                resolved_branch_id = current_user.branch_id
 
-        asset_ids = list(dict.fromkeys([*asset_ids, *(preset.asset_ids or [])]))
+        # Role Population Constraints
+        # 1. Global Admin Limit
+        if payload.role == EmployeeRole.SUPER_ADMIN:
+            admin_count = db.query(Employee).filter(Employee.role == EmployeeRole.SUPER_ADMIN, Employee.is_active == True).count()
+            if admin_count >= 1:
+                raise HTTPException(status_code=400, detail="A Global System Administrator already exists. Only 1 Admin is allowed.")
 
-    if asset_ids:
-        from app.server.schema.tracking import AllocationType
+        # 2. Branch-specific limits
+        if payload.role in [EmployeeRole.MANAGER, EmployeeRole.SUPPORT_TEAM, EmployeeRole.HR]:
+            if not resolved_branch_id:
+                raise HTTPException(status_code=400, detail="branch_id is required for manager/hr/support_team roles")
+            current_count = db.query(Employee).filter(
+                Employee.branch_id == resolved_branch_id,
+                Employee.role == payload.role,
+                Employee.is_active == True
+            ).count()
+            
+            if payload.role == EmployeeRole.MANAGER and current_count >= 1:
+                raise HTTPException(status_code=400, detail=f"Branch already has a Manager. Only 1 is allowed per branch.")
+            if payload.role == EmployeeRole.SUPPORT_TEAM and current_count >= 5:
+                raise HTTPException(status_code=400, detail=f"Branch already has a Support Team member. Only 1 is allowed per branch.")
+            if payload.role == EmployeeRole.HR and current_count >= 3:
+                raise HTTPException(status_code=400, detail=f"Branch already has 3 HR members. Only 3 are allowed per branch.")
 
-        for aid in asset_ids:
-            try:
-                StockService.allocate_asset(db, aid, user.employee_id, AllocationType.PERMANENT, current_user, "ONBOARDING_PACKAGE")
-            except Exception:
-                pass
+        # Enforcement: Singleton Manager per Branch
+        if payload.role == EmployeeRole.MANAGER:
+            existing_manager = db.query(Employee).filter(
+                Employee.branch_id == resolved_branch_id,
+                Employee.role == EmployeeRole.MANAGER,
+                Employee.is_active == True
+            ).first()
+            if existing_manager:
+                raise HTTPException(status_code=400, detail="A manager already exists for this branch.")
 
-    db.commit()
-    db.refresh(user)
-    return user
+        temp_pw_for_mail: str | None = None
+        if payload.password:
+            user = Employee(
+                name=payload.name,
+                email=email_lower,
+                personal_email=(payload.personal_email.strip().lower() if payload.personal_email else None),
+                phone=payload.phone,
+                organization_id=resolved_organization_id,
+                branch_id=resolved_branch_id,
+                role=payload.role,
+                password_hash=get_password_hash(payload.password),
+                password_reset_required=False,
+                is_active=True,
+            )
+        else:
+            org = db.query(Organization).filter(Organization.organization_id == resolved_organization_id).first()
+            company_email = generate_company_email(payload.name, db, org.domain if org else None)
+            temp_pw_for_mail = generate_temp_password()
+            user = Employee(
+                name=payload.name,
+                email=company_email,
+                personal_email=payload.personal_email.strip().lower(),
+                phone=payload.phone,
+                organization_id=resolved_organization_id,
+                branch_id=resolved_branch_id,
+                role=payload.role,
+                password_hash=get_password_hash(temp_pw_for_mail),
+                password_reset_required=True,
+                is_active=True,
+            )
+        db.add(user)
+        db.flush()
+
+        default_json = create_default_permissions(user.role)
+        user.permissions = EmployeePermission(
+            employee_id=user.employee_id,
+            organization_id=user.organization_id,
+            branch_id=user.branch_id,
+            permissions_json=default_json,
+        )
+        db.add(user.permissions)
+        db.flush()
+
+
+        if temp_pw_for_mail:
+            background_tasks.add_task(
+                EmailService.send_provisioning_credentials,
+                user.personal_email,
+                user.name,
+                user.email,
+                temp_pw_for_mail
+            )
+
+        asset_ids = list(payload.onboarding_asset_ids or [])
+
+        if payload.preset_id:
+            preset_query = db.query(OnboardingPreset).filter(OnboardingPreset.preset_id == payload.preset_id)
+            if current_user.role != EmployeeRole.SUPER_ADMIN:
+                preset_query = preset_query.filter(OnboardingPreset.organization_id == resolved_organization_id)
+            preset = preset_query.first()
+            if not preset:
+                raise HTTPException(status_code=404, detail="Onboarding preset not found")
+
+            if preset.target_role and preset.target_role != user.role.value:
+                raise HTTPException(status_code=400, detail="Selected onboarding preset is not valid for the employee role")
+
+            if preset.branch:
+                if not resolved_branch_id:
+                    raise HTTPException(status_code=400, detail="Selected onboarding preset requires a branch")
+                branch_obj = db.query(Branch).filter(Branch.branch_id == resolved_branch_id).first()
+                if not branch_obj or branch_obj.branch_name != preset.branch:
+                    raise HTTPException(status_code=400, detail="Selected onboarding preset does not match employee branch")
+
+            asset_ids = list(dict.fromkeys([*asset_ids, *(preset.asset_ids or [])]))
+
+        if asset_ids:
+            from app.server.schema.tracking import AllocationType
+
+            for aid in asset_ids:
+                try:
+                    StockService.allocate_asset(db, aid, user.employee_id, AllocationType.PERMANENT, current_user, "ONBOARDING_PACKAGE")
+                except Exception:
+                    pass
+
+        db.commit()
+        db.refresh(user)
+        return user
+
+    except IntegrityError as e:
+        db.rollback()
+        err_msg = str(e.orig).lower()
+        if "ix_employees_email" in err_msg or "employees_email_key" in err_msg:
+            raise HTTPException(status_code=400, detail="This company email is already in use.")
+        if "ix_employees_personal_email" in err_msg or "employees_personal_email_key" in err_msg:
+            raise HTTPException(status_code=400, detail="This personal email is already in use.")
+        if "ix_employees_phone" in err_msg or "employees_phone_key" in err_msg:
+            raise HTTPException(status_code=400, detail="This phone number is already in use.")
+        
+        logger.error(f"Registration integrity failure: {str(e)}")
+        raise HTTPException(status_code=400, detail="Data integrity violation in employee registration.")
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"Unexpected error in employee registration: {str(e)}")
+        raise HTTPException(status_code=500, detail="An internal server error occurred during registration.")
 
 @router.get("/", response_model=EmployeeListResponse)
 def list_employees(

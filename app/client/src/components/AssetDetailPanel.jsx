@@ -62,6 +62,11 @@ export default function AssetDetailPanel({ asset, instances = [], title = 'Asset
         <DetailItem label="Used / Available" value={`${asset.used} / ${asset.unused}`} />
         <DetailItem label="Low Stock" value={asset.low_stock ? `Yes (threshold ${asset.low_stock_threshold})` : 'No'} />
         <DetailItem label="Purchased Date" value={asset.purchased_date} />
+        <DetailItem label="Warranty Expiry" value={asset.warranty_expiry} />
+        <DetailItem label="Expiry Date" value={asset.expiry_date} />
+        <DetailItem label="Subscription Term" value={asset.subscription_term} />
+        <DetailItem label="Behavior" value={asset.asset_behavior} />
+        <DetailItem label="Usage Type" value={asset.asset_usage_type} />
         <DetailItem label="Asset Age" value={asset.asset_age_days ? `${asset.asset_age_days} days` : '0 days'} />
         <DetailItem label="Useful Life" value={asset.useful_life_years ? `${asset.useful_life_years} years` : '-'} />
         <DetailItem label="Buying Cost" value={formatCurrency(asset.purchase_cost)} />
@@ -77,6 +82,17 @@ export default function AssetDetailPanel({ asset, instances = [], title = 'Asset
         <DetailItem label="Vendor Contact" value={asset.vendor_contact} />
         <DetailItem label="Invoice Number" value={asset.invoice_number} />
       </div>
+
+      {asset.specifications && asset.specifications.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Specifications</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {asset.specifications.map((spec) => (
+              <DetailItem key={spec.attribute_id} label={spec.attribute_name} value={spec.value} />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Recommendation</p>

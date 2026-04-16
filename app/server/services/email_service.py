@@ -88,7 +88,7 @@ class EmailService:
         msg.attach(MIMEText(html_body, "html"))
 
         try:
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_pass)
                 server.send_message(msg)

@@ -24,12 +24,14 @@ from app.server.models.request import (
     RequestReview,
     RequestTriage,
 )
+from app.server.models.stock import CategoryCreate, SubCategoryCreate
 from app.server.schema.request import Request
 from app.server.schema.employee import Employee, EmployeeRole
 from app.server.middlewares.auth import require_module_access, require_roles
 from app.server.auth.service import get_current_user
 from app.server.services.request_necessity_ai_service import recommend_necessity_for_request
 from app.server.services.request_service import RequestService
+from app.server.services.stock_service import StockService
 
 router=APIRouter(
     prefix="/requests",
@@ -44,6 +46,50 @@ def get_request_form_options(
     current_user: Employee = Depends(get_current_user),
 ):
     return RequestService.get_request_form_options(db, current_user)
+
+
+@router.post("/form-options/categories", status_code=status.HTTP_201_CREATED)
+def create_request_form_category(
+    payload: CategoryCreate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    category = StockService.create_category(
+        db,
+        payload.name,
+        current_user,
+        behavior=payload.behavior,
+        description=payload.description,
+    )
+    db.commit()
+    return {
+        "category_id": category.category_id,
+        "category_name": category.category_name,
+        "description": category.description,
+        "asset_behavior": category.asset_behavior,
+    }
+
+
+@router.post("/form-options/subcategories", status_code=status.HTTP_201_CREATED)
+def create_request_form_subcategory(
+    payload: SubCategoryCreate,
+    db: Session = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    subcategory = StockService.create_subcategory(
+        db,
+        payload.category_id,
+        payload.name,
+        current_user,
+        description=payload.description,
+    )
+    db.commit()
+    return {
+        "sub_category_id": subcategory.sub_category_id,
+        "sub_category_name": subcategory.sub_category_name,
+        "category_id": subcategory.category_id,
+        "description": subcategory.description,
+    }
 
 
 @router.get("/options", response_model=RequestFilterOptions)

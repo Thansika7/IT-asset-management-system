@@ -249,6 +249,33 @@ class StockService:
         
         return instance
 
+    @staticmethod
+    def _sync_asset_counters(db: Session, asset_id: str, user: Employee) -> None:
+        """
+        Recalculate and synchronize static Asset table counters from AssetInstance statuses.
+        Ensures the Dashboard and filters stay in sync with reality.
+        """
+        asset = db.query(Asset).filter(Asset.asset_id == asset_id).with_for_update().first()
+        if not asset:
+            return
+
+        inventory = StockService.get_inventory(db, asset_id)
+        
+        # Update static counters
+        asset.total_quantity = inventory.total
+        asset.used = inventory.assigned
+        asset.unused = inventory.available
+        
+        # Update asset-level status
+        if inventory.available > 0:
+            asset.asset_status = AssetStatus.ACTIVE
+        elif inventory.assigned > 0:
+            asset.asset_status = AssetStatus.ASSIGNED
+        else:
+            asset.asset_status = AssetStatus.NOT_USABLE
+        
+        db.flush()
+
     # ============================================================================
     # INSTANCE-DRIVEN OPERATIONS (NEW)
     # ============================================================================
@@ -261,7 +288,7 @@ class StockService:
         reason: str = "SENT_FOR_REPAIR",
         repair_cost: float = 0.0,
     ):
-        """Mark an instance as IN_REPAIR. Validates state transition."""
+        """Mark an instance as IN_REPAIR. Validates state transition and closes active tracking."""
         instance = (
             apply_tenant_filter(db.query(AssetInstance), user, AssetInstance)
             .filter(AssetInstance.instance_id == instance_id)
@@ -278,11 +305,22 @@ class StockService:
         if repair_cost < 0:
             raise InvalidStateError("repair_cost cannot be negative")
         
+        # BUG FIX: Close active tracking record if current status is ASSIGNED
+        if instance.status == AssetStatus.ASSIGNED:
+            active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(
+                Tracking.instance_id == instance_id,
+                Tracking.returned_at.is_(None)
+            ).first()
+            if active_trk:
+                active_trk.returned_at = func.now()
+                active_trk.movement_reason = f"{active_trk.movement_reason or ''} (Closed via Repair)".strip()
+
         old_status = instance.status
         old_instance_repair_cost = float(instance.repair_cost_total or 0.0)
         instance.status = AssetStatus.IN_REPAIR
         instance.repair_started_at = func.now()
         instance.repair_cost_total = old_instance_repair_cost + float(repair_cost)
+        instance.assigned_to_id = None # Clear assignment on repair
 
         if instance.model:
             instance.model.repair_total_cost = float(instance.model.repair_total_cost or 0.0) + float(repair_cost)
@@ -353,6 +391,9 @@ class StockService:
                 },
             )
         
+        # Keep Asset counters in sync
+        StockService._sync_asset_counters(db, instance.asset_id, user)
+        
         return instance
 
     @staticmethod
@@ -406,6 +447,9 @@ class StockService:
             reason="ASSET_RETIRE_CI_SYNC",
         )
         
+        # Keep Asset counters in sync
+        StockService._sync_asset_counters(db, instance.asset_id, user)
+        
         return instance
 
     @staticmethod
@@ -424,6 +468,16 @@ class StockService:
         # Validate state transition
         InstanceStateMachine.validate_transition(instance.status, AssetStatus.DAMAGED)
         
+        # BUG FIX: Close active tracking record if current status is ASSIGNED
+        if instance.status == AssetStatus.ASSIGNED:
+            active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(
+                Tracking.instance_id == instance_id,
+                Tracking.returned_at.is_(None)
+            ).first()
+            if active_trk:
+                active_trk.returned_at = func.now()
+                active_trk.movement_reason = f"{active_trk.movement_reason or ''} (Closed via Damage)".strip()
+
         old_status = instance.status
         instance.status = AssetStatus.DAMAGED
         instance.assigned_to_id = None
@@ -448,6 +502,9 @@ class StockService:
             organization_id=instance.organization_id
         )
         
+        # Keep Asset counters in sync
+        StockService._sync_asset_counters(db, instance.asset_id, user)
+        
         return instance
 
     @staticmethod
@@ -466,6 +523,16 @@ class StockService:
         # Validate state transition
         InstanceStateMachine.validate_transition(instance.status, AssetStatus.RETIRED)
         
+        # BUG FIX: Close active tracking record if current status is ASSIGNED
+        if instance.status == AssetStatus.ASSIGNED:
+            active_trk = apply_tenant_filter(db.query(Tracking), user, Tracking).filter(
+                Tracking.instance_id == instance_id,
+                Tracking.returned_at.is_(None)
+            ).first()
+            if active_trk:
+                active_trk.returned_at = func.now()
+                active_trk.movement_reason = f"{active_trk.movement_reason or ''} (Closed via Retirement)".strip()
+
         old_status = instance.status
         instance.status = AssetStatus.RETIRED
         instance.retired_at = func.now()
@@ -490,6 +557,9 @@ class StockService:
             notes=reason,
             organization_id=instance.organization_id
         )
+        
+        # Keep Asset counters in sync
+        StockService._sync_asset_counters(db, instance.asset_id, user)
         
         return instance
 
@@ -1224,12 +1294,7 @@ class StockService:
             instance.assigned_to_id = None
         
         # Update asset legacy counters
-        asset = db.query(Asset).filter(Asset.asset_id == instance.asset_id).with_for_update().first()
-        if asset:
-            inventory = StockService.get_inventory(db, instance.asset_id)
-            asset.total_quantity = inventory.total
-            asset.used = inventory.assigned
-            asset.unused = inventory.available
+        StockService._sync_asset_counters(db, instance.asset_id, user)
         
         AuditService.log_change(
             db, "asset_instances", instance_id, "UPDATE", user,
@@ -1447,5 +1512,125 @@ class StockService:
             updated_count=len(update_results),
             updates=update_results,
         )
+
+    # ============================================================================
+    # TAXONOMY MANAGEMENT
+    # ============================================================================
+
+    @staticmethod
+    def get_taxonomy_hierarchy(db: Session, user: Employee):
+        """Returns categories and their sub-categories for the current tenant scope."""
+        from app.server.schema.category import Category, SubCategory
+        
+        categories = apply_tenant_filter(db.query(Category), user, Category).all()
+        
+        hierarchy = []
+        for cat in categories:
+            # Sub-categories are filtered by tenant too
+            subs = db.query(SubCategory).filter(SubCategory.category_id == cat.category_id).all()
+            
+            # Since the user might be branch-restricted, we should filter sub-categories 
+            # if they have an organization_id/branch_id
+            # However, usually sub-categories are global or org-level.
+            
+            hierarchy.append({
+                "category_id": cat.category_id,
+                "category_name": cat.category_name,
+                "asset_behavior": cat.asset_behavior,
+                "sub_categories": [
+                    {
+                        "sub_category_id": sub.sub_category_id,
+                        "sub_category_name": sub.sub_category_name
+                    }
+                    for sub in subs
+                ]
+            })
+        
+        # Sort using canonical preference
+        from app.server.services.taxonomy import CANONICAL_CATEGORY_ORDER
+        order_map = {name: index for index, name in enumerate(CANONICAL_CATEGORY_ORDER)}
+        return sorted(hierarchy, key=lambda x: (order_map.get(x["category_name"], 999), x["category_name"].lower()))
+
+    @staticmethod
+    def create_category(
+        db: Session, 
+        name: str, 
+        user: Employee, 
+        behavior: str = "instance_based", 
+        description: str | None = None
+    ):
+        """Creates a new category for the current organization."""
+        from app.server.schema.category import Category
+
+        normalized_name = name.strip()
+        existing = db.query(Category).filter(func.lower(Category.category_name) == normalized_name.lower()).first()
+        if existing:
+            return existing
+
+        new_cat = Category(
+            category_name=normalized_name,
+            description=description,
+            asset_behavior=behavior,
+            organization_id=None,
+            branch_id=None,
+        )
+        try:
+            db.add(new_cat)
+            db.flush()
+            return new_cat
+        except Exception:
+            db.rollback()
+            existing = db.query(Category).filter(func.lower(Category.category_name) == normalized_name.lower()).first()
+            if existing:
+                return existing
+            raise
+
+    @staticmethod
+    def create_subcategory(
+        db: Session, 
+        category_id: str, 
+        name: str, 
+        user: Employee, 
+        description: str | None = None
+    ):
+        """Creates a new sub-category linked to a category."""
+        from app.server.schema.category import Category, SubCategory
+
+        cat = apply_tenant_filter(db.query(Category), user, Category).filter(
+            Category.category_id == category_id
+        ).first()
+        
+        if not cat:
+            raise ResourceNotFoundError("Category", category_id)
+
+        normalized_name = name.strip()
+        existing = db.query(SubCategory).filter(
+            SubCategory.category_id == category_id,
+            func.lower(SubCategory.sub_category_name) == normalized_name.lower()
+        ).first()
+        
+        if existing:
+            return existing
+
+        new_sub = SubCategory(
+            category_id=category_id,
+            sub_category_name=normalized_name,
+            description=description,
+            organization_id=None,
+            branch_id=None,
+        )
+        try:
+            db.add(new_sub)
+            db.flush()
+            return new_sub
+        except Exception:
+            db.rollback()
+            existing = db.query(SubCategory).filter(
+                SubCategory.category_id == category_id,
+                func.lower(SubCategory.sub_category_name) == normalized_name.lower(),
+            ).first()
+            if existing:
+                return existing
+            raise
 
 

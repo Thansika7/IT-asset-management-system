@@ -16,6 +16,8 @@ import { RefreshCw, PackagePlus, RotateCw, PencilLine } from 'lucide-react'
 import AssetDetailPanel from '@/components/AssetDetailPanel'
 import { Search } from 'lucide-react'
 
+const CANONICAL_CATEGORY_NAMES = new Set(['hardware', 'software', 'utilities', 'facilities', 'interiors'])
+
 export default function Stock() {
   const { user } = useAuth()
   const qc = useQueryClient()
@@ -75,7 +77,10 @@ export default function Stock() {
     queryFn: () => apiFetch('/stock/statuses'),
   })
 
-  const categoryOptions = useMemo(() => normalizeOptions(stockCategoriesRaw), [stockCategoriesRaw])
+  const categoryOptions = useMemo(
+    () => normalizeOptions(stockCategoriesRaw).filter((item) => CANONICAL_CATEGORY_NAMES.has(String(item.name || '').trim().toLowerCase())),
+    [stockCategoriesRaw],
+  )
   const branchOptions = useMemo(() => normalizeOptions(tenantBranchesRaw), [tenantBranchesRaw])
   const statusOptions = useMemo(() => statusOptionsRaw, [statusOptionsRaw])
 
@@ -431,6 +436,8 @@ export default function Stock() {
 
 function StockForms({ createMut, invalidateStockRelated, categories, branches }) {
   const NEW_OPTION_VALUE = '__new__'
+  const CREATE_NEW_CATEGORY_VALUE = '__create_new_category__'
+  const CREATE_NEW_SUBCATEGORY_VALUE = '__create_new_subcategory__'
   const PRESET_PREFIX = '__preset__:'
   const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
 
@@ -442,10 +449,10 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
   })
 
   const [assetName, setAssetName] = useState('')
-  const [ccat, setCcat] = useState('')
-  const [cnewCategoryName, setCnewCategoryName] = useState('')
-  const [csub, setCsub] = useState('')
-  const [cnewSubCategoryName, setCnewSubCategoryName] = useState('')
+  const [categoryPickerValue, setCategoryPickerValue] = useState('')
+  const [subcategoryPickerValue, setSubcategoryPickerValue] = useState('')
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [newSubCategoryName, setNewSubCategoryName] = useState('')
   const [cbranchId, setCbranchId] = useState('')
   const [quantity, setQuantity] = useState('1')
   const [purchaseDate, setPurchaseDate] = useState(today)
@@ -487,15 +494,18 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
     queryFn: () => apiFetch('/assets/statuses'),
   })
 
-  const selectedCategory = categories.find((item) => item.id === ccat)
-  const selectedCategoryName = (selectedCategory?.name || '').toLowerCase()
+  const isCreatingCategory = categoryPickerValue === CREATE_NEW_CATEGORY_VALUE
+  const isCreatingSubCategory = subcategoryPickerValue === CREATE_NEW_SUBCATEGORY_VALUE
+  const selectedCategoryId = isCreatingCategory ? '' : categoryPickerValue
+  const selectedCategory = categories.find((item) => item.id === selectedCategoryId)
+  const selectedCategoryName = (selectedCategory?.name || newCategoryName || '').toLowerCase()
   const unitPurchaseCostValue = Number(purchaseCost || 0)
   const registerQuantityValue = Number(quantity || 0)
   const registerTotalCost = Number.isFinite(unitPurchaseCostValue) && Number.isFinite(registerQuantityValue)
     ? unitPurchaseCostValue * registerQuantityValue
     : 0
   const commonSpecs = useMemo(() => {
-    if (!ccat) return []
+    if (!selectedCategoryName) return []
     if (selectedCategoryName.includes('software') || selectedCategoryName.includes('license')) {
       return ['Vendor', 'Version', 'License Key']
     }
@@ -503,7 +513,7 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
       return ['Brand', 'Model', 'RAM', 'CPU', 'Storage', 'Serial Number']
     }
     return ['Brand', 'Model', 'Serial Number']
-  }, [ccat, selectedCategoryName])
+  }, [selectedCategoryName])
 
   const { data: assetTemplatesRaw = [] } = useQuery({
     queryKey: ['asset-templates'],
@@ -572,17 +582,17 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
   }, [restockAssetId, selectedRestockDetailsData, selectedRestockTemplate])
 
   const { data: subCategories = [] } = useQuery({
-    queryKey: ['stock-sub-categories', ccat],
-    queryFn: () => apiFetch(`/stock/sub-categories?category_id=${ccat}`),
-    enabled: Boolean(ccat) && ccat !== NEW_OPTION_VALUE,
+    queryKey: ['stock-sub-categories', selectedCategoryId],
+    queryFn: () => apiFetch(`/stock/sub-categories?category_id=${selectedCategoryId}`),
+    enabled: Boolean(selectedCategoryId),
   })
 
   const subCategoryCreateOptions = useMemo(() => normalizeOptions(subCategories), [subCategories])
 
   const { data: attributeOptions = [] } = useQuery({
-    queryKey: ['stock-attribute-options', csub],
-    queryFn: () => apiFetch(`/stock/attributes/options?sub_category_id=${csub}`),
-    enabled: Boolean(csub) && csub !== NEW_OPTION_VALUE,
+    queryKey: ['stock-attribute-options', subcategoryPickerValue],
+    queryFn: () => apiFetch(`/stock/attributes/options?sub_category_id=${subcategoryPickerValue}`),
+    enabled: Boolean(subcategoryPickerValue) && subcategoryPickerValue !== CREATE_NEW_SUBCATEGORY_VALUE,
   })
 
   const restockMut = useMutation({
@@ -627,10 +637,10 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
 
   const resetForm = () => {
     setAssetName('')
-    setCcat('')
-    setCnewCategoryName('')
-    setCsub('')
-    setCnewSubCategoryName('')
+    setCategoryPickerValue('')
+    setSubcategoryPickerValue('')
+    setNewCategoryName('')
+    setNewSubCategoryName('')
     setCbranchId('')
     setQuantity('1')
     setPurchaseDate(today)
@@ -1028,15 +1038,14 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
         onSubmit={(e) => {
           e.preventDefault()
 
-          const isNewCategory = ccat === NEW_OPTION_VALUE
-          const isNewSubCategory = csub === NEW_OPTION_VALUE
-          const categoryName = cnewCategoryName.trim()
-          const subCategoryName = cnewSubCategoryName.trim()
-
+          const categoryName = newCategoryName.trim()
+          const subCategoryName = newSubCategoryName.trim()
           if (!assetName.trim()) return
           if (!quantity || Number(quantity) <= 0) return
-          if (isNewCategory && !categoryName) return
-          if (isNewSubCategory && !subCategoryName) return
+          if (isCreatingCategory && !categoryName) return
+          if (isCreatingSubCategory && !subCategoryName) return
+          if (!selectedCategoryId && !categoryName) return
+          if (!subcategoryPickerValue || (isCreatingSubCategory && !subCategoryName)) return
 
           const specifications = specRows
             .map((row) => {
@@ -1066,10 +1075,10 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
           createMut.mutate(
             {
               name: assetName.trim(),
-              category_id: isNewCategory ? null : ccat || null,
-              category_name: isNewCategory ? categoryName : null,
-              sub_category_id: isNewSubCategory || isNewCategory ? null : csub || null,
-              sub_category_name: isNewSubCategory ? subCategoryName : isNewCategory && subCategoryName ? subCategoryName : null,
+              category_id: selectedCategoryId || null,
+              category_name: isCreatingCategory ? categoryName : null,
+              sub_category_id: isCreatingSubCategory ? null : subcategoryPickerValue || null,
+              sub_category_name: isCreatingSubCategory ? subCategoryName : null,
               branch_id: cbranchId || null,
               purchased_date: purchaseDate || null,
               purchase_cost: purchaseCost ? Number(purchaseCost) : null,
@@ -1103,11 +1112,13 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
           <select
             required
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            value={ccat}
+            value={categoryPickerValue}
             onChange={(e) => {
-              setCcat(e.target.value)
-              setCsub('')
-              setCnewSubCategoryName('')
+              const nextValue = e.target.value
+              setCategoryPickerValue(nextValue)
+              setSubcategoryPickerValue(nextValue === CREATE_NEW_CATEGORY_VALUE ? CREATE_NEW_SUBCATEGORY_VALUE : '')
+              setNewCategoryName('')
+              setNewSubCategoryName('')
             }}
           >
             <option value="">Select category</option>
@@ -1116,45 +1127,53 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
                 {c.category_name || c.name}
               </option>
             ))}
-            <option value={NEW_OPTION_VALUE}>Add new category</option>
+            <option value={CREATE_NEW_CATEGORY_VALUE}>+ Create new category</option>
           </select>
 
-          {ccat === NEW_OPTION_VALUE ? (
+          {isCreatingCategory ? (
             <label className="text-xs font-medium text-slate-600">
               New category name
               <input
                 required
                 className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 placeholder="New category name"
-                value={cnewCategoryName}
-                onChange={(e) => setCnewCategoryName(e.target.value)}
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
               />
             </label>
-          ) : (
-            <select
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              value={csub}
-              onChange={(e) => setCsub(e.target.value)}
-              disabled={!ccat}
-            >
-              <option value="">Select sub-category</option>
-              {subCategoryCreateOptions.map((s) => (
-                <option key={s.sub_category_id || s.id} value={s.sub_category_id || s.id}>
-                  {s.sub_category_name || s.name}
-                </option>
-              ))}
-              <option value={NEW_OPTION_VALUE}>Add new sub-category</option>
-            </select>
-          )}
+          ) : null}
 
-          {ccat === NEW_OPTION_VALUE || csub === NEW_OPTION_VALUE ? (
-            <label className="md:col-span-2 text-xs font-medium text-slate-600">
+          <select
+            required
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            value={subcategoryPickerValue}
+            onChange={(e) => {
+              const nextValue = e.target.value
+              setSubcategoryPickerValue(nextValue)
+              if (nextValue !== CREATE_NEW_SUBCATEGORY_VALUE) {
+                setNewSubCategoryName('')
+              }
+            }}
+            disabled={!(selectedCategoryId || isCreatingCategory)}
+          >
+            <option value="">Select sub-category</option>
+            {subCategoryCreateOptions.map((s) => (
+              <option key={s.sub_category_id || s.id} value={s.sub_category_id || s.id}>
+                {s.sub_category_name || s.name}
+              </option>
+            ))}
+            <option value={CREATE_NEW_SUBCATEGORY_VALUE}>+ Create new sub-category</option>
+          </select>
+
+          {isCreatingSubCategory ? (
+            <label className="text-xs font-medium text-slate-600">
               New sub-category name
               <input
+                required
                 className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 placeholder="New sub-category name"
-                value={cnewSubCategoryName}
-                onChange={(e) => setCnewSubCategoryName(e.target.value)}
+                value={newSubCategoryName}
+                onChange={(e) => setNewSubCategoryName(e.target.value)}
               />
             </label>
           ) : null}
@@ -1232,7 +1251,7 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
                   value={row.attributeRef}
                   onChange={(e) => updateSpecRow(row.id, { attributeRef: e.target.value, newAttributeName: e.target.value === NEW_OPTION_VALUE ? row.newAttributeName : '' })}
-                  disabled={!ccat}
+                  disabled={!selectedCategoryName}
                 >
                   <option value="">Select attribute</option>
                   {commonSpecs.map((name) => (
@@ -1279,11 +1298,11 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
             </div>
           ))}
 
-          {!ccat ? (
+          {!selectedCategoryName ? (
             <p className="text-xs text-amber-700">Select a category first. Fields and attribute presets change with the selected category.</p>
-          ) : csub === NEW_OPTION_VALUE ? (
+          ) : subcategoryPickerValue === CREATE_NEW_SUBCATEGORY_VALUE ? (
             <p className="text-xs text-slate-600">New sub-category selected. Use preset attributes or add custom attributes.</p>
-          ) : !csub ? (
+          ) : !subcategoryPickerValue ? (
             <p className="text-xs text-amber-700">Select a sub-category to load existing attribute options.</p>
           ) : null}
         </div>
@@ -1309,9 +1328,14 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
 
             const changes = updateSpecRows
               .map((row) => {
-                if (!row.attributeRef) return null
                 const newValue = String(row.value || '').trim()
                 if (!newValue) return null
+                if (!row.attributeRef) return null
+                if (row.attributeRef === NEW_OPTION_VALUE) {
+                  const attributeName = String(row.newAttributeName || '').trim()
+                  if (!attributeName) return null
+                  return { attribute_name: attributeName, new_value: newValue }
+                }
                 return { attribute_id: row.attributeRef, new_value: newValue }
               })
               .filter(Boolean)
@@ -1452,15 +1476,29 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
                   <select
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
                     value={row.attributeRef}
-                    onChange={(e) => updateAssetSpecRow(row.id, { attributeRef: e.target.value })}
+                    onChange={(e) => updateAssetSpecRow(row.id, { attributeRef: e.target.value, newAttributeName: e.target.value === NEW_OPTION_VALUE ? row.newAttributeName : '' })}
                   >
                     <option value="">Select attribute</option>
                     {updateAttributeOptions.map((item) => (
                       <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
+                    <option value={NEW_OPTION_VALUE}>Add new attribute</option>
                   </select>
                 </label>
-                <label className="text-xs font-medium text-slate-600 md:col-span-6">
+                {row.attributeRef === NEW_OPTION_VALUE ? (
+                  <label className="text-xs font-medium text-slate-600 md:col-span-3">
+                    New attribute name
+                    <input
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                      placeholder="New attribute name"
+                      value={row.newAttributeName || ''}
+                      onChange={(e) => updateAssetSpecRow(row.id, { newAttributeName: e.target.value })}
+                    />
+                  </label>
+                ) : (
+                  <div className="md:col-span-3 text-xs text-slate-500 md:pl-2">{row.attributeRef ? 'Existing attribute' : 'Optional'}</div>
+                )}
+                <label className="text-xs font-medium text-slate-600 md:col-span-3">
                   Value
                   <input
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"

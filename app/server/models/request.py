@@ -64,12 +64,10 @@ class RequestCreate(BaseModel):
     """
     Create a new request.
     
-    request_type is REQUIRED and determines validation:
-    - SERVICE: instance_id REQUIRED
-    - REPLACE: instance_id REQUIRED
-    - NEW: instance_id OPTIONAL
-    - RETURN: instance_id OPTIONAL
-    - TRANSFER: instance_id REQUIRED (must have tracking)
+    request_type is optional for employee submissions and is inferred when omitted:
+    - NEW: no existing instance selected
+    - REPLACE: existing instance selected
+    - If provided explicitly, SERVICE/REPLACE/TRANSFER still require instance_id.
     """
     model_config = ConfigDict(extra="forbid")
     
@@ -77,7 +75,7 @@ class RequestCreate(BaseModel):
     asset_name: str
     asset_category: str
     reason: str
-    request_type: RequestType  # NEW, SERVICE, REPLACE, RETURN, TRANSFER
+    request_type: Optional[RequestType] = None  # NEW, SERVICE, REPLACE, RETURN, TRANSFER
     
     # Optional fields
     instance_id: Optional[str] = None
@@ -106,8 +104,11 @@ class RequestCreate(BaseModel):
     
     @field_validator("request_type", mode='after')
     @classmethod
-    def validate_and_check_instance_requirement(cls, request_type: RequestType, info) -> RequestType:
+    def validate_and_check_instance_requirement(cls, request_type: Optional[RequestType], info) -> Optional[RequestType]:
         """Validate request type and enforce instance_id requirement."""
+        if request_type is None:
+            return None
+
         req_type = request_type.value.upper()
         
         # Check if instance_id is required for this type

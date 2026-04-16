@@ -500,3 +500,28 @@ class OnboardingPresetListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+
+
+class CategoryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    behavior: str = "instance_based"
+    description: Optional[str] = None
+
+class SubCategoryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    category_id: str
+    name: str
+    description: Optional[str] = None
+
+class SubCategoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    sub_category_id: str
+    sub_category_name: str
+
+class CategoryHierarchyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    category_id: str
+    category_name: str
+    asset_behavior: str
+    sub_categories: List[SubCategoryRead]

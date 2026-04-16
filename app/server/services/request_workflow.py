@@ -61,9 +61,13 @@ class RequestWorkflow:
         """
         priority_sla_hours = {
             "CRITICAL": 1,
+            "P1": 1,
             "HIGH": 4,
+            "P2": 4,
             "MEDIUM": 24,
+            "P3": 24,
             "LOW": 72,
+            "P4": 72,
         }
         
         hours = priority_sla_hours.get(priority.upper(), 24)

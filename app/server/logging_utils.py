@@ -22,6 +22,8 @@ class StructuredJsonFormatter(logging.Formatter):
             "statusCode": getattr(record, "statusCode", 0),
             "responseTime": getattr(record, "responseTime", 0),
         }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload)
 
 

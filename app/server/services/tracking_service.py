@@ -184,6 +184,7 @@ class TrackingService:
         from app.server.schema.organization import Branch
         from app.server.schema.organization import BranchStatus
         from app.server.schema.category import Category
+        from app.server.services.taxonomy import CANONICAL_CATEGORY_ORDER, visible_category_names
 
         scoped = apply_tenant_filter(db.query(Tracking), current_user, Tracking)
 
@@ -209,9 +210,15 @@ class TrackingService:
             for e in apply_tenant_filter(db.query(Employee), current_user, Employee).filter(Employee.employee_id.in_(employee_ids)).all()
         } if employee_ids else {}
 
+        category_rows = apply_tenant_filter(db.query(Category), current_user, Category).all()
+        visible_names = set(visible_category_names([c.category_name for c in category_rows]))
+        order_map = {name: index for index, name in enumerate(CANONICAL_CATEGORY_ORDER)}
         categories = [
             {"id": c.category_id, "name": c.category_name}
-            for c in apply_tenant_filter(db.query(Category), current_user, Category).order_by(Category.category_name.asc()).all()
+            for c in sorted(
+                [c for c in category_rows if c.category_name in visible_names],
+                key=lambda c: (order_map.get(c.category_name, 99), c.category_name.lower()),
+            )
         ]
 
         statuses = [status.value for status in AssetStatus if status.value in {"NEW", "ASSIGNED", "IN_REPAIR", "NOT_USABLE"}]

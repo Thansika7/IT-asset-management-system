@@ -43,10 +43,10 @@ function isSoftwareAsset(record) {
 function getApplicableExpiry(record) {
   if (isSoftwareAsset(record)) {
     return {
-      label: 'Software License',
+      label: 'Software Expiry',
       value: record?.license_expiry,
       tone: 'sky',
-      helpText: 'Tracks software or license renewal dates linked to this asset.',
+      helpText: 'Tracks software license or subscription renewal dates linked to this asset.',
     }
   }
 

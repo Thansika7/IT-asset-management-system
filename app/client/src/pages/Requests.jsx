@@ -123,6 +123,9 @@ function prettyBool(value) {
 }
 
 function NewRequestForm({ onCreate, busy, options }) {
+  const qc = useQueryClient()
+  const CREATE_NEW_CATEGORY = '__create_new_category__'
+  const CREATE_NEW_SUBCATEGORY = '__create_new_subcategory__'
   const fallbackCategories = useMemo(() => {
     const raw = options?.categories?.length ? options.categories : []
     const other = raw.filter((x) => String(x).toLowerCase() === 'other')
@@ -138,8 +141,13 @@ function NewRequestForm({ onCreate, busy, options }) {
   const [submittedSearch, setSubmittedSearch] = useState('')
   const [suggestHighlight, setSuggestHighlight] = useState(-1)
   const suggestHighlightRef = useRef(-1)
+  const [formError, setFormError] = useState('')
+  const [categoryPickerValue, setCategoryPickerValue] = useState('')
+  const [subcategoryPickerValue, setSubcategoryPickerValue] = useState('')
   const [selectedCategoryId, setSelectedCategoryId] = useState('')
   const [selectedSubCategoryId, setSelectedSubCategoryId] = useState('')
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [newSubCategoryName, setNewSubCategoryName] = useState('')
 
   const sortedKnownAssets = useMemo(() => {
     return [...knownAssets].sort((a, b) => String(a.asset_name || '').localeCompare(String(b.asset_name || '')))
@@ -179,12 +187,38 @@ function NewRequestForm({ onCreate, busy, options }) {
     enabled: Boolean(selectedSubCategoryId),
   })
 
+  const createCategoryMut = useMutation({
+    mutationFn: (body) => apiFetch('/requests/form-options/categories', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (created) => {
+      qc.invalidateQueries({ queryKey: ['request-form-options'] })
+      qc.invalidateQueries({ queryKey: ['discover-categories'] })
+      setNewCategoryName('')
+      if (created?.category_id) setSelectedCategoryId(created.category_id)
+      if (created?.category_id) setCategoryPickerValue(created.category_id)
+      if (created?.category_name) setAssetCategory(created.category_name)
+      setSelectedSubCategoryId('')
+      setNewSubCategoryName('')
+    },
+  })
+
+  const createSubCategoryMut = useMutation({
+    mutationFn: (body) => apiFetch('/requests/form-options/subcategories', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (created) => {
+      qc.invalidateQueries({ queryKey: ['request-form-options'] })
+      qc.invalidateQueries({ queryKey: ['discover-subcategories'] })
+      setNewSubCategoryName('')
+      if (created?.sub_category_id) setSelectedSubCategoryId(created.sub_category_id)
+      if (created?.sub_category_id) setSubcategoryPickerValue(created.sub_category_id)
+    },
+  })
+
   useEffect(() => {
-    if (!hasApiCategories || selectedCategoryId) return
+    if (!hasApiCategories || selectedCategoryId || categoryPickerValue === CREATE_NEW_CATEGORY) return
     const first = sortedApiCategories[0]
     setSelectedCategoryId(first.category_id)
+    setCategoryPickerValue(first.category_id)
     setAssetCategory(first.category_name)
-  }, [hasApiCategories, sortedApiCategories, selectedCategoryId])
+  }, [hasApiCategories, sortedApiCategories, selectedCategoryId, categoryPickerValue])
 
   const suggestionsQuery = useQuery({
     queryKey: ['discover-suggestions', searchInput],
@@ -207,6 +241,8 @@ function NewRequestForm({ onCreate, busy, options }) {
 
   useEffect(() => {
     setSelectedSubCategoryId('')
+    setSubcategoryPickerValue('')
+    setNewSubCategoryName('')
   }, [selectedCategoryId])
 
   const matchingKnownAsset = useMemo(() => {
@@ -223,7 +259,10 @@ function NewRequestForm({ onCreate, busy, options }) {
         if (match.category) {
           setAssetCategory(match.category)
           const apiCat = sortedApiCategories.find((c) => c.category_name === match.category)
-          if (apiCat) setSelectedCategoryId(apiCat.category_id)
+          if (apiCat) {
+            setSelectedCategoryId(apiCat.category_id)
+            setCategoryPickerValue(apiCat.category_id)
+          }
         }
       }
     }
@@ -235,13 +274,45 @@ function NewRequestForm({ onCreate, busy, options }) {
     }
   }, [selectedKnownAsset, matchingKnownAsset, assetCategory])
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
+    setFormError('')
     const resolvedAssetName = assetName.trim() || selectedKnownAsset.trim()
     const inferredCategory = matchingKnownAsset?.category || assetCategory
-    const resolvedCategory = inferredCategory === 'Other' && matchingKnownAsset?.category ? matchingKnownAsset.category : inferredCategory
+    let resolvedCategory = inferredCategory === 'Other' && matchingKnownAsset?.category ? matchingKnownAsset.category : inferredCategory
+    let resolvedCategoryId = selectedCategoryId
     const resolvedReason = reasonText.trim()
     const selectedKnown = knownAssets.find((item) => item.asset_name === selectedKnownAsset) || matchingKnownAsset || null
+
+    const hasNewCategory = categoryPickerValue === CREATE_NEW_CATEGORY || (!selectedCategoryId && newCategoryName.trim())
+    const hasNewSubCategory = subcategoryPickerValue === CREATE_NEW_SUBCATEGORY || (!selectedSubCategoryId && newSubCategoryName.trim())
+
+    if (hasNewCategory) {
+      const categoryName = newCategoryName.trim()
+      if (!categoryName) {
+        setFormError('Enter a category name before creating a new category.')
+        return
+      }
+      const createdCategory = await createCategoryMut.mutateAsync({ name: categoryName, behavior: 'instance_based' })
+      resolvedCategoryId = createdCategory?.category_id || resolvedCategoryId
+      resolvedCategory = createdCategory?.category_name || categoryName
+    } else if (resolvedCategoryId) {
+      const selectedCategory = sortedApiCategories.find((cat) => cat.category_id === resolvedCategoryId)
+      resolvedCategory = selectedCategory?.category_name || resolvedCategory
+    }
+
+    if (hasNewSubCategory) {
+      const subCategoryName = newSubCategoryName.trim()
+      if (!subCategoryName) {
+        setFormError('Enter a subcategory name before creating a new subcategory.')
+        return
+      }
+      if (!resolvedCategoryId) {
+        setFormError('Select or create a category before adding a new subcategory.')
+        return
+      }
+      await createSubCategoryMut.mutateAsync({ category_id: resolvedCategoryId, name: subCategoryName })
+    }
 
     onCreate({
       asset_name: resolvedAssetName || `${resolvedCategory} request`,
@@ -254,13 +325,18 @@ function NewRequestForm({ onCreate, busy, options }) {
     setSelectedKnownAsset('')
     setAssetName('')
     setReasonText('')
+    setFormError('')
     if (hasApiCategories && sortedApiCategories[0]) {
       setSelectedCategoryId(sortedApiCategories[0].category_id)
+      setCategoryPickerValue(sortedApiCategories[0].category_id)
       setAssetCategory(sortedApiCategories[0].category_name)
     } else {
       setAssetCategory(fallbackCategories[0] || '')
+      setCategoryPickerValue('')
+      setSelectedCategoryId('')
     }
     setSelectedSubCategoryId('')
+    setSubcategoryPickerValue('')
     setSearchInput('')
     setSubmittedSearch('')
     suggestHighlightRef.current = -1
@@ -273,7 +349,10 @@ function NewRequestForm({ onCreate, busy, options }) {
     if (item.category) {
       setAssetCategory(item.category)
       const apiCat = sortedApiCategories.find((c) => c.category_name === item.category)
-      if (apiCat) setSelectedCategoryId(apiCat.category_id)
+      if (apiCat) {
+        setSelectedCategoryId(apiCat.category_id)
+        setCategoryPickerValue(apiCat.category_id)
+      }
     }
     setSelectedKnownAsset(item.asset_name || '')
   }
@@ -347,7 +426,7 @@ function NewRequestForm({ onCreate, busy, options }) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-900">Create Request</h2>
-          <p className="text-sm text-slate-600 mt-1">Choose a category and reason from the guided list. If your asset is already known to the system, type or pick its name and the form will load what it can automatically.</p>
+          <p className="text-sm text-slate-600 mt-1">Choose the asset and explain why you need it. If you pick one of your current assets, the request is treated as a change or replacement request; otherwise it is treated as a new asset request.</p>
         </div>
         <Badge tone="cyan">For Employees</Badge>
       </div>
@@ -358,10 +437,21 @@ function NewRequestForm({ onCreate, busy, options }) {
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</label>
             <select
               className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
-              value={selectedCategoryId || sortedApiCategories[0]?.category_id || ''}
+              value={categoryPickerValue || selectedCategoryId || sortedApiCategories[0]?.category_id || ''}
               onChange={(e) => {
                 const id = e.target.value
+                setFormError('')
+                setCategoryPickerValue(id)
+                setSelectedSubCategoryId('')
+                setSubcategoryPickerValue('')
+                setNewSubCategoryName('')
+                if (id === CREATE_NEW_CATEGORY) {
+                  setSelectedCategoryId('')
+                  setAssetCategory(newCategoryName.trim())
+                  return
+                }
                 setSelectedCategoryId(id)
+                setNewCategoryName('')
                 const cat = sortedApiCategories.find((c) => c.category_id === id)
                 if (cat) setAssetCategory(cat.category_name)
               }}
@@ -371,23 +461,65 @@ function NewRequestForm({ onCreate, busy, options }) {
                   {cat.category_name}
                 </option>
               ))}
+              <option value={CREATE_NEW_CATEGORY}>+ Create new category</option>
             </select>
+            {categoryPickerValue === CREATE_NEW_CATEGORY ? (
+              <div className="space-y-2 pt-1">
+                <input
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+                  placeholder="Enter new category name"
+                  value={newCategoryName}
+                  onChange={(e) => {
+                    const next = e.target.value
+                    setNewCategoryName(next)
+                    setAssetCategory(next)
+                    setFormError('')
+                  }}
+                />
+                <p className="text-[11px] text-slate-500">This category will be created automatically when you submit the request.</p>
+              </div>
+            ) : null}
           </div>
           <div className="space-y-2">
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subcategory</label>
             <select
               className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
-              value={selectedSubCategoryId}
-              onChange={(e) => setSelectedSubCategoryId(e.target.value)}
-              disabled={!(selectedCategoryId || sortedApiCategories[0]?.category_id)}
+              value={subcategoryPickerValue || selectedSubCategoryId}
+              onChange={(e) => {
+                const id = e.target.value
+                setFormError('')
+                setSubcategoryPickerValue(id)
+                if (id === CREATE_NEW_SUBCATEGORY) {
+                  setSelectedSubCategoryId('')
+                  return
+                }
+                setSelectedSubCategoryId(id)
+                setNewSubCategoryName('')
+              }}
+              disabled={!(selectedCategoryId || categoryPickerValue === CREATE_NEW_CATEGORY || sortedApiCategories[0]?.category_id)}
             >
-              <option value="">{selectedCategoryId || sortedApiCategories[0]?.category_id ? 'Subcategory (optional)' : '—'}</option>
+              <option value="">{selectedCategoryId || categoryPickerValue === CREATE_NEW_CATEGORY || sortedApiCategories[0]?.category_id ? 'Subcategory (optional)' : '—'}</option>
               {sortedSubcategories.map((sub) => (
                 <option key={sub.sub_category_id} value={sub.sub_category_id}>
                   {sub.sub_category_name}
                 </option>
               ))}
+              <option value={CREATE_NEW_SUBCATEGORY}>+ Create new subcategory</option>
             </select>
+            {subcategoryPickerValue === CREATE_NEW_SUBCATEGORY ? (
+              <div className="space-y-2 pt-1">
+                <input
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm"
+                  placeholder="Enter new subcategory name"
+                  value={newSubCategoryName}
+                  onChange={(e) => {
+                    setNewSubCategoryName(e.target.value)
+                    setFormError('')
+                  }}
+                />
+                <p className="text-[11px] text-slate-500">This subcategory will be created under the selected category when you submit.</p>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : (
@@ -413,6 +545,8 @@ function NewRequestForm({ onCreate, busy, options }) {
           )}
         </div>
       )}
+
+      {formError ? <p className="text-sm text-rose-600">{formError}</p> : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-2">
@@ -542,13 +676,13 @@ function NewRequestForm({ onCreate, busy, options }) {
 
       <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
         <p className="font-medium text-slate-800">What happens next</p>
-        <p className="mt-1">Support will classify the request as NEW, SERVICE, or REPLACE. Urgency is also derived automatically by the system based on the issue and impact, so the employee does not need to guess it.</p>
+        <p className="mt-1">The system infers whether this is a new asset request or a change to an existing asset from what you selected above. Use the inline “create new” options inside the category and subcategory dropdowns if the value is missing. New entries are created automatically when you submit. Support will still review the request and set the final handling. Urgency is derived automatically from the issue and impact, so you do not need to guess it.</p>
       </div>
 
       <div className="flex justify-end">
         <button
           type="submit"
-          disabled={busy}
+          disabled={busy || createCategoryMut.isPending || createSubCategoryMut.isPending}
           className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 text-white text-sm font-semibold px-5 py-3 disabled:opacity-50"
         >
           <Plus className="w-4 h-4" />

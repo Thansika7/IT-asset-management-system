@@ -35,13 +35,15 @@ from app.server.services.stock_service import StockService
 from app.server.services.account_service import AccountService
 from app.server.services.audit_service import AuditService
 from app.server.services.notification_service import NotificationPriority, NotificationService
+from app.server.services.taxonomy import CANONICAL_CATEGORY_ORDER, canonical_category_name, canonical_subcategory_name, visible_category_names
 from app.server.database.tenant import apply_tenant_filter
 
 logger = logging.getLogger(__name__)
 
 
 class RequestService:
-    FORM_CATEGORIES = ["Laptop", "Monitor", "Keyboard", "Mouse", "Printer", "Phone", "Accessory", "Software", "Other"]
+    # FORM_CATEGORIES is being phased out in favor of dynamic DB categories.
+    FORM_CATEGORIES = []
     FORM_REQUEST_TYPES = ["NEW", "SERVICE", "REPLACE", "RETURN", "TRANSFER"]
     FORM_ACTION_TYPES = ["NEW", "SERVICE", "REPLACE"]
     FORM_PRIORITIES = ["P1", "P2", "P3", "P4"]
@@ -339,14 +341,41 @@ class RequestService:
     def validate_branch_scope(request_obj: Request, user: Employee) -> None:
         if user.role in {EmployeeRole.SUPER_ADMIN, EmployeeRole.ORG_ADMIN}:
             return
+        
         req_branch_id = (request_obj.employee.branch_id if request_obj.employee else request_obj.branch_id) or ""
         user_branch_id = user.branch_id or ""
+        
         if req_branch_id and user_branch_id and req_branch_id != user_branch_id:
+            # Check if this is a transfer targeting the user's branch
+            user_branch_name = (user.branch or "").strip().upper()
+            action_type = (request_obj.action_type or "").strip().upper()
+            
+            if action_type.startswith("TRANSFER:") and user_branch_name in action_type:
+                return # Allow destination branch access for transfers
+                
             raise HTTPException(status_code=403, detail="Cross-branch access denied.")
 
     @staticmethod
     def get_request_form_options(db: Session, current_user: Employee) -> RequestFormOptions:
-        categories = sorted(set(RequestService.FORM_CATEGORIES + [row[0] for row in apply_tenant_filter(db.query(Category.category_name), current_user, Category).all() if row[0]]))
+        raw_category_names = [
+            row[0]
+            for row in apply_tenant_filter(
+                db.query(Category.category_name),
+                current_user,
+                Category,
+                allow_cross_branch=True,
+            ).all()
+            if row[0]
+        ]
+        visible_names = visible_category_names(raw_category_names)
+        
+        # Merge with any legacy FORM_CATEGORIES if still needed, but prioritize DB categories
+        order_map = {name: index for index, name in enumerate(CANONICAL_CATEGORY_ORDER)}
+        categories = sorted(set(visible_names), key=lambda name: (order_map.get(name, 999), name.lower()))
+        
+        # If no categories exist yet, fallback to canonical defaults to avoid empty dropdown
+        if not categories:
+            categories = CANONICAL_CATEGORY_ORDER[:]
 
         known_assets: list[RequestFormAssetOption] = []
         if current_user.role == EmployeeRole.EMPLOYEE:
@@ -367,8 +396,11 @@ class RequestService:
                     instance_id=tracking.instance_id,
                     serial_number=instance.serial_number if instance else None,
                     asset_name=asset.name,
-                    category=category.category_name if category else None,
-                    sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                    category=canonical_category_name(category.category_name if category else None),
+                    sub_category=canonical_subcategory_name(
+                        category.category_name if category else None,
+                        asset.sub_category.sub_category_name if asset.sub_category else None,
+                    ),
                     branch=asset.branch,
                     owned_by_requester=True,
                 )
@@ -385,8 +417,11 @@ class RequestService:
                     instance_id=None,
                     serial_number=None,
                     asset_name=asset.name,
-                    category=asset.category.category_name if asset.category else None,
-                    sub_category=asset.sub_category.sub_category_name if asset.sub_category else None,
+                    category=canonical_category_name(asset.category.category_name if asset.category else None),
+                    sub_category=canonical_subcategory_name(
+                        asset.category.category_name if asset.category else None,
+                        asset.sub_category.sub_category_name if asset.sub_category else None,
+                    ),
                     branch=asset.branch,
                     owned_by_requester=False,
                 )
@@ -659,6 +694,7 @@ class RequestService:
         RequestService.validate_user_permission(current_user, allowed_roles, "create requests")
 
         requester_email = EmailService.delivery_email(current_user)
+        request_type = (payload.request_type.value if payload.request_type else None) or ("REPLACE" if payload.instance_id else "NEW")
         with db.begin():
             # Employee submits request in SUBMITTED state
             req = Request(
@@ -668,7 +704,7 @@ class RequestService:
                 asset_name=payload.asset_name,
                 asset_category=payload.asset_category,
                 reason=payload.reason,
-                request_type=payload.request_type.value,
+                request_type=request_type,
                 instance_id=payload.instance_id,
                 serial_number=payload.serial_number,
                 status=RequestStatus.SUBMITTED,
@@ -692,30 +728,36 @@ class RequestService:
                 "request_type": req.request_type,
             }, "REQUEST_SUBMISSION")
 
-            NotificationService.emit(
-                db,
-                actor=current_user,
-                recipient_scope=current_user.employee_id,
-                event_type="REQUEST_CREATED",
-                title="Request Submitted",
-                message=f"Your request for {payload.asset_name} has been submitted.",
-                priority=NotificationPriority.MEDIUM,
-                dedup_key=f"request_created:{req.request_id}",
-                cooldown_hours=1,
-                metadata={"request_id": req.request_id, "asset_name": payload.asset_name},
-                email_to=requester_email,
-                email_subject=f"Request Submitted: {payload.asset_name}",
-                email_html=EmailService._wrap_email(
-                    "Request Submitted",
-                    payload.asset_name,
-                    f"<p>Your request <strong>{req.request_id}</strong> has been submitted and is pending review.</p>",
-                    accent_color="#0284c7",
-                ),
-            )
+            try:
+                NotificationService.emit(
+                    db,
+                    actor=current_user,
+                    recipient_scope=current_user.employee_id,
+                    event_type="REQUEST_CREATED",
+                    title="Request Submitted",
+                    message=f"Your request for {payload.asset_name} has been submitted.",
+                    priority=NotificationPriority.MEDIUM,
+                    dedup_key=f"request_created:{req.request_id}",
+                    cooldown_hours=1,
+                    metadata={"request_id": req.request_id, "asset_name": payload.asset_name},
+                    email_to=requester_email,
+                    email_subject=f"Request Submitted: {payload.asset_name}",
+                    email_html=EmailService._wrap_email(
+                        "Request Submitted",
+                        payload.asset_name,
+                        f"<p>Your request <strong>{req.request_id}</strong> has been submitted and is pending review.</p>",
+                        accent_color="#0284c7",
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("Request notification failed for request_id=%s: %s", req.request_id, str(exc))
 
         # Notify HR (non-transactional side effect)
-        recipients = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.HR], current_user.branch, current_user)
-        EmailService.notify_branch_stakeholders(current_user.name, payload.asset_name, recipients, current_user.role, current_user.branch)
+        try:
+            recipients = RequestService.get_emails_by_roles_in_branch(db, [EmployeeRole.HR], current_user.branch, current_user)
+            EmailService.notify_branch_stakeholders(current_user.name, payload.asset_name, recipients, current_user.role, current_user.branch)
+        except Exception as exc:
+            logger.warning("Request stakeholder notification failed for request_id=%s: %s", req.request_id, str(exc))
 
         db.refresh(req)
         return RequestService._serialize_request(req)
