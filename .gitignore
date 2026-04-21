@@ -32,7 +32,6 @@ logs/
 htmlcov/
 *.tox/
 .nox/
-tests/
 
 # -------------------------------
 # Node / React / Vite (Frontend)
