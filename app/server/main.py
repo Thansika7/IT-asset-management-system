@@ -336,6 +336,7 @@ def _ensure_tracking_enum_values() -> None:
         conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'SOFTWARE_ASSIGNED'"))
         conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'SOFTWARE_REMOVED'"))
         conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'SOFTWARE_UPDATED'"))
+        conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'ATTRIBUTE_UPDATED'"))
         conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'TEMP_ASSIGNED'"))
         conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'TEMP_RETURNED'"))
         conn.execute(text("ALTER TYPE lifecycle_event ADD VALUE IF NOT EXISTS 'INSTALLED'"))

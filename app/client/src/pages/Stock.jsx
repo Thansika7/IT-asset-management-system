@@ -120,6 +120,21 @@ export default function Stock() {
   const instanceTotal = instanceData?.total || 0
   const instanceTotalPages = Math.max(1, Math.ceil(instanceTotal / PAGE_SIZE))
   const instanceStatusOptions = statusOptions
+  // Only show instance-level statuses here (exclude model-only states like ACTIVE/INACTIVE/DISPOSED)
+  const INSTANCE_STATUS_WHITELIST = new Set([
+    'NEW',
+    'AVAILABLE',
+    'RESERVED',
+    'ASSIGNED',
+    'USED',
+    'IN_REPAIR',
+    'NOT_USABLE',
+    'RETIRED',
+    'WARRANTY',
+    'LOST',
+    'DAMAGED',
+  ])
+  const filteredInstanceStatusOptions = instanceStatusOptions.filter((s) => INSTANCE_STATUS_WHITELIST.has(String(s)) )
   const instanceBranchOptions = branchOptions
   const instanceCategoryOptions = categoryOptions
   const instanceAssigneeOptions = normalizeOptions(instanceOptions?.assignees || [])
@@ -341,7 +356,7 @@ export default function Stock() {
               </select>
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={instanceStatus} onChange={(e) => { setInstanceStatus(e.target.value); setInstancePage(1) }}>
                 <option value="">All Statuses</option>
-                {instanceStatusOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                {filteredInstanceStatusOptions.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
               <select className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-white" value={instanceAssignedToId} onChange={(e) => { setInstanceAssignedToId(e.target.value); setInstancePage(1) }}>
                 <option value="">All Assignees</option>
@@ -685,8 +700,8 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
       detailAttributes.length
         ? detailAttributes.map((spec) => ({
             id: `${spec.attribute_id}-${Math.random().toString(36).slice(2, 8)}`,
-            attributeRef: spec.attribute_id || '',
-            newAttributeName: '',
+            attributeRef: spec.attribute_id != null ? String(spec.attribute_id) : (spec.attribute_name ? `${PRESET_PREFIX}${spec.attribute_name}` : ''),
+            newAttributeName: spec.attribute_name || '',
             value: spec.value || '',
           }))
         : restockAttributeOptions.length
@@ -745,8 +760,8 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
       attrs.length
         ? attrs.map((spec) => ({
             id: `${spec.attribute_id}-${Math.random().toString(36).slice(2, 8)}`,
-            attributeRef: spec.attribute_id || '',
-            newAttributeName: '',
+            attributeRef: spec.attribute_id != null ? String(spec.attribute_id) : (spec.attribute_name ? `${PRESET_PREFIX}${spec.attribute_name}` : ''),
+            newAttributeName: spec.attribute_name || '',
             value: spec.value || '',
           }))
         : [newSpecRow()],
@@ -978,6 +993,9 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
                       onChange={(e) => updateRestockSpecRow(row.id, { attributeRef: e.target.value, newAttributeName: '' })}
                     >
                       <option value="">Select attribute</option>
+                      {row.attributeRef && row.attributeRef.startsWith(PRESET_PREFIX) ? (
+                        <option value={row.attributeRef}>{row.attributeRef.slice(PRESET_PREFIX.length)}</option>
+                      ) : null}
                       {restockAttributeOptions.map((item) => (
                         <option key={item.id} value={item.id}>{item.name}</option>
                       ))}
@@ -1479,6 +1497,9 @@ function StockForms({ createMut, invalidateStockRelated, categories, branches })
                     onChange={(e) => updateAssetSpecRow(row.id, { attributeRef: e.target.value, newAttributeName: e.target.value === NEW_OPTION_VALUE ? row.newAttributeName : '' })}
                   >
                     <option value="">Select attribute</option>
+                    {row.attributeRef && row.attributeRef.startsWith(PRESET_PREFIX) ? (
+                      <option value={row.attributeRef}>{row.attributeRef.slice(PRESET_PREFIX.length)}</option>
+                    ) : null}
                     {updateAttributeOptions.map((item) => (
                       <option key={item.id} value={item.id}>{item.name}</option>
                     ))}
